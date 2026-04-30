@@ -12,8 +12,7 @@ optimization = "2"
 use_modules = false
 
 [archive]
-strategy = "lto_pruned"
+strategy = "lto_merged"
 exported_symbols_file = "exports/public_symbols.txt"
-gc_using_public_symbols = true
 filter_exported_symbols = true
-remove_lto_sections = false
+preserve_lto_sections = true
