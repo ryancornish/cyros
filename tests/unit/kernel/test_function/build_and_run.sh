@@ -8,9 +8,9 @@ fi
 
 rm -rf ./out/
 
-cortos-builder build -p build_tree/profile.toml
+cortos-builder build --profile ../../../../build/profiles/unit_test.toml --config test_function_config.hpp
 
-mkdir ./out/bin/
+mkdir ./out/ ./out/bin/
 
 g++-15 test_function.cpp \
    -std=gnu++26 -O0 -g3 \

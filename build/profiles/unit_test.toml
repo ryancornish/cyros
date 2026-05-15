@@ -1,0 +1,18 @@
+[profile]
+name = "unit_test"
+toolchain = "../toolchains/gcc-debug.toml"
+config_header = "" # Provided exclusively on the cmd line
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "linux_boost"
+time_driver = "simulation"
+
+[features]
+enable = []
+
+[output]
+archive = "libcortos.a"
