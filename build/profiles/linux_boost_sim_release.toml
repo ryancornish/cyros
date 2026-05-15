@@ -1,16 +1,15 @@
+[profile]
 name = "linux_boost_sim"
-default_toolchain = "gcc-release"
+toolchain = "../toolchains/gcc-release.toml"
+config_header = "../configs/sim.hpp"
 
 [layout]
-project_root = "../.."
-build_root = ".."
 source_root = "../../src"
 output_root = "../../out"
 
-[build]
+[components]
 port = "linux_boost"
 time_driver = "simulation"
-config_header = "sim.hpp"
 
 [features]
 enable = []
