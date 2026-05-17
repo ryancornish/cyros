@@ -1,0 +1,7 @@
+[test]
+name   = "test_function"
+source = "test_function.cpp"
+config = "test_function_config.hpp"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]
