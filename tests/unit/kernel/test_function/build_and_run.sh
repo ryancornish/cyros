@@ -8,14 +8,17 @@ fi
 
 rm -rf ./out/
 
-cortos-builder build --profile ../../../../build/profiles/unit_test.toml --config test_function_config.hpp
+cortos-builder build \
+   --profile ../../../../build/profiles/unit_test.toml \
+   --config test_function_config.hpp \
+   --out ./out/
 
-mkdir ./out/ ./out/bin/
+mkdir ./out/bin/
 
 g++-15 test_function.cpp \
    -std=gnu++26 -O0 -g3 \
-   -Iout/gcc-basic/include/ \
-   -Lout/gcc-basic/lib/ \
+   -Iout/gcc-debug/include/ \
+   -Lout/gcc-debug/lib/ \
    -lcortos \
    -lboost_context \
    -lgtest \

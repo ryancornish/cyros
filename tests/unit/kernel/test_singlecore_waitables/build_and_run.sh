@@ -8,14 +8,17 @@ fi
 
 rm -rf ./out/
 
-cortos-builder build -p build_tree/profile.toml
+cortos-builder build \
+   --profile ../../../../build/profiles/unit_test.toml \
+   --config test_singlecore_waitables_config.hpp \
+   --out ./out/
 
 mkdir ./out/bin/
 
 g++-15 test_singlecore_waitables.cpp \
    -std=gnu++26 -O0 -g3 \
-   -Iout/gcc-basic/include/ \
-   -Lout/gcc-basic/lib/ \
+   -Iout/gcc-debug/include/ \
+   -Lout/gcc-debug/lib/ \
    -lcortos \
    -lboost_context \
    -lgtest \
