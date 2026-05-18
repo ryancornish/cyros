@@ -1,6 +1,6 @@
-#include "cortos/kernel.hpp"
-#include "cortos/config.hpp"
-#include "cortos/port_traits.h"
+#include <cortos/kernel/kernel.hpp>
+#include <cortos/config/config.hpp>
+#include <cortos/port/port_traits.h>
 
 #include "gtest/gtest.h"
 

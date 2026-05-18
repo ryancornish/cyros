@@ -1,0 +1,7 @@
+[test]
+name   = "test_singlecore_multithread"
+source = "test_singlecore_multithread.cpp"
+config = "test_singlecore_multithread_config.hpp"
+
+[link]
+system_libraries = ["boost_context", "gtest"]

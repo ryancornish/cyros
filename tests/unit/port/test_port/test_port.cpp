@@ -3,7 +3,7 @@
  * @brief Unit tests for port layer (boost.context backend)
  */
 
-#include "cortos/port.h"
+#include <cortos/port/port.h>
 
 #include <gtest/gtest.h>
 
