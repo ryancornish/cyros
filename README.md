@@ -1,79 +1,174 @@
 # CoRTOS
+
 CoRTOS is a small, modern C++ real-time kernel for embedded systems.
-Being a tiny, testable kernel that is easy to reason about, port, and extend.
-It's designed for speed and safety, and aims for clarity.
 
-At its core, CoRTOS is a fixed-priority preemptive scheduler with:
-- A set of minimal synchronization primitives.
-- A threading API.
-- A set of "opt-in" extension features.
+I'm building it around one idea: an RTOS should be something you can *read*
+before you *trust*. The core is intentionally tiny, the layers are cleanly
+separated, and almost everything beyond the bare minimum is opt-in.
 
-It is not trying to be a "FreeRTOS killer". It’s closer to a precise instrument: you should be able to understand what it does, why it does it, and how it will behave under stress - without crawling through a maze of macros and #ifdefs.
+> **Status: early work-in-progress.** What follows is the design I'm building
+> toward. Not all of it exists yet, and the parts that do are still moving.
+> See [Project Status](#project-status) for an honest breakdown of what's
+> actually there today. APIs *will* change.
 
-## Project Goals & Philosophy
-### 1. Predictability
+## Why I'm building this
 
-CoRTOS aims to make scheduling decisions obvious and inspectable.
+Most RTOSes make two choices I wanted to avoid:
 
-### 2. Modern C++
+1. **They bake time into the scheduler.** "Real-time" gets read as "the
+   scheduler counts ticks," and timekeeping ends up tangled through the core.
+2. **They ship a kitchen sink.** One giant config header tries to anticipate
+   every use case, and you pay (in code size and in cognitive load) for
+   features you never enable.
 
-CoRTOS is written in modern C++ (C++23):
+CoRTOS keeps a tight, time-agnostic core instead, and layers everything else on
+top as components and features you choose to include.
 
-- Strong types instead of integer soup.
-- RAII for critical sections / scheduler locks.
-- Type-erased jobs instead of ad-hoc function pointers everywhere.
-- Templates for policy models.
-- "Pay for what you use".
-- `constexpr` as much as possible - make the compiler do the heavy lifting.
+## Architecture
 
-### 3. Bare-metal first, simulation as a first-class citizen
+CoRTOS is organised into four layers. I take the boundaries between them
+seriously: each layer depends only on the ones it's allowed to, and I've picked
+the seams deliberately so behaviour stays consistent across very different
+targets.
 
-The primary target are MCUs (to-be-defined which ones), but CoRTOS is built with a strong emphasis on:
+```
+        +-------------------------------------------------+
+        |  userlib  (libcortos)                           |
+        |  Mutex, and other opt-in primitives & features  |
+        +-------------------------------------------------+
+                 |                          |
+                 v                          v
+        +-------------------+      +-------------------+
+        |  kernel           |      |  time driver      |
+        |  schedulers,      |      |  monotonic time,  |
+        |  threads,         |      |  scheduled        |
+        |  Waitable         |      |  callbacks        |
+        +-------------------+      +-------------------+
+                 |                          |
+                 v                          v
+        +-------------------------------------------------+
+        |  port  (C ABI)                                  |
+        |  context switching, IRQ control, cores, time    |
+        +-------------------------------------------------+
+```
 
-- A Linux simulation backend so scheduling, timing, and synchronization logic can be tested on a desktop.
-- Being able to reproduce tricky timing and priority-inversion scenarios without a logic analyser attached to a dev board.
-- Keeping the core small enough that you can read it before you trust it.
-- You should be able to develop and debug most kernel-level logic on your workstation, then move to the microcontroller when you're ready.
+### Port layer
 
-### 4. Minimal core, opt-in power
+The port is the hardware (or host) abstraction layer. I expose it as a plain
+**C ABI** so it can be implemented in C or assembly. It provides context
+creation/switching, critical-section (interrupt) control, multi-core startup
+and inter-core signalling, and the low-level time source.
 
-The kernel is intentionally small. The idea is:
+The part I care most about here is *where the cut is made*. I slice the port at
+exactly the depth where the scheduler and all higher-level kernel policy run
+identically whether the port is:
 
-- A tight, well-specified core: scheduler, threads, time, basic sync primitives.
-- Opt-in extensions layered on top (job queues, async dispatch, optional heap, etc.).
-- No global "kitchen sink" configuration header that tries to anticipate every possible use case.
-- If you want more complex patterns (async job dispatch, work stealing, message passing), they should be buildable on top of the primitives, not baked into the scheduler in opaque ways.
+- on **Linux**, using [Boost.Context](https://www.boost.org/doc/libs/release/libs/context/)
+  to create and switch cooperative contexts, or
+- on **bare metal** - an ARM Cortex-M port is my intended first target.
 
-## Who Is CoRTOS For?
+The kernel never sees a fiber or a thread, only an opaque context. So an
+application built on CoRTOS gets *nearly* reproducible behaviour between a
+hosted unit test and the real device. That's useful to me while developing the
+kernel, and it should be just as useful to anyone building on top of it.
 
-Embedded developers who want:
-- A small, understandable RTOS for (x, y, z) MCUs.
-- Modern C++ ergonomics.
+There's one asymmetry I can't design away: a real bare-metal port can preempt a
+task from an external interrupt, while the Linux/Boost.Context port is
+cooperative by nature. So ports declare their scheduling type (preemptive or
+cooperative) and environment (bare-metal or simulation), and the kernel adapts.
 
-Embedded developers who like:
-- Extending kernel code.
-- Building bespoke systems rather than dropping in a monolithic RTOS black box.
-- If you want an RTOS that feels like part of your codebase rather than an opaque dependency, CoRTOS is aimed squarely at you.
+### Kernel layer
 
-## Status
+The kernel is, more than anything, a set of **per-core schedulers** in an SMP
+arrangement.
 
-CoRTOS is an active work-in-progress, we are in early days right now:
+It has **no concept of time.** This is the deliberately radical choice - an
+RTOS core that doesn't know what a second is. The kernel only cares whether a
+thread is `Ready`, `Running`, or `Blocked`, and what it's blocked *on*: an
+abstract object I call a **`Waitable`**.
 
-- Core scheduler and synchronization primitives are implemented and under test.
-- Simulation backend exists and is used to exercise scheduling and priority semantics.
-- Job model is implemented and being integrated into higher-level patterns (job queues, async invocation).
-- Ports and extension modules (e.g. optional heap, job dispatch helpers) are evolving.
-- APIs may still change as the design is refined and real use cases shake out rough edges.
+Each core owns its own scheduler state. Core-local structures are only ever
+mutated by their owning core; cross-core operations go through an explicit
+message inbox plus an inter-core interrupt. The kernel gives you thread creation
+and the blocking/unblocking machinery, and not much else.
 
-## High-Level Roadmap
+> The `Waitable` abstraction works well as a notification-style primitive, but
+> I'm not happy with it yet for *conditional acquisition* - the mutex-locking
+> case, where waking is contingent on a predicate. Expect this area to change.
 
-Planned / ongoing areas:
+### Time driver layer
 
-- More polished job queues / async dispatch helpers.
-- Optional heap extension (allocator tuned for CoRTOS usage patterns).
-- More example projects:
-  - MCU demos (blinky + real workloads).
-  - Simulation examples illustrating priority inversion, condvar usage, etc.
-- More ports!!!
+The time driver sits **parallel to** the kernel, not underneath it. It depends
+on the port, but the kernel and the time driver don't depend on each other.
 
-If you're reading the source, poking at the scheduler, or wanting to port CoRTOS to an MCU, feedback and ideas are very welcome.
+Because I keep time outside the core, it's genuinely optional. If you want
+nothing to do with time, you can omit the time driver entirely (along with any
+feature that transitively needs it) and still have a valid CoRTOS instance. If
+you already have your own timer infrastructure, you can implement the time
+driver interface yourself and sidestep mine completely.
+
+I ship a few time driver implementations to pick between:
+
+- a **periodic (tickful)** driver,
+- a **tickless** driver, and
+- a **simulation** driver for deterministic host-side testing.
+
+### userlib layer (`libcortos`)
+
+userlib is where the convenient, user-facing primitives live - the things built
+*on top of* the kernel primitives (thread creation and `Waitable` blocking).
+
+My guiding principle here is **pick-and-choose**. userlib is a set of features,
+and a downstream project includes only the ones it wants:
+
+- Don't want a heap? Omit the allocator feature.
+- Already have your own allocator? Omit mine and use yours.
+- Want synchronization primitives but no time-based variants? Take a `sync`
+  feature without timed methods; a separate feature can combine `sync` with the
+  time driver to provide the timed variants.
+
+Features can compose with each other and with the time driver, but I don't
+force anything on you.
+
+## Building
+
+CoRTOS is assembled with **CoRTOS-Builder**, a separate Python-based tool I'm
+writing alongside it. It reads component and profile descriptions, selects the
+port, time driver, and feature set you want, and produces a packaged library
+plus headers.
+
+The component layout in this repo (the `component.toml` files, public header
+mappings, and build profiles) is tailored for that builder. For build
+instructions, the profile format, and how feature opt-in works mechanically,
+see the CoRTOS-Builder project.
+
+## Project Status
+
+CoRTOS is in early development. Roughly where things stand:
+
+**Implemented and under test**
+
+- Per-core SMP scheduler with fixed-priority selection and core affinity.
+- Thread creation, joining, and the `Waitable` blocking model
+  (`wait_for`, `wait_for_any`).
+- Linux / Boost.Context simulation port.
+- Time driver implementations (periodic, tickless, simulation).
+- A `Mutex` in `libcortos`.
+
+**In flux / being redesigned**
+
+- Reschedule semantics that behave identically on cooperative (Linux) and
+  preemptive (bare-metal) ports.
+- Spinlock and cross-core synchronisation details.
+- The `Waitable` interface, particularly conditional acquisition.
+- The time driver public interface (moving away from a singleton-style API).
+
+**Planned**
+
+- A bare-metal port (ARM Cortex-M first).
+- More `libcortos` features - additional sync primitives, an optional heap, and
+  so on.
+- Example projects, including on-device demos.
+
+If you're poking at the scheduler or thinking about a port, I'd genuinely like
+the feedback.
