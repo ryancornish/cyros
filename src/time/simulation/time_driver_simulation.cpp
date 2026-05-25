@@ -108,17 +108,15 @@ namespace cortos::time
 void initialise(uint32_t frequency_hz)
 {
    CORTOS_ASSERT(sim::ds == nullptr);
-
    sim::ds = new sim::DriverState;
-
    sim::ds->tick_frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
    CORTOS_ASSERT(sim::ds != nullptr);
-
    delete sim::ds;
+   sim::ds = nullptr;
 }
 
 [[nodiscard]] TimePoint now() noexcept

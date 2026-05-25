@@ -88,6 +88,7 @@ namespace cortos::time
 void initialise(uint32_t frequency_hz)
 {
    CORTOS_ASSERT(!tickless::ds.initialised);
+   tickless::ds.initialised = true;
    tickless::ds.frequency_hz = frequency_hz;
 }
 

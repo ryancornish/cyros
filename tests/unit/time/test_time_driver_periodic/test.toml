@@ -1,0 +1,10 @@
+[test]
+name   = "test_time_driver_periodic"
+source = "test_time_driver_periodic.cpp"
+config = "test_time_driver_periodic_config.hpp"
+
+[components]
+time_driver = "periodic"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

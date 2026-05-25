@@ -1,0 +1,10 @@
+[test]
+name   = "test_time_driver_simulation"
+source = "test_time_driver_simulation.cpp"
+config = "test_time_driver_simulation_config.hpp"
+
+[components]
+time_driver = "simulation"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

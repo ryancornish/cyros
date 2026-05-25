@@ -1,0 +1,10 @@
+[test]
+name   = "test_time_driver_tickless"
+source = "test_time_driver_tickless.cpp"
+config = "test_time_driver_tickless_config.hpp"
+
+[components]
+time_driver = "tickless"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]
