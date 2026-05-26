@@ -17,19 +17,17 @@
  * advancing port time and calling on_timer_isr() directly.
  *
  * Coverage goal: 100% branch coverage of the tickless translation unit, with
- * one documented exception (see KNOWN BUG below).
+ * one documented exception: at the port's fixed 1 MHz frequency the duration
+ * conversions are always exact, so the round-up arm of ceil_div_u64 is not
+ * reachable from this suite (see the time::duration conversion section).
  *
- * KNOWN BUG (see DISABLED_InitialiseDoesNotSetInitialisedFlag):
- *   tickless::initialise() sets frequency_hz but never sets
- *   ds.initialised = true. finalise() asserts on ds.initialised, so the
- *   initialise()/finalise() pair cannot currently be exercised without
- *   tripping CORTOS_ASSERT. The periodic driver sets the flag correctly;
- *   the tickless driver should do the same. Until that one-line fix lands,
- *   these tests deliberately do NOT call initialise()/finalise(): the driver
- *   does not need initialise() for now()/schedule_at()/cancel() to work, so
- *   coverage of the rest of the file is unaffected. The two lines of
- *   initialise()/finalise() are the only uncovered lines and are tracked by
- *   the disabled test below.
+ * Lifecycle note:
+ *   The tickless driver keeps its state in a constinit global. The fixture
+ *   pairs initialise()/finalise() per test; finalise() does `ds = driver_state{}`,
+ *   which is what resets the slot table between tests. Earlier revisions of
+ *   this file skipped initialise() to dodge a driver bug (initialise() not
+ *   setting ds.initialised); that bug is fixed, and skipping initialise()
+ *   would now leak scheduled slots from one test into the next.
  */
 
 #include <cortos/time/time.hpp>
@@ -42,7 +40,6 @@
 #include <vector>
 
 using namespace cortos;
-
 
 // Linux-only deterministic test hook, implemented in the linux_boost port.
 extern "C" void cortos_port_time_advance(uint64_t delta);
@@ -65,16 +62,21 @@ protected:
    void SetUp() override
    {
       cortos_port_time_reset(0);
-      // NOTE: intentionally NOT calling cortos::time::initialise() -- see the
-      // KNOWN BUG note in the file header. start()/stop()/schedule_at()/
-      // cancel()/now() do not depend on the `initialised` flag.
+
+      // initialise() asserts it has not already been initialised, and
+      // finalise() (run in TearDown) does `ds = driver_state{}`, fully resetting
+      // the slot table and next_id. Pairing them per test is what keeps the
+      // driver's constinit global state from leaking between tests -- without
+      // it, slots scheduled by one test remain occupied for the next.
+      cortos::time::initialise(1'000'000 /* Hz */);
    }
 
    void TearDown() override
    {
-      // Ensure the one-shot is disarmed and the driver is stopped between
-      // tests so static state does not leak. stop() is idempotent.
+      // Stop the driver (disarms the one-shot) before finalising.
+      // stop() is idempotent, so this is safe whether or not the test started.
       cortos::time::stop();
+      cortos::time::finalise();
    }
 
    // Advance port time and deliver one timer ISR (models a one-shot firing).
@@ -144,7 +146,7 @@ TEST_F(TicklessDriverTest, NowReflectsPortCounter)
 TEST_F(TicklessDriverTest, ScheduleNullCallbackReturnsInvalidHandle)
 {
    cortos::time::start();
-   EXPECT_EQ(cortos::time::schedule_at(time::TimePoint{100}, nullptr, nullptr).id, 0u);
+   EXPECT_EQ(cortos::time::schedule_at(time::time_point{100}, nullptr, nullptr).id, 0u);
 }
 
 // Valid callback: takes the first free slot, rearms, returns a valid handle.
@@ -152,7 +154,7 @@ TEST_F(TicklessDriverTest, ScheduleValidCallbackReturnsValidHandle)
 {
    cortos::time::start();
    std::atomic<int> count{0};
-   EXPECT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+   EXPECT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 }
 
 // Scheduling before start(): schedule_at() does not require the driver to be
@@ -161,7 +163,7 @@ TEST_F(TicklessDriverTest, ScheduleValidCallbackReturnsValidHandle)
 TEST_F(TicklessDriverTest, ScheduleBeforeStartStillSchedules)
 {
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    EXPECT_NE(h.id, 0u);
 
    cortos::time::start();
@@ -176,22 +178,22 @@ TEST_F(TicklessDriverTest, ScheduleBeyondCapacityReturnsInvalidHandle)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   std::vector<time::Handle> handles;
+   std::vector<time::handle> handles;
    handles.reserve(kMaxScheduledCallbacks);
 
    for (uint32_t i = 0; i < kMaxScheduledCallbacks; ++i)
    {
-      time::Handle h = cortos::time::schedule_at(
-         time::TimePoint{static_cast<uint64_t>(i) + 1000}, counting_callback, &count);
+      time::handle h = cortos::time::schedule_at(
+         time::time_point{static_cast<uint64_t>(i) + 1000}, counting_callback, &count);
       ASSERT_NE(h.id, 0u) << "slot " << i << " should still be free";
       handles.push_back(h);
    }
 
-   EXPECT_EQ(cortos::time::schedule_at(time::TimePoint{9999}, counting_callback, &count).id, 0u);
+   EXPECT_EQ(cortos::time::schedule_at(time::time_point{9999}, counting_callback, &count).id, 0u);
 
    // Freeing a slot makes room again (and rearms).
    ASSERT_TRUE(cortos::time::cancel(handles.front()));
-   EXPECT_NE(cortos::time::schedule_at(time::TimePoint{9999}, counting_callback, &count).id, 0u);
+   EXPECT_NE(cortos::time::schedule_at(time::time_point{9999}, counting_callback, &count).id, 0u);
 }
 
 /* ============================================================================
@@ -204,7 +206,7 @@ TEST_F(TicklessDriverTest, CallbackFiresWhenDeadlineReached)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
    advance_and_pump(99);   // `when <= now` false -> no fire
    EXPECT_EQ(count.load(), 0);
@@ -222,7 +224,7 @@ TEST_F(TicklessDriverTest, CallbackFiresAtExactDeadline)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{10}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{10}, counting_callback, &count).id, 0u);
 
    advance_and_pump(10);
    EXPECT_EQ(count.load(), 1);
@@ -238,7 +240,7 @@ TEST_F(TicklessDriverTest, CallbackScheduledInPastFiresOnNextIsr)
    ASSERT_EQ(cortos::time::now().value, 100u);
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{50}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{50}, counting_callback, &count).id, 0u);
 
    pump();  // deadline 50 <= now 100
    EXPECT_EQ(count.load(), 1);
@@ -252,9 +254,9 @@ TEST_F(TicklessDriverTest, MultipleCallbacksFireInDeadlineOrder)
    cortos::time::start();
 
    std::atomic<int> a{0}, b{0}, c{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{50},  counting_callback, &a).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &b).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{150}, counting_callback, &c).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{50},  counting_callback, &a).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &b).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{150}, counting_callback, &c).id, 0u);
 
    advance_and_pump(60);
    EXPECT_EQ(a.load(), 1);
@@ -277,7 +279,7 @@ TEST_F(TicklessDriverTest, AllDueCallbacksFireOnSameIsr)
    std::atomic<int> count{0};
    for (int i = 0; i < 5; ++i)
    {
-      ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+      ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
    }
 
    advance_and_pump(200);
@@ -293,7 +295,7 @@ TEST_F(TicklessDriverTest, IsrWithNothingDueFiresNothing)
    advance_and_pump(500);  // no callbacks at all
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{10'000}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{10'000}, counting_callback, &count).id, 0u);
    advance_and_pump(500);  // occupied slot, not due
    EXPECT_EQ(count.load(), 0);
 }
@@ -306,14 +308,14 @@ TEST_F(TicklessDriverTest, IsrWithNothingDueFiresNothing)
 TEST_F(TicklessDriverTest, CancelInvalidHandleReturnsFalse)
 {
    cortos::time::start();
-   EXPECT_FALSE(cortos::time::cancel(time::Handle{0}));
+   EXPECT_FALSE(cortos::time::cancel(time::handle{0}));
 }
 
 // cancel() of an unknown non-zero id: loop finds no match -> false.
 TEST_F(TicklessDriverTest, CancelUnknownHandleReturnsFalse)
 {
    cortos::time::start();
-   EXPECT_FALSE(cortos::time::cancel(time::Handle{999999}));
+   EXPECT_FALSE(cortos::time::cancel(time::handle{999999}));
 }
 
 // cancel() before firing: slot matched and cleared, driver rearms -> true.
@@ -322,7 +324,7 @@ TEST_F(TicklessDriverTest, CancelBeforeFiringPreventsCallback)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));
@@ -338,7 +340,7 @@ TEST_F(TicklessDriverTest, CancelLastCallbackDisarms)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));  // rearm_locked() -> disarm
@@ -351,7 +353,7 @@ TEST_F(TicklessDriverTest, CancelAfterFiringReturnsFalse)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{50}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{50}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    advance_and_pump(50);
@@ -366,7 +368,7 @@ TEST_F(TicklessDriverTest, CancelTwiceReturnsFalseSecondTime)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));
@@ -380,9 +382,9 @@ TEST_F(TicklessDriverTest, CancelOneOfManyLeavesOthers)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h1 = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
-   time::Handle h2 = cortos::time::schedule_at(time::TimePoint{200}, counting_callback, &count);
-   time::Handle h3 = cortos::time::schedule_at(time::TimePoint{300}, counting_callback, &count);
+   time::handle h1 = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h2 = cortos::time::schedule_at(time::time_point{200}, counting_callback, &count);
+   time::handle h3 = cortos::time::schedule_at(time::time_point{300}, counting_callback, &count);
    ASSERT_NE(h1.id, 0u);
    ASSERT_NE(h2.id, 0u);
    ASSERT_NE(h3.id, 0u);
@@ -394,48 +396,65 @@ TEST_F(TicklessDriverTest, CancelOneOfManyLeavesOthers)
 }
 
 /* ============================================================================
- * Duration conversion
+ * time::duration conversion
  *
- * The tickless driver converts using its own frequency_hz field. Because the
- * KNOWN BUG prevents calling initialise() (which would set frequency_hz), the
- * field is left at its default of 0 in these tests. With frequency 0 the
- * conversions yield 0 ticks: numerator (ms * 0) is 0, ceil_div(0, d) == 0.
- * This still exercises both conversion functions and the ceil_div a == 0 path.
+ * The tickless driver converts using its frequency_hz field, set by
+ * initialise() -- 1'000'000 Hz in this fixture (1 tick = 1 us).
  *
- * Once the initialise() bug is fixed, these should be strengthened to call
- * initialise() with a real frequency and assert non-zero, rounded results --
- * see the periodic driver tests for the intended shape.
+ * NOTE on the ceil_div round-up branch: at 1 MHz both conversions are exact
+ * (ms -> ms*1000 ticks, us -> us*1 ticks), so the rounding-up arm of
+ * ceil_div_u64 (remainder != 0) is NOT reachable from this suite. Exercising
+ * it would require a sub-MHz frequency. The simulation driver suite, which
+ * runs at 1 kHz, does cover the round-up arm. For the tickless TU this is an
+ * accepted coverage exclusion on that one branch.
  * ========================================================================= */
 
-TEST_F(TicklessDriverTest, FromMillisecondsWithDefaultFrequencyIsZero)
+TEST_F(TicklessDriverTest, FromMillisecondsConvertsExactly)
 {
-   // frequency_hz defaults to 0 (initialise() not called -- see KNOWN BUG).
-   EXPECT_EQ(cortos::time::from_milliseconds(10).value, 0u);
+   // 10 ms at 1 MHz = 10'000 ticks.
+   EXPECT_EQ(cortos::time::from_milliseconds(10).value, 10'000u);
 }
 
-TEST_F(TicklessDriverTest, FromMicrosecondsWithDefaultFrequencyIsZero)
+TEST_F(TicklessDriverTest, FromMillisecondsZeroIsZero)
 {
-   EXPECT_EQ(cortos::time::from_microseconds(500).value, 0u);
+   // 0 ms: numerator is 0, ceil_div yields 0 (the a == 0 arm).
+   EXPECT_EQ(cortos::time::from_milliseconds(0).value, 0u);
+}
+
+TEST_F(TicklessDriverTest, FromMicrosecondsConvertsExactly)
+{
+   // 500 us at 1 MHz = 500 ticks.
+   EXPECT_EQ(cortos::time::from_microseconds(500).value, 500u);
+}
+
+TEST_F(TicklessDriverTest, FromMicrosecondsZeroIsZero)
+{
+   EXPECT_EQ(cortos::time::from_microseconds(0).value, 0u);
 }
 
 /* ============================================================================
- * KNOWN BUG tracker
+ * Lifecycle: initialise / finalise
+ *
+ * Every test in this suite already exercises the initialise()/finalise() pair
+ * via the fixture. This test makes the round-trip explicit and also documents
+ * the previously-broken behaviour (initialise() not setting ds.initialised),
+ * which is now fixed.
  * ========================================================================= */
 
-// DISABLED: tickless::initialise() never sets ds.initialised = true, so
-// finalise()'s CORTOS_ASSERT(initialised) aborts. Enable this test once the
-// driver is fixed (one line: `tickless::ds.initialised = true;` in
-// initialise(), matching the periodic driver). When enabled it also restores
-// real duration-conversion coverage.
-TEST_F(TicklessDriverTest, DISABLED_InitialiseDoesNotSetInitialisedFlag)
+TEST_F(TicklessDriverTest, InitialiseFinaliseRoundTrips)
 {
+   // The fixture has already called initialise(). finalise() then re-
+   // initialise() must round-trip cleanly: finalise() asserts on the
+   // initialised flag (set by initialise()) and resets ds; the following
+   // initialise() asserts the flag is clear again.
+   cortos::time::finalise();
    cortos::time::initialise(1'000'000);
 
-   // With the bug present, the following line aborts via CORTOS_ASSERT.
-   // With the bug fixed, it succeeds and frequency-based conversion works.
-   cortos::time::finalise();
+   // Driver is usable again after the round-trip.
+   std::atomic<int> count{0};
+   EXPECT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
-   SUCCEED();
+   // TearDown() will stop() + finalise() as normal.
 }
 
 }  // namespace

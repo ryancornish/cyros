@@ -69,7 +69,7 @@ void counting_callback(void* arg) noexcept
 /* ============================================================================
  * Fixture
  *
- * The simulation driver allocates its DriverState on the heap in initialise()
+ * The simulation driver allocates its driver_state on the heap in initialise()
  * and frees it in finalise(); both must be paired. Tests run in the default
  * Virtual mode unless they explicitly switch. reset() returns virtual time and
  * the event list to a known state.
@@ -82,7 +82,7 @@ protected:
       cortos::time::initialise(1'000 /* Hz */);
       // Default mode is Virtual; make it explicit and deterministic.
       cortos::time::simulation::set_mode(time::simulation::Mode::Virtual);
-      cortos::time::simulation::reset(time::TimePoint{0});
+      cortos::time::simulation::reset(time::time_point{0});
    }
 
    void TearDown() override
@@ -123,17 +123,17 @@ TEST_F(SimulationDriverTest, StopInVirtualModeIsHarmless)
 }
 
 // A driver can be started, stopped, and restarted; virtual time survives
-// because it lives in DriverState, which reset() (not stop()) clears.
+// because it lives in driver_state, which reset() (not stop()) clears.
 TEST_F(SimulationDriverTest, StopThenRestart)
 {
    cortos::time::start();
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(cortos::time::now().value, 100u);
 
    cortos::time::stop();
 
    cortos::time::start();
-   cortos::time::simulation::advance_to(time::TimePoint{200});
+   cortos::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(cortos::time::now().value, 200u);
 }
 
@@ -166,7 +166,7 @@ TEST_F(SimulationDriverTest, SetModeRoundTrips)
 // reset() to a non-zero time point sets virtual time and clears events.
 TEST_F(SimulationDriverTest, ResetToNonZerotimeTimePoint)
 {
-   cortos::time::simulation::reset(time::TimePoint{500});
+   cortos::time::simulation::reset(time::time_point{500});
    EXPECT_EQ(cortos::time::now().value, 500u);
 }
 
@@ -175,12 +175,12 @@ TEST_F(SimulationDriverTest, ResetToNonZerotimeTimePoint)
 TEST_F(SimulationDriverTest, ResetClearsPendingEvents)
 {
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
-   cortos::time::simulation::reset(time::TimePoint{0});
+   cortos::time::simulation::reset(time::time_point{0});
 
-   cortos::time::simulation::advance_to(time::TimePoint{200});
+   cortos::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(count.load(), 0);
 }
 
@@ -191,22 +191,22 @@ TEST_F(SimulationDriverTest, ResetClearsPendingEvents)
 // Null callback: the `!cb` branch returns an invalid handle.
 TEST_F(SimulationDriverTest, ScheduleNullCallbackReturnsInvalidHandle)
 {
-   EXPECT_EQ(cortos::time::schedule_at(time::TimePoint{100}, nullptr, nullptr).id, 0u);
+   EXPECT_EQ(cortos::time::schedule_at(time::time_point{100}, nullptr, nullptr).id, 0u);
 }
 
 // Valid callback: returns a non-zero handle.
 TEST_F(SimulationDriverTest, ScheduleValidCallbackReturnsValidHandle)
 {
    std::atomic<int> count{0};
-   EXPECT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+   EXPECT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 }
 
 // Distinct handles are issued for successive schedule_at() calls.
 TEST_F(SimulationDriverTest, SuccessiveHandlesAreDistinct)
 {
    std::atomic<int> count{0};
-   time::Handle h1 = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
-   time::Handle h2 = cortos::time::schedule_at(time::TimePoint{200}, counting_callback, &count);
+   time::handle h1 = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h2 = cortos::time::schedule_at(time::time_point{200}, counting_callback, &count);
    EXPECT_NE(h1.id, 0u);
    EXPECT_NE(h2.id, 0u);
    EXPECT_NE(h1.id, h2.id);
@@ -221,9 +221,9 @@ TEST_F(SimulationDriverTest, SuccessiveHandlesAreDistinct)
 TEST_F(SimulationDriverTest, CallbackFiresAtExactDeadline)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -231,9 +231,9 @@ TEST_F(SimulationDriverTest, CallbackFiresAtExactDeadline)
 TEST_F(SimulationDriverTest, CallbackFiresWhenCrossed)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{50}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{50}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::TimePoint{150});
+   cortos::time::simulation::advance_to(time::time_point{150});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -241,12 +241,12 @@ TEST_F(SimulationDriverTest, CallbackFiresWhenCrossed)
 TEST_F(SimulationDriverTest, CallbackDoesNotFireBeforeDeadline)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::TimePoint{99});
+   cortos::time::simulation::advance_to(time::time_point{99});
    EXPECT_EQ(count.load(), 0);
 
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -255,12 +255,12 @@ TEST_F(SimulationDriverTest, CallbackDoesNotFireBeforeDeadline)
 TEST_F(SimulationDriverTest, CallbackFiresOnlyOnce)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::TimePoint{150});
+   cortos::time::simulation::advance_to(time::time_point{150});
    EXPECT_EQ(count.load(), 1);
 
-   cortos::time::simulation::advance_to(time::TimePoint{300});
+   cortos::time::simulation::advance_to(time::time_point{300});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -268,13 +268,13 @@ TEST_F(SimulationDriverTest, CallbackFiresOnlyOnce)
 // the next advance, even a zero-length one (advance_to current time).
 TEST_F(SimulationDriverTest, CallbackInPastFiresOnNextAdvance)
 {
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{50}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{50}, counting_callback, &count).id, 0u);
 
    // advance_to current time: target is clamped to now, ISR still pumps.
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -282,14 +282,14 @@ TEST_F(SimulationDriverTest, CallbackInPastFiresOnNextAdvance)
 // not go backwards, and a future callback does not fire.
 TEST_F(SimulationDriverTest, AdvanceToEarlierTimeIsClampedMonotonic)
 {
-   cortos::time::simulation::advance_to(time::TimePoint{200});
+   cortos::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(cortos::time::now().value, 200u);
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{250}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{250}, counting_callback, &count).id, 0u);
 
    // Ask to go backwards: clamp keeps now at 200, callback at 250 stays pending.
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(cortos::time::now().value, 200u);
    EXPECT_EQ(count.load(), 0);
 }
@@ -297,12 +297,12 @@ TEST_F(SimulationDriverTest, AdvanceToEarlierTimeIsClampedMonotonic)
 // advance_by() advances relative to the current virtual time.
 TEST_F(SimulationDriverTest, AdvanceByMovesRelativeToNow)
 {
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{150}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{150}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_by(time::Duration{50});  // 100 -> 150
+   cortos::time::simulation::advance_by(time::duration{50});  // 100 -> 150
    EXPECT_EQ(cortos::time::now().value, 150u);
    EXPECT_EQ(count.load(), 1);
 }
@@ -311,20 +311,20 @@ TEST_F(SimulationDriverTest, AdvanceByMovesRelativeToNow)
 TEST_F(SimulationDriverTest, MultipleCallbacksFireInDeadlineOrder)
 {
    std::atomic<int> a{0}, b{0}, c{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &a).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{200}, counting_callback, &b).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{300}, counting_callback, &c).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &a).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{200}, counting_callback, &b).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{300}, counting_callback, &c).id, 0u);
 
-   cortos::time::simulation::advance_to(time::TimePoint{150});
+   cortos::time::simulation::advance_to(time::time_point{150});
    EXPECT_EQ(a.load(), 1);
    EXPECT_EQ(b.load(), 0);
    EXPECT_EQ(c.load(), 0);
 
-   cortos::time::simulation::advance_to(time::TimePoint{250});
+   cortos::time::simulation::advance_to(time::time_point{250});
    EXPECT_EQ(b.load(), 1);
    EXPECT_EQ(c.load(), 0);
 
-   cortos::time::simulation::advance_to(time::TimePoint{350});
+   cortos::time::simulation::advance_to(time::time_point{350});
    EXPECT_EQ(c.load(), 1);
 }
 
@@ -334,23 +334,23 @@ TEST_F(SimulationDriverTest, CallbacksAtSameDeadlineAllFire)
    std::atomic<int> count{0};
    for (int i = 0; i < 5; ++i)
    {
-      ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+      ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
    }
 
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 5);
 }
 
 // An advance with no callbacks pending: fire_due_callbacks finds nothing due.
 TEST_F(SimulationDriverTest, AdvanceWithNothingPendingFiresNothing)
 {
-   cortos::time::simulation::advance_to(time::TimePoint{500});
+   cortos::time::simulation::advance_to(time::time_point{500});
    SUCCEED();
 
    // And with an occupied-but-not-due event present.
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{10'000}, counting_callback, &count).id, 0u);
-   cortos::time::simulation::advance_to(time::TimePoint{600});
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{10'000}, counting_callback, &count).id, 0u);
+   cortos::time::simulation::advance_to(time::time_point{600});
    EXPECT_EQ(count.load(), 0);
 }
 
@@ -369,8 +369,8 @@ TEST_F(SimulationDriverTest, CallbackCanScheduleAnotherCallback)
       c->count.fetch_add(1, std::memory_order_relaxed);
 
       // Schedule a follow-up that only increments the counter.
-      time::Handle h = cortos::time::schedule_at(
-         time::TimePoint{200},
+      time::handle h = cortos::time::schedule_at(
+         time::time_point{200},
          [](void* a) noexcept
          {
             static_cast<Ctx*>(a)->count.fetch_add(1, std::memory_order_relaxed);
@@ -379,13 +379,13 @@ TEST_F(SimulationDriverTest, CallbackCanScheduleAnotherCallback)
       (void)h;  // nodiscard
    };
 
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, rescheduling_cb, &ctx);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, rescheduling_cb, &ctx);
    ASSERT_NE(h.id, 0u);
 
-   cortos::time::simulation::advance_to(time::TimePoint{100});
+   cortos::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(ctx.count.load(), 1);
 
-   cortos::time::simulation::advance_to(time::TimePoint{200});
+   cortos::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(ctx.count.load(), 2);
 }
 
@@ -396,13 +396,13 @@ TEST_F(SimulationDriverTest, CallbackCanScheduleAnotherCallback)
 // cancel() of an invalid (id == 0) handle: the `h.id == 0` branch -> false.
 TEST_F(SimulationDriverTest, CancelInvalidHandleReturnsFalse)
 {
-   EXPECT_FALSE(cortos::time::cancel(time::Handle{0}));
+   EXPECT_FALSE(cortos::time::cancel(time::handle{0}));
 }
 
 // cancel() of an unknown non-zero id: loop finds no match -> false.
 TEST_F(SimulationDriverTest, CancelUnknownHandleReturnsFalse)
 {
-   EXPECT_FALSE(cortos::time::cancel(time::Handle{999999}));
+   EXPECT_FALSE(cortos::time::cancel(time::handle{999999}));
 }
 
 // cancel() before firing: matching, non-cancelled event found -> true; the
@@ -410,12 +410,12 @@ TEST_F(SimulationDriverTest, CancelUnknownHandleReturnsFalse)
 TEST_F(SimulationDriverTest, CancelBeforeFiringPreventsCallback)
 {
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));
 
-   cortos::time::simulation::advance_to(time::TimePoint{200});
+   cortos::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(count.load(), 0);
 }
 
@@ -424,10 +424,10 @@ TEST_F(SimulationDriverTest, CancelBeforeFiringPreventsCallback)
 TEST_F(SimulationDriverTest, CancelAfterFiringReturnsFalse)
 {
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
-   cortos::time::simulation::advance_to(time::TimePoint{150});
+   cortos::time::simulation::advance_to(time::time_point{150});
    ASSERT_EQ(count.load(), 1);
 
    EXPECT_FALSE(cortos::time::cancel(h));
@@ -438,7 +438,7 @@ TEST_F(SimulationDriverTest, CancelAfterFiringReturnsFalse)
 TEST_F(SimulationDriverTest, CancelTwiceReturnsFalseSecondTime)
 {
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));
@@ -449,21 +449,21 @@ TEST_F(SimulationDriverTest, CancelTwiceReturnsFalseSecondTime)
 TEST_F(SimulationDriverTest, CancelOneOfManyLeavesOthers)
 {
    std::atomic<int> count{0};
-   time::Handle h1 = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
-   time::Handle h2 = cortos::time::schedule_at(time::TimePoint{200}, counting_callback, &count);
-   time::Handle h3 = cortos::time::schedule_at(time::TimePoint{300}, counting_callback, &count);
+   time::handle h1 = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h2 = cortos::time::schedule_at(time::time_point{200}, counting_callback, &count);
+   time::handle h3 = cortos::time::schedule_at(time::time_point{300}, counting_callback, &count);
    ASSERT_NE(h1.id, 0u);
    ASSERT_NE(h2.id, 0u);
    ASSERT_NE(h3.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h2));  // cancel the middle one
 
-   cortos::time::simulation::advance_to(time::TimePoint{400});
+   cortos::time::simulation::advance_to(time::time_point{400});
    EXPECT_EQ(count.load(), 2);  // h1 and h3 fired, h2 did not
 }
 
 /* ============================================================================
- * time::Duration conversion
+ * time::duration conversion
  *
  * The simulation driver converts using the frequency passed to initialise()
  * (1000 Hz in this fixture). Both an exact conversion and a rounding-up
@@ -518,7 +518,7 @@ TEST_F(SimulationDriverTest, FromMicrosecondsZero)
 TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{0}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{0}, counting_callback, &count).id, 0u);
 
    // Deadline 0 with virtual time already at 0: a direct ISR fires it.
    cortos::time::on_timer_isr();
@@ -544,9 +544,9 @@ TEST_F(SimulationDriverTest, DISABLED_RealTimeModeTimeProgresses)
    cortos::time::simulation::set_mode(time::simulation::Mode::RealTime);
    cortos::time::start();
 
-   const time::TimePoint t1 = cortos::time::now();
+   const time::time_point t1 = cortos::time::now();
    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-   const time::TimePoint t2 = cortos::time::now();
+   const time::time_point t2 = cortos::time::now();
 
    EXPECT_GT(t2.value, t1.value);
 
@@ -563,7 +563,7 @@ TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCallbackFiresAutonomously)
    std::atomic<int> count{0};
    // 1 kHz: 10 ticks ~= 10 ms. Sleep well past it.
    const uint64_t deadline = cortos::time::now().value + 10;
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{deadline}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{deadline}, counting_callback, &count).id, 0u);
 
    std::this_thread::sleep_for(std::chrono::milliseconds(200));
    EXPECT_GE(count.load(), 1);
@@ -579,7 +579,7 @@ TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCancelBeforeAutonomousFire)
 
    std::atomic<int> count{0};
    const uint64_t deadline = cortos::time::now().value + 100;  // ~100 ms out
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{deadline}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{deadline}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));

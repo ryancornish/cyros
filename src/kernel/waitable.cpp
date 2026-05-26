@@ -7,17 +7,17 @@
 namespace cortos
 {
 
-[[nodiscard]] bool Waitable::empty() const noexcept
+[[nodiscard]] bool waitable::empty() const noexcept
 {
    return head == nullptr && tail == nullptr;
 }
 
-void Waitable::add(WaitNode& wait_node) noexcept
+void waitable::add(wait_node& wait_node) noexcept
 {
-   CORTOS_ASSERT1(wait_node.waitable == this || wait_node.waitable == nullptr, wait_node.waitable);
+   CORTOS_ASSERT1(wait_node.active_waitable == this || wait_node.active_waitable == nullptr, wait_node.active_waitable);
    CORTOS_ASSERT(!wait_node.is_enqueued());
 
-   wait_node.waitable = this;
+   wait_node.active_waitable = this;
 
    wait_node.prev = tail;
    wait_node.next = nullptr;
@@ -29,9 +29,9 @@ void Waitable::add(WaitNode& wait_node) noexcept
    tail = &wait_node;
 }
 
-void Waitable::remove(WaitNode& wait_node) noexcept
+void waitable::remove(wait_node& wait_node) noexcept
 {
-   if (wait_node.waitable != this) return;
+   if (wait_node.active_waitable != this) return;
 
    if (wait_node.prev) {
       wait_node.prev->next = wait_node.next;
@@ -44,21 +44,21 @@ void Waitable::remove(WaitNode& wait_node) noexcept
       tail = wait_node.prev;
    }
    wait_node.prev = wait_node.next = nullptr;
-   wait_node.waitable = nullptr;
+   wait_node.active_waitable = nullptr;
 }
 
-WaitNode* Waitable::pick_best() noexcept
+wait_node* waitable::pick_best() noexcept
 {
-   WaitNode* best = nullptr;
+   wait_node* best = nullptr;
    uint8_t best_priority = std::numeric_limits<uint8_t>::max();
 
    for (auto* iter = head; iter; iter = iter->next) {
       CORTOS_ASSERT(iter->active);
       CORTOS_ASSERT(iter->tcb != nullptr);
-      CORTOS_ASSERT(iter->waitable == this);
+      CORTOS_ASSERT(iter->active_waitable == this);
 
       // Skip nodes from already-satisfied wait_for_any groups (race window during teardown / multi-signal).
-      if (iter->group && iter->group->done.load(std::memory_order_acquire)) continue;
+      if (iter->active_group && iter->active_group->done.load(std::memory_order_acquire)) continue;
 
       auto* tcb = iter->tcb;
       if (!best || tcb->is_higher_priority_than(best_priority)) {
@@ -69,33 +69,33 @@ WaitNode* Waitable::pick_best() noexcept
    return best;
 }
 
-void Waitable::signal_one(bool acquired) noexcept
+void waitable::signal_one(bool acquired) noexcept
 {
-   WaitNode* wait_node = nullptr;
+   wait_node* wait_node = nullptr;
    {
-      SpinlockGuard guard(wait_lock);
+      spinlock_guard guard(wait_lock);
       wait_node = pick_best();
    }
    if (!wait_node) return; // No current waiters
 
-   if (wait_node->wake_thread(acquired) == ReadyAction::Reschedule) {
+   if (wait_node->wake_thread(acquired) == ready_action::reschedule) {
       cortos_port_pend_reschedule();
    }
 }
 
-void Waitable::signal_all(bool acquired) noexcept
+void waitable::signal_all(bool acquired) noexcept
 {
    bool reschedule = false;
 
    while (true) {
-      WaitNode* wait_node = nullptr;
+      wait_node* wait_node = nullptr;
       {
-         SpinlockGuard guard(wait_lock);
+         spinlock_guard guard(wait_lock);
          wait_node = pick_best();
       }
       if (!wait_node) break;
 
-      if (wait_node->wake_thread(acquired) == ReadyAction::Reschedule) {
+      if (wait_node->wake_thread(acquired) == ready_action::reschedule) {
          reschedule = true;
       }
    }
@@ -104,12 +104,12 @@ void Waitable::signal_all(bool acquired) noexcept
    }
 }
 
-void Waitable::for_each_waiter(WaiterVisitor visitor) const
+void waitable::for_each_waiter(waiter_visitor visitor) const
 {
    // TODO: Might need a spinlock for cross-core waiting?
    for (auto* iter = head; iter; iter = iter->next) {
       if (!iter->active) continue;
-      if (iter->group && iter->group->done.load(std::memory_order_acquire)) continue;
+      if (iter->active_group && iter->active_group->done.load(std::memory_order_acquire)) continue;
       if (!iter->tcb) continue;
 
       visitor(iter->tcb->create_waiter());

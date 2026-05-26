@@ -12,16 +12,16 @@ namespace cortos
 {
 
 template<std::size_t Max>
-class WaitableRefVector
+class waitable_ref_vector
 {
 private:
-   std::array<Waitable*, Max> store{};
+   std::array<waitable*, Max> store{};
    std::size_t count = 0;
 
 public:
-   constexpr WaitableRefVector() = default;
-   using iterator = Waitable**;
-   using const_iterator = Waitable* const*;
+   constexpr waitable_ref_vector() = default;
+   using iterator = waitable**;
+   using const_iterator = waitable* const*;
 
    iterator begin()
    {
@@ -58,19 +58,19 @@ public:
      return store.size();
    }
 
-   Waitable* const& operator[](std::size_t index) const noexcept
+   waitable* const& operator[](std::size_t index) const noexcept
    {
       CORTOS_ASSERT(index < count);
       return store[index];
    }
 
-   void push(Waitable* waitable)
+   void push(waitable* waitable)
    {
       CORTOS_ASSERT(count < store.size());
       store[count++] = waitable;
    }
 
-   void push_range(std::span<Waitable* const> waitables)
+   void push_range(std::span<waitable* const> waitables)
    {
       CORTOS_ASSERT(count + waitables.size() <= store.size());
       std::ranges::copy(waitables, store.data() + count);
@@ -96,18 +96,18 @@ public:
 };
 
 
-class WaitableGroupLock
+class waitable_group_lock
 {
 private:
-   WaitableRefVector<config::MAX_WAIT_NODES> group;
+   waitable_ref_vector<config::max_wait_nodes> group;
 
 public:
-   WaitableGroupLock(WaitableGroupLock const&) = delete;
-   WaitableGroupLock(WaitableGroupLock&&) = delete;
-   WaitableGroupLock& operator=(WaitableGroupLock const&) = delete;
-   WaitableGroupLock& operator=(WaitableGroupLock&&) = delete;
+   waitable_group_lock(waitable_group_lock const&) = delete;
+   waitable_group_lock(waitable_group_lock&&) = delete;
+   waitable_group_lock& operator=(waitable_group_lock const&) = delete;
+   waitable_group_lock& operator=(waitable_group_lock&&) = delete;
 
-   explicit WaitableGroupLock(std::span<Waitable* const> waitables)
+   explicit waitable_group_lock(std::span<waitable* const> waitables)
    {
       group.push_range(waitables);
       group.sort_by_address();
@@ -122,7 +122,7 @@ public:
       }
    }
 
-   ~WaitableGroupLock()
+   ~waitable_group_lock()
    {
       auto n = group.size();
       while (n--) {

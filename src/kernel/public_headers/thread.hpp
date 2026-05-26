@@ -13,78 +13,78 @@ namespace cortos
  * @brief Core affinity mask
  *
  * Bit flags indicating which cores a thread can run on.
- * Use bitwise OR to combine cores: Core0 | Core1
+ * Use bitwise OR to combine cores: core0 | core1
  */
-struct CoreAffinity
+struct core_affinity
 {
    std::uint32_t mask;
-   constexpr explicit CoreAffinity(std::uint32_t m) : mask(m) {}
+   constexpr explicit core_affinity(std::uint32_t m) : mask(m) {}
    constexpr explicit operator std::uint32_t() const { return mask; }
-   constexpr CoreAffinity operator|(CoreAffinity rhs) const { return CoreAffinity{mask | rhs.mask}; }
-   constexpr CoreAffinity operator&(CoreAffinity rhs) const { return CoreAffinity{mask & rhs.mask}; }
+   constexpr core_affinity operator|(core_affinity rhs) const { return core_affinity{mask | rhs.mask}; }
+   constexpr core_affinity operator&(core_affinity rhs) const { return core_affinity{mask & rhs.mask}; }
    [[nodiscard]] constexpr bool allows(uint32_t core_id) const noexcept { return (mask & (1u << core_id)) != 0; }
-   [[nodiscard]] constexpr static CoreAffinity from_id(std::uint32_t core_id) { return CoreAffinity{1u << core_id}; }
+   [[nodiscard]] constexpr static core_affinity from_id(std::uint32_t core_id) { return core_affinity{1u << core_id}; }
 };
 // Predefined core masks
-inline constexpr CoreAffinity Core0 = CoreAffinity{0x01};
-inline constexpr CoreAffinity Core1 = CoreAffinity{0x02};
-inline constexpr CoreAffinity Core2 = CoreAffinity{0x04};
-inline constexpr CoreAffinity Core3 = CoreAffinity{0x08};
-inline constexpr CoreAffinity AnyCore = CoreAffinity{0xFFFFFFFF};
+inline constexpr core_affinity core0 = core_affinity{0x01};
+inline constexpr core_affinity core1 = core_affinity{0x02};
+inline constexpr core_affinity core2 = core_affinity{0x04};
+inline constexpr core_affinity core3 = core_affinity{0x08};
+inline constexpr core_affinity any_core = core_affinity{0xFFFFFFFF};
 
 
 /**
  * @brief Joinable CoRTOS thread handle.
  *
  * Owns a running kernel thread. The thread's TCB is constructed inside the user-provided
- * stack buffer, so both the @c Thread object and the stack buffer must outlive the thread.
+ * stack buffer, so both the @c thread object and the stack buffer must outlive the thread.
  *
  * The destructor asserts the thread is terminated (i.e. no implicit detach).
  */
-class Thread
+class thread
 {
 public:
-   using Id = std::uint32_t;
-   using EntryFn = Function<void(), 48, HeapPolicy::NoHeap>;
+   using id = std::uint32_t;
+   using entry_fn = function<void(), 48, heap_policy::no_heap>;
 
-   struct Priority
+   struct priority
    {
       std::uint8_t val;
-      constexpr Priority(std::uint8_t v) : val(v) {}     // Intentionally implicit
+      constexpr priority(std::uint8_t v) : val(v) {}     // Intentionally implicit
       constexpr operator uint8_t() const { return val; } // Intentionally implicit
    };
 
 
    /**
     * @brief Create empty thread handle.
-    * A registered Thread can be moved into this.
+    * A registered thread can be moved into this.
     */
-   constexpr Thread() = default;
+   constexpr thread() = default;
    /**
     * @brief Create and register a new thread.
-    * @param entry Thread entry function.
+    * @param entry thread entry function.
     * @param stack User-owned stack buffer (must remain valid until termination).
     * @param priority Initial priority.
-    * @param affinity Core affinity (defaults to AnyCore).
+    * @param affinity Core affinity (defaults to any_core).
     */
-   Thread(EntryFn&& entry, std::span<std::byte> stack, Priority priority, CoreAffinity affinity = AnyCore);
-   ~Thread();
-   Thread(Thread&&) noexcept;
-   Thread& operator=(Thread&&) noexcept;
-   Thread(Thread const&)            = delete;
-   Thread& operator=(Thread const&) = delete;
+   thread(entry_fn&& entry, std::span<std::byte> stack, priority priority, core_affinity affinity = any_core);
+   ~thread();
+   thread(thread&&) noexcept;
+   thread& operator=(thread&&) noexcept;
+   thread(thread const&)            = delete;
+   thread& operator=(thread const&) = delete;
 
    /**
     * @brief Get thread ID
     * @return Unique thread identifier
     */
-   [[nodiscard]] Id get_id() const noexcept;
+   [[nodiscard]] id get_id() const noexcept;
 
    /**
     * @brief Get thread priority
     * @return Current effective priority (base + inherited)
     */
-   [[nodiscard]] Priority priority() const noexcept;
+   [[nodiscard]] priority get_priority() const noexcept;
 
    /**
     * @brief Wait for thread to exit
@@ -98,7 +98,7 @@ public:
    static std::size_t reserved_stack_size();
 
 private:
-   struct ThreadControlBlock* tcb{nullptr};
+   struct thread_control_block* tcb{nullptr};
 };
 
 namespace this_thread
@@ -107,12 +107,12 @@ namespace this_thread
 /**
    * @brief Get current thread ID
    */
-[[nodiscard]] Thread::Id id();
+[[nodiscard]] thread::id id();
 
 /**
    * @brief Get current thread (effective) priority
    */
-[[nodiscard]] Thread::Priority priority();
+[[nodiscard]] thread::priority priority();
 
 /**
    * @brief Get current CPU core ID (0-based)
@@ -122,8 +122,8 @@ namespace this_thread
 /**
    * @brief Exit current thread
    *
-   * Marks current thread as Terminated. Thread never runs again.
-   * Scheduler switches to next ready thread.
+   * Marks current thread as terminated. thread never runs again.
+   * scheduler switches to next ready thread.
    *
    * Note: If thread entry function returns, this is called automatically.
    */

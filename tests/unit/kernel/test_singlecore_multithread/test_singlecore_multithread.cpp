@@ -14,7 +14,7 @@
 
 using namespace cortos;
 
-static_assert(config::CORES == 1, "Test suite is designed for single core configuration only");
+static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
 int main(int argc, char** argv)
 {
@@ -27,12 +27,12 @@ int main(int argc, char** argv)
 
 struct ThreadSafeLog
 {
-   void push(Thread::Id id)
+   void push(thread::id id)
    {
       std::lock_guard<std::mutex> g(m);
       v.push_back(id);
    }
-   std::vector<Thread::Id> v;
+   std::vector<thread::id> v;
    std::mutex m;
 };
 
@@ -43,12 +43,12 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack1{};
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack2{};
 
-   std::vector<Thread::Id> order;
+   std::vector<thread::id> order;
 
    kernel::initialise();
 
-   Thread t1([&]{ order.push_back(this_thread::id()); }, stack1, Thread::Priority(0), Core0);
-   Thread t2([&]{ order.push_back(this_thread::id()); }, stack2, Thread::Priority(0), Core0);
+   thread t1([&]{ order.push_back(this_thread::id()); }, stack1, thread::priority(0), core0);
+   thread t2([&]{ order.push_back(this_thread::id()); }, stack2, thread::priority(0), core0);
 
    ASSERT_EQ(kernel::active_threads(), 2u) << "Not all threads registered";
 
@@ -56,8 +56,8 @@ TEST(SingleCoreMultiThread_Test,
 
    EXPECT_EQ(kernel::active_threads(), 0u) << "Not all threads terminated";
    ASSERT_EQ(order.size(), 2u)             << "Not all threads started";
-   EXPECT_EQ(order[0], Thread::Id(1));
-   EXPECT_EQ(order[1], Thread::Id(2));
+   EXPECT_EQ(order[0], thread::id(1));
+   EXPECT_EQ(order[1], thread::id(2));
 
    kernel::finalise();
 }
@@ -68,7 +68,7 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack1{};
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack2{};
 
-   std::vector<Thread::Id> order;
+   std::vector<thread::id> order;
 
    auto worker = [&](int stages)
    {
@@ -80,8 +80,8 @@ TEST(SingleCoreMultiThread_Test,
 
    kernel::initialise();
 
-   Thread t1([&]{ worker(3); }, stack1, Thread::Priority(0), Core0);
-   Thread t2([&]{ worker(3); }, stack2, Thread::Priority(0), Core0);
+   thread t1([&]{ worker(3); }, stack1, thread::priority(0), core0);
+   thread t2([&]{ worker(3); }, stack2, thread::priority(0), core0);
 
    ASSERT_EQ(kernel::active_threads(), 2u);
 
@@ -90,8 +90,8 @@ TEST(SingleCoreMultiThread_Test,
    EXPECT_EQ(kernel::active_threads(), 0u);
    ASSERT_EQ(order.size(), 6u);
 
-   const std::array<Thread::Id, 6> expected{
-      Thread::Id(1), Thread::Id(2), Thread::Id(1), Thread::Id(2), Thread::Id(1), Thread::Id(2)
+   const std::array<thread::id, 6> expected{
+      thread::id(1), thread::id(2), thread::id(1), thread::id(2), thread::id(1), thread::id(2)
    };
    for (size_t i = 0; i < expected.size(); ++i) {
       EXPECT_EQ(order[i], expected[i]) << "Mismatch at index " << i;
@@ -107,21 +107,21 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack_lo{};
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack_hi{};
 
-   std::vector<Thread::Id> order;
+   std::vector<thread::id> order;
 
    kernel::initialise();
 
    // Lower priority first (numerically larger == lower priority in your code base as described)
-   Thread low([&]{ order.push_back(this_thread::id()); }, stack_lo, Thread::Priority(5), Core0);
-   Thread high([&]{ order.push_back(this_thread::id()); }, stack_hi, Thread::Priority(0), Core0);
+   thread low([&]{ order.push_back(this_thread::id()); }, stack_lo, thread::priority(5), core0);
+   thread high([&]{ order.push_back(this_thread::id()); }, stack_hi, thread::priority(0), core0);
 
    ASSERT_EQ(kernel::active_threads(), 2u);
 
    kernel::start();
 
    ASSERT_EQ(order.size(), 2u);
-   EXPECT_EQ(order[0], Thread::Id(2)) << "High priority thread should run first";
-   EXPECT_EQ(order[1], Thread::Id(1)) << "Low priority thread should run second";
+   EXPECT_EQ(order[0], thread::id(2)) << "High priority thread should run first";
+   EXPECT_EQ(order[1], thread::id(1)) << "Low priority thread should run second";
 
    kernel::finalise();
 }
@@ -133,7 +133,7 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s2{};
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s3{};
 
-   std::vector<Thread::Id> order;
+   std::vector<thread::id> order;
 
    auto worker = [&](int stages)
    {
@@ -145,9 +145,9 @@ TEST(SingleCoreMultiThread_Test,
 
    kernel::initialise();
 
-   Thread t1([&]{ worker(3); }, s1, Thread::Priority(0), Core0);
-   Thread t2([&]{ worker(3); }, s2, Thread::Priority(0), Core0);
-   Thread t3([&]{ worker(3); }, s3, Thread::Priority(0), Core0);
+   thread t1([&]{ worker(3); }, s1, thread::priority(0), core0);
+   thread t2([&]{ worker(3); }, s2, thread::priority(0), core0);
+   thread t3([&]{ worker(3); }, s3, thread::priority(0), core0);
 
    ASSERT_EQ(kernel::active_threads(), 3u);
 
@@ -155,10 +155,10 @@ TEST(SingleCoreMultiThread_Test,
 
    ASSERT_EQ(order.size(), 9u);
 
-   const std::array<Thread::Id, 9> expected{
-      Thread::Id(1), Thread::Id(2), Thread::Id(3),
-      Thread::Id(1), Thread::Id(2), Thread::Id(3),
-      Thread::Id(1), Thread::Id(2), Thread::Id(3),
+   const std::array<thread::id, 9> expected{
+      thread::id(1), thread::id(2), thread::id(3),
+      thread::id(1), thread::id(2), thread::id(3),
+      thread::id(1), thread::id(2), thread::id(3),
    };
 
    for (size_t i = 0; i < expected.size(); ++i) {
@@ -178,24 +178,24 @@ TEST(SingleCoreMultiThread_Test,
 
    kernel::initialise();
 
-   Thread t1(
+   thread t1(
       [&]{
          markers.push_back(1); // t1 start
          // No yield here; cooperatively hog until it returns.
          markers.push_back(2); // t1 end
       },
       s1,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
-   Thread t2(
+   thread t2(
       [&]{
          markers.push_back(3); // t2 start
       },
       s2,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
    kernel::start();
@@ -214,7 +214,7 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::array<std::byte, 16 * 1024>, 30> stacks{};
 
 
-   std::vector<Thread> threads;
+   std::vector<thread> threads;
    threads.reserve(stacks.size());
    std::vector<uint32_t> markers;
 
@@ -227,7 +227,7 @@ TEST(SingleCoreMultiThread_Test,
          this_thread::yield();
          markers.push_back(this_thread::id());
       },
-      stack, Thread::Priority(0), Core0);
+      stack, thread::priority(0), core0);
    }
 
    kernel::start();
@@ -253,7 +253,7 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::array<std::byte, 16 * 1024>, 30> stacks{};
 
 
-   std::vector<Thread> threads;
+   std::vector<thread> threads;
    threads.reserve(stacks.size());
    std::vector<uint32_t> markers;
 
@@ -266,7 +266,7 @@ TEST(SingleCoreMultiThread_Test,
          this_thread::yield(); // Should reenqueue same thread leading to double number pushback
          markers.push_back(this_thread::id());
       },
-      stack, Thread::Priority(prio--), Core0);
+      stack, thread::priority(prio--), core0);
    }
 
    kernel::start();
@@ -292,7 +292,7 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_creator{};
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_child{};
 
-   Thread child_thread;
+   thread child_thread;
 
    std::vector<int> marker;
 
@@ -300,24 +300,24 @@ TEST(SingleCoreMultiThread_Test,
 
    kernel::initialise();
 
-   Thread creator(
+   thread creator(
       [&]{
          marker.push_back(10); // 10 is the priority of the creator thread and marks when it ran
 
-         child_thread = Thread(
+         child_thread = thread(
             [&]{
                marker.push_back(9);
             },
             s_child,
-            Thread::Priority(9),
-            Core0
+            thread::priority(9),
+            core0
          );
 
          marker.push_back(10);
       },
       s_creator,
-      Thread::Priority(10),
-      Core0
+      thread::priority(10),
+      core0
    );
 
    // Only one thread should be registered (creator) as child_thread handle is empty
@@ -344,7 +344,7 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_creator{};
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_child{};
 
-   Thread child_thread;
+   thread child_thread;
 
    std::vector<int> marker;
 
@@ -352,24 +352,24 @@ TEST(SingleCoreMultiThread_Test,
 
    kernel::initialise();
 
-   Thread creator(
+   thread creator(
       [&]{
          marker.push_back(10); // 10 is the priority of the creator thread and marks when it ran
 
-         child_thread = Thread(
+         child_thread = thread(
             [&]{
                marker.push_back(11);
             },
             s_child,
-            Thread::Priority(11),
-            Core0
+            thread::priority(11),
+            core0
          );
 
          marker.push_back(10);
       },
       s_creator,
-      Thread::Priority(10),
-      Core0
+      thread::priority(10),
+      core0
    );
 
    // Only one thread should be registered (creator) as child_thread handle is empty
@@ -396,7 +396,7 @@ TEST(SingleCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_creator{};
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_child{};
 
-   Thread child_thread;
+   thread child_thread;
 
    std::vector<uint32_t> marker;
 
@@ -404,19 +404,19 @@ TEST(SingleCoreMultiThread_Test,
 
    kernel::initialise();
 
-   Thread creator(
+   thread creator(
       [&]{
          marker.push_back(this_thread::id());
 
-         child_thread = Thread(
+         child_thread = thread(
             [&]{
                marker.push_back(this_thread::id());
                this_thread::yield();
                marker.push_back(this_thread::id());
             },
             s_child,
-            Thread::Priority(10),
-            Core0
+            thread::priority(10),
+            core0
          );
 
          marker.push_back(this_thread::id());
@@ -424,8 +424,8 @@ TEST(SingleCoreMultiThread_Test,
          marker.push_back(this_thread::id());
       },
       s_creator,
-      Thread::Priority(10),
-      Core0
+      thread::priority(10),
+      core0
    );
 
    // Only one thread should be registered (creator) as child_thread handle is empty
@@ -465,18 +465,18 @@ TEST(SingleCoreMultiThread_Test,
 
    // GIVEN:
 
-   Thread target(
+   thread target(
       [&]{
          target_started.store(true, std::memory_order_release);
          this_thread::yield(); // SHould immediately resume after reschedule
          target_finished.store(true, std::memory_order_release);
       },
       target_stack,
-      Thread::Priority(3),
-      Core0
+      thread::priority(3),
+      core0
    );
 
-   Thread joiner(
+   thread joiner(
       [&]{
          // Join should block until target exits.
          target.join();
@@ -486,8 +486,8 @@ TEST(SingleCoreMultiThread_Test,
          ASSERT_TRUE(target_finished.load(std::memory_order_acquire));
       },
       joiner_stack,
-      Thread::Priority(0), // higher priority
-      Core0
+      thread::priority(0), // higher priority
+      core0
    );
 
    // WHEN:
@@ -520,7 +520,7 @@ TEST(SingleCoreMultiThread_Test,
 
    // GIVEN:
 
-   Thread target(
+   thread target(
       [&]{
          phase.store(1, std::memory_order_release);
          this_thread::yield();
@@ -528,11 +528,11 @@ TEST(SingleCoreMultiThread_Test,
          phase.store(2, std::memory_order_release);
       },
       target_stack,
-      Thread::Priority(4),
-      Core0
+      thread::priority(4),
+      core0
    );
 
-   Thread joiner_hi(
+   thread joiner_hi(
       [&]{
          // This should block immediately, allowing target and other joiner to run.
          phase.store(10, std::memory_order_release);
@@ -542,11 +542,11 @@ TEST(SingleCoreMultiThread_Test,
          phase.store(11, std::memory_order_release);
       },
       joiner_hi_stack,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
-   Thread joiner_lo(
+   thread joiner_lo(
       [&]{
          phase.store(20, std::memory_order_release);
          target.join();
@@ -555,8 +555,8 @@ TEST(SingleCoreMultiThread_Test,
          phase.store(21, std::memory_order_release);
       },
       joiner_lo_stack,
-      Thread::Priority(2),
-      Core0
+      thread::priority(2),
+      core0
    );
 
    // WHEN:
@@ -588,29 +588,29 @@ TEST(SingleCoreMultiThread_Test,
 
    // GIVEN:
 
-   Thread target(
+   thread target(
       [&]{
          // Finish immediately
          target_finished.store(true, std::memory_order_release);
       },
       target_stack,
-      Thread::Priority(0), // higher priority so it runs and finishes first
-      Core0
+      thread::priority(0), // higher priority so it runs and finishes first
+      core0
    );
 
    // Helper to yield enough times so target definitely runs before joiner.
-   Thread helper(
+   thread helper(
       [&]{
          // With target prio 0, it will run before us anyway, this just adds reschedule points.
          this_thread::yield();
          this_thread::yield();
       },
       helper_stack,
-      Thread::Priority(1),
-      Core0
+      thread::priority(1),
+      core0
    );
 
-   Thread joiner(
+   thread joiner(
       [&]{
          joiner_called_join.store(true, std::memory_order_release);
          target.join(); // should return immediately because target already terminated
@@ -618,8 +618,8 @@ TEST(SingleCoreMultiThread_Test,
          ASSERT_TRUE(target_finished.load(std::memory_order_acquire));
       },
       joiner_stack,
-      Thread::Priority(3), // lower priority than target/helper
-      Core0
+      thread::priority(3), // lower priority than target/helper
+      core0
    );
 
    // WHEN:
@@ -653,18 +653,18 @@ TEST(SingleCoreMultiThread_Test,
    // GIVEN:
 
    // Construct in C, B, A order so lambdas can reference already-created objects.
-   Thread c(
+   thread c(
       [&]{
          // finish last dependency first
          c_done.store(true, std::memory_order_release);
          order.fetch_add(1, std::memory_order_acq_rel);
       },
       stack_c,
-      Thread::Priority(2),
-      Core0
+      thread::priority(2),
+      core0
    );
 
-   Thread b(
+   thread b(
       [&]{
          c.join();
          b_done.store(true, std::memory_order_release);
@@ -672,11 +672,11 @@ TEST(SingleCoreMultiThread_Test,
          ASSERT_TRUE(c_done.load(std::memory_order_acquire));
       },
       stack_b,
-      Thread::Priority(1),
-      Core0
+      thread::priority(1),
+      core0
    );
 
-   Thread a(
+   thread a(
       [&]{
          b.join();
          a_done.store(true, std::memory_order_release);
@@ -685,8 +685,8 @@ TEST(SingleCoreMultiThread_Test,
          ASSERT_TRUE(c_done.load(std::memory_order_acquire));
       },
       stack_a,
-      Thread::Priority(0), // highest priority: will block immediately on join, allowing others to run
-      Core0
+      thread::priority(0), // highest priority: will block immediately on join, allowing others to run
+      core0
    );
 
    // WHEN:

@@ -5,21 +5,21 @@ using namespace cortos;
 
 
 /**
- * @brief Convenience aliases for common Function configurations
+ * @brief Convenience aliases for common function configurations
  */
 namespace function_aliases
 {
    /// General-purpose callback (no heap, 32-byte inline storage)
-   using Callback = Function<void(), 32, HeapPolicy::NoHeap>;
+   using callback = function<void(), 32, heap_policy::no_heap>;
 
    /// Thread entry point (no heap, 32-byte inline storage)
-   using ThreadEntry = Function<void(), 32, HeapPolicy::NoHeap>;
+   using ThreadEntry = function<void(), 32, heap_policy::no_heap>;
 
    /// Deferred work handler (no heap, 64-byte inline storage for more captures)
-   using DeferredWork = Function<void(), 64, HeapPolicy::NoHeap>;
+   using DeferredWork = function<void(), 64, heap_policy::no_heap>;
 
    /// Flexible callback (can use heap if needed)
-   using FlexibleCallback = Function<void(), 32, HeapPolicy::CanUseHeap>;
+   using FlexibleCallback = function<void(), 32, heap_policy::can_use_heap>;
 }
 
 /* ============================================================================
@@ -33,12 +33,12 @@ protected:
 };
 
 /* ============================================================================
- * Basic Function Tests (void())
+ * Basic function Tests (void())
  * ========================================================================= */
 
 TEST_F(FunctionTest, DefaultConstructor)
 {
-   Function<void()> f;
+   function<void()> f;
 
    EXPECT_FALSE(f);
 }
@@ -48,7 +48,7 @@ TEST_F(FunctionTest, FunctionPointer)
    int call_count = 0;
    auto callback = [&call_count]() { call_count++; };
 
-   Function<void()> f(callback);
+   function<void()> f(callback);
 
    EXPECT_TRUE(f);
    f();
@@ -62,7 +62,7 @@ TEST_F(FunctionTest, LambdaNoCapture)
 {
    int value = 0;
 
-   Function<void()> f([&value]() { value = 42; });
+   function<void()> f([&value]() { value = 42; });
 
    EXPECT_TRUE(f);
    f();
@@ -74,7 +74,7 @@ TEST_F(FunctionTest, LambdaWithCapture)
    int x = 10;
    int result = 0;
 
-   Function<void(), 32> f([x, &result]() { result = x * 2; });
+   function<void(), 32> f([x, &result]() { result = x * 2; });
 
    EXPECT_TRUE(f);
    f();
@@ -85,8 +85,8 @@ TEST_F(FunctionTest, MoveConstruction)
 {
    int call_count = 0;
 
-   Function<void()> f1([&call_count]() { call_count++; });
-   Function<void()> f2(std::move(f1));
+   function<void()> f1([&call_count]() { call_count++; });
+   function<void()> f2(std::move(f1));
 
    EXPECT_FALSE(f1);  // f1 is now empty
    EXPECT_TRUE(f2);   // f2 has the callable
@@ -99,8 +99,8 @@ TEST_F(FunctionTest, MoveAssignment)
 {
    int call_count = 0;
 
-   Function<void()> f1([&call_count]() { call_count++; });
-   Function<void()> f2;
+   function<void()> f1([&call_count]() { call_count++; });
+   function<void()> f2;
 
    f2 = std::move(f1);
 
@@ -115,7 +115,7 @@ TEST_F(FunctionTest, Reset)
 {
    int call_count = 0;
 
-   Function<void()> f([&call_count]() { call_count++; });
+   function<void()> f([&call_count]() { call_count++; });
 
    EXPECT_TRUE(f);
    f.reset();
@@ -127,7 +127,7 @@ TEST_F(FunctionTest, Emplace)
    int value1 = 0;
    int value2 = 0;
 
-   Function<void()> f([&value1]() { value1 = 1; });
+   function<void()> f([&value1]() { value1 = 1; });
 
    f();
    EXPECT_EQ(value1, 1);
@@ -142,12 +142,12 @@ TEST_F(FunctionTest, Emplace)
 }
 
 /* ============================================================================
- * Function with Return Values
+ * function with Return Values
  * ========================================================================= */
 
 TEST_F(FunctionTest, ReturnInt)
 {
-   Function<int()> f([]() { return 42; });
+   function<int()> f([]() { return 42; });
 
    EXPECT_TRUE(f);
    EXPECT_EQ(f(), 42);
@@ -155,19 +155,19 @@ TEST_F(FunctionTest, ReturnInt)
 
 TEST_F(FunctionTest, ReturnDouble)
 {
-   Function<double()> f([]() { return 3.14; });
+   function<double()> f([]() { return 3.14; });
 
    EXPECT_TRUE(f);
    EXPECT_DOUBLE_EQ(f(), 3.14);
 }
 
 /* ============================================================================
- * Function with Arguments
+ * function with Arguments
  * ========================================================================= */
 
 TEST_F(FunctionTest, SingleArgument)
 {
-   Function<int(int)> f([](int x) { return x * 2; });
+   function<int(int)> f([](int x) { return x * 2; });
 
    EXPECT_TRUE(f);
    EXPECT_EQ(f(5), 10);
@@ -176,7 +176,7 @@ TEST_F(FunctionTest, SingleArgument)
 
 TEST_F(FunctionTest, MultipleArguments)
 {
-   Function<int(int, int)> f([](int a, int b) { return a + b; });
+   function<int(int, int)> f([](int a, int b) { return a + b; });
 
    EXPECT_TRUE(f);
    EXPECT_EQ(f(3, 4), 7);
@@ -185,7 +185,7 @@ TEST_F(FunctionTest, MultipleArguments)
 
 TEST_F(FunctionTest, MixedArguments)
 {
-   Function<double(int, double, float)> f([](int a, double b, float c) {
+   function<double(int, double, float)> f([](int a, double b, float c) {
       return a + b + c;
    });
 
@@ -200,7 +200,7 @@ TEST_F(FunctionTest, MixedArguments)
 TEST_F(FunctionTest, NoHeapPolicy_SmallCallable)
 {
    // Should compile - small lambda fits in inline storage
-   Function<void(), 32, HeapPolicy::NoHeap> f([]() {});
+   function<void(), 32, heap_policy::no_heap> f([]() {});
 
    EXPECT_TRUE(f);
    f();
@@ -211,7 +211,7 @@ TEST_F(FunctionTest, CanUseHeapPolicy)
    // Should compile - can use heap if needed
    int a = 1, b = 2, c = 3, d = 4, e = 5;
 
-   Function<void(), 16, HeapPolicy::CanUseHeap> f([a, b, c, d, e]() {
+   function<void(), 16, heap_policy::can_use_heap> f([a, b, c, d, e]() {
       // Large capture, will use heap
       (void)a; (void)b; (void)c; (void)d; (void)e;
    });
@@ -226,7 +226,7 @@ TEST_F(FunctionTest, CanUseHeapPolicy)
 //    int a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8;
 //
 //    // Compile error: callable too large for 8-byte inline storage
-//    Function<void(), 8, HeapPolicy::NoHeap> func([a, b, c, d, e, f, g, h]() {});
+//    function<void(), 8, heap_policy::no_heap> func([a, b, c, d, e, f, g, h]() {});
 // }
 
 /* ============================================================================
@@ -236,7 +236,7 @@ TEST_F(FunctionTest, CanUseHeapPolicy)
 TEST_F(FunctionTest, InlineStorageSize8)
 {
    // Very small inline storage
-   Function<void(), 8, HeapPolicy::NoHeap> f([]() {});
+   function<void(), 8, heap_policy::no_heap> f([]() {});
 
    EXPECT_TRUE(f);
    f();
@@ -247,7 +247,7 @@ TEST_F(FunctionTest, InlineStorageSize64)
    // Larger inline storage
    int a = 1, b = 2, c = 3;
 
-   Function<void(), 64, HeapPolicy::NoHeap> f([a, b, c]() {
+   function<void(), 64, heap_policy::no_heap> f([a, b, c]() {
       (void)a; (void)b; (void)c;
    });
 
@@ -274,7 +274,7 @@ TEST_F(FunctionTest, Functor)
    int count = 0;
    SimpleFunctor functor{count};
 
-   Function<void()> f(functor);
+   function<void()> f(functor);
 
    EXPECT_TRUE(f);
    f();
@@ -298,7 +298,7 @@ TEST_F(FunctionTest, FunctorWithReturn)
 {
    FunctorWithReturn functor{21};
 
-   Function<int()> f(functor);
+   function<int()> f(functor);
 
    EXPECT_TRUE(f);
    EXPECT_EQ(f(), 42);
@@ -313,7 +313,7 @@ TEST_F(FunctionTest, CallbackAlias)
    using namespace function_aliases;
 
    int count = 0;
-   Callback cb([&count]() { count++; });
+   callback cb([&count]() { count++; });
 
    EXPECT_TRUE(cb);
    cb();
@@ -338,14 +338,14 @@ TEST_F(FunctionTest, ThreadEntryAlias)
 
 TEST_F(FunctionTest, NullptrConstruction)
 {
-   Function<void()> f(nullptr);
+   function<void()> f(nullptr);
 
    EXPECT_FALSE(f);
 }
 
 TEST_F(FunctionTest, MultipleResets)
 {
-   Function<void()> f([]() {});
+   function<void()> f([]() {});
 
    EXPECT_TRUE(f);
    f.reset();
@@ -357,7 +357,7 @@ TEST_F(FunctionTest, MultipleResets)
 TEST_F(FunctionTest, SelfMoveAssignment)
 {
    int count = 0;
-   Function<void()> f([&count]() { count++; });
+   function<void()> f([&count]() { count++; });
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wself-move"
@@ -383,7 +383,7 @@ TEST_F(FunctionTest, DestructorCleansUp)
    destructor_count = 0;
 
    {
-      Function<void()> f(CountingCallable{});
+      function<void()> f(CountingCallable{});
       EXPECT_TRUE(f);
    }  // f destroyed here
 

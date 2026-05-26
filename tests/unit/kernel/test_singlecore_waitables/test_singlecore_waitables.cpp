@@ -12,7 +12,7 @@
 
 using namespace cortos;
 
-static_assert(config::CORES == 1, "Test suite is designed for single core configuration only");
+static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
 int main(int argc, char** argv)
 {
@@ -39,10 +39,10 @@ class SingleCoreWaitables_Test : public ::testing::Test
 /**
  * @brief Test waitable that records hook activity and snapshots.
  *
- * This is intentionally simple: it uses the built-in Waitable queueing and
+ * This is intentionally simple: it uses the built-in waitable queueing and
  * exposes signal methods directly.
  */
-class TestWaitable final : public Waitable
+class TestWaitable final : public waitable
 {
 public:
    std::atomic<uint32_t> blocked_calls{0};
@@ -50,7 +50,7 @@ public:
 
    // Record the last waiter snapshot seen (best-effort diagnostics).
    // Single-core tests => no heavy synchronization required beyond atomic.
-   std::atomic<Thread::Id>       last_id{0};
+   std::atomic<thread::id>       last_id{0};
    std::atomic<uint8_t>          last_base_prio{0xFF};
    std::atomic<uint8_t>          last_eff_prio{0xFF};
    std::atomic<uint32_t>         last_pinned_core{0xFFFFFFFF};
@@ -59,7 +59,7 @@ public:
    void fire_all(bool acquired = true) noexcept { signal_all(acquired); }
 
 protected:
-   void on_thread_blocked(Waiter waiter) override
+   void on_thread_blocked(waiter waiter) override
    {
       blocked_calls.fetch_add(1, std::memory_order_relaxed);
       last_id.store(waiter.id, std::memory_order_relaxed);
@@ -68,7 +68,7 @@ protected:
       last_pinned_core.store(waiter.pinned_core, std::memory_order_relaxed);
    }
 
-   void on_thread_removed(Waiter waiter) override
+   void on_thread_removed(waiter waiter) override
    {
       removed_calls.fetch_add(1, std::memory_order_relaxed);
       // Also update the last snapshot so we know removal hooks saw something sane.
@@ -89,27 +89,27 @@ TEST_F(SingleCoreWaitables_Test,
 
    TestWaitable w;
 
-   Waitable::Result result{};
+   waitable::result result{};
    bool waiter_completed = false;
 
-   Thread waiter(
+   thread waiter(
       [&]{
          result = kernel::wait_for(w);
          waiter_completed = true;
       },
       waiter_stack,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
-   Thread signaler(
+   thread signaler(
       [&]{
          // At this point, waiter will have already run and blocked.
          w.fire_one(true);
       },
       signaler_stack,
-      Thread::Priority(1),
-      Core0
+      thread::priority(1),
+      core0
    );
 
    // WHEN:
@@ -137,26 +137,26 @@ TEST_F(SingleCoreWaitables_Test,
 
    TestWaitable w;
 
-   Waitable::Result result{};
+   waitable::result result{};
    bool waiter_completed = false;
 
-   Thread waiter(
+   thread waiter(
       [&]{
          result = kernel::wait_for(w);
          waiter_completed = true;
       },
       waiter_stack,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
-   Thread signaler(
+   thread signaler(
       [&]{
          w.fire_one(false);
       },
       signaler_stack,
-      Thread::Priority(1),
-      Core0
+      thread::priority(1),
+      core0
    );
 
    // WHEN:
@@ -181,26 +181,26 @@ TEST_F(SingleCoreWaitables_Test,
    TestWaitable w0;
    TestWaitable w1;
 
-   Waitable::Result result{};
+   waitable::result result{};
    bool waiter_completed = false;
 
-   Thread waiter(
+   thread waiter(
       [&]{
          result = kernel::wait_for_any(w0, w1);
          waiter_completed = true;
       },
       waiter_stack,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
-   Thread signaler(
+   thread signaler(
       [&]{
          w1.fire_one(true);
       },
       signaler_stack,
-      Thread::Priority(1),
-      Core0
+      thread::priority(1),
+      core0
    );
 
    // WHEN:
@@ -236,7 +236,7 @@ TEST_F(SingleCoreWaitables_Test,
    std::atomic<int> wake_order{0}; // 0 none, 1 hi first, 2 lo second, etc.
    std::atomic<int> step{0};
 
-   Thread hi(
+   thread hi(
       [&]{
          auto r = kernel::wait_for(w);
          (void)r;
@@ -250,11 +250,11 @@ TEST_F(SingleCoreWaitables_Test,
          step.fetch_add(1);
       },
       hi_stack,
-      Thread::Priority(0), // highest priority (numerically smallest)
-      Core0
+      thread::priority(0), // highest priority (numerically smallest)
+      core0
    );
 
-   Thread lo(
+   thread lo(
       [&]{
          auto r = kernel::wait_for(w);
          (void)r;
@@ -267,11 +267,11 @@ TEST_F(SingleCoreWaitables_Test,
          step.fetch_add(1);
       },
       lo_stack,
-      Thread::Priority(3),
-      Core0
+      thread::priority(3),
+      core0
    );
 
-   Thread signaler(
+   thread signaler(
       [&]{
          // Wake one: should pick best priority (hi).
          w.fire_one(true);
@@ -280,8 +280,8 @@ TEST_F(SingleCoreWaitables_Test,
          w.fire_one(true);
       },
       signaler_stack,
-      Thread::Priority(10),
-      Core0
+      thread::priority(10),
+      core0
    );
 
    // WHEN:
@@ -319,17 +319,17 @@ TEST_F(SingleCoreWaitables_Test,
    TestWaitable w;
    std::atomic<int> woke_count{0};
 
-   Thread a([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, a_stack, Thread::Priority(2), Core0);
-   Thread b([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, b_stack, Thread::Priority(1), Core0);
-   Thread c([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, c_stack, Thread::Priority(3), Core0);
+   thread a([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, a_stack, thread::priority(2), core0);
+   thread b([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, b_stack, thread::priority(1), core0);
+   thread c([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, c_stack, thread::priority(3), core0);
 
-   Thread signaler(
+   thread signaler(
       [&]{
          w.fire_all(true);
       },
       signaler_stack,
-      Thread::Priority(7),
-      Core0
+      thread::priority(7),
+      core0
    );
 
    // WHEN:
@@ -353,11 +353,11 @@ TEST_F(SingleCoreWaitables_Test,
 
    TestWaitable w;
 
-   Thread::Id waiter_id = 0;
-   Waitable::Result result{};
+   thread::id waiter_id = 0;
+   waitable::result result{};
    bool waiter_completed = false;
 
-   Thread waiter(
+   thread waiter(
       [&]{
          // Capture our ID inside the running thread
          waiter_id = this_thread::id();
@@ -366,11 +366,11 @@ TEST_F(SingleCoreWaitables_Test,
          waiter_completed = true;
       },
       waiter_stack,
-      Thread::Priority(4),
-      Core0
+      thread::priority(4),
+      core0
    );
 
-   Thread signaler(
+   thread signaler(
       [&]{
          // Validate snapshot produced in on_thread_blocked()
          ASSERT_EQ(w.last_id.load(), waiter_id);
@@ -381,8 +381,8 @@ TEST_F(SingleCoreWaitables_Test,
          w.fire_one(true);
       },
       signaler_stack,
-      Thread::Priority(5),
-      Core0
+      thread::priority(5),
+      core0
    );
 
    // WHEN:

@@ -15,13 +15,13 @@ int main()
 
    std::println("CoRTOS initialised.");
 
-   cortos::Thread user_thread(
+   cortos::thread user_thread(
       [](){
          std::println("User thread executed.");
       },
       user_stack,
-      cortos::Thread::Priority(0),
-      cortos::AnyCore
+      cortos::thread::priority(0),
+      cortos::any_core
    );
 
    cortos::kernel::start();

@@ -10,11 +10,11 @@ namespace cortos
 /* ============================================================================
  * Configuration validation
  * ========================================================================= */
-static_assert(1 <= config::CORES && config::CORES <= CORTOS_PORT_CORE_COUNT,
+static_assert(1 <= config::cores && config::cores <= CORTOS_PORT_CORE_COUNT,
               "Port does not support configured amount of cores.");
-static_assert(config::TIME_CORE_ID < config::CORES,
+static_assert(config::time_core_id < config::cores,
               "Time core set to non-existent core.");
-static_assert(config::MAX_PRIORITIES < std::numeric_limits<uint32_t>::digits,
+static_assert(config::max_priorities < std::numeric_limits<uint32_t>::digits,
               "Priorities unsupported by kernel implementation.");
 
 } // namespace cortos

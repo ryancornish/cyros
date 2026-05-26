@@ -42,7 +42,7 @@ targets.
         |  kernel           |      |  time driver      |
         |  schedulers,      |      |  monotonic time,  |
         |  threads,         |      |  scheduled        |
-        |  Waitable         |      |  callbacks        |
+        |  waitable         |      |  callbacks        |
         +-------------------+      +-------------------+
                  |                          |
                  v                          v
@@ -84,15 +84,15 @@ arrangement.
 
 It has **no concept of time.** This is the deliberately radical choice - an
 RTOS core that doesn't know what a second is. The kernel only cares whether a
-thread is `Ready`, `Running`, or `Blocked`, and what it's blocked *on*: an
-abstract object I call a **`Waitable`**.
+thread is `ready`, `running`, or `blocked`, and what it's blocked *on*: an
+abstract object I call a **`waitable`**.
 
 Each core owns its own scheduler state. Core-local structures are only ever
 mutated by their owning core; cross-core operations go through an explicit
 message inbox plus an inter-core interrupt. The kernel gives you thread creation
 and the blocking/unblocking machinery, and not much else.
 
-> The `Waitable` abstraction works well as a notification-style primitive, but
+> The `waitable` abstraction works well as a notification-style primitive, but
 > I'm not happy with it yet for *conditional acquisition* - the mutex-locking
 > case, where waking is contingent on a predicate. Expect this area to change.
 
@@ -116,7 +116,7 @@ I ship a few time driver implementations to pick between:
 ### userlib layer (`libcortos`)
 
 userlib is where the convenient, user-facing primitives live - the things built
-*on top of* the kernel primitives (thread creation and `Waitable` blocking).
+*on top of* the kernel primitives (thread creation and `waitable` blocking).
 
 My guiding principle here is **pick-and-choose**. userlib is a set of features,
 and a downstream project includes only the ones it wants:
@@ -149,7 +149,7 @@ CoRTOS is in early development. Roughly where things stand:
 **Implemented and under test**
 
 - Per-core SMP scheduler with fixed-priority selection and core affinity.
-- Thread creation, joining, and the `Waitable` blocking model
+- Thread creation, joining, and the `waitable` blocking model
   (`wait_for`, `wait_for_any`).
 - Linux / Boost.Context simulation port.
 - Time driver implementations (periodic, tickless, simulation).
@@ -160,7 +160,7 @@ CoRTOS is in early development. Roughly where things stand:
 - Reschedule semantics that behave identically on cooperative (Linux) and
   preemptive (bare-metal) ports.
 - Spinlock and cross-core synchronisation details.
-- The `Waitable` interface, particularly conditional acquisition.
+- The `waitable` interface, particularly conditional acquisition.
 - The time driver public interface (moving away from a singleton-style API).
 
 **Planned**

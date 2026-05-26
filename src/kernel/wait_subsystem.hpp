@@ -10,50 +10,50 @@
 namespace cortos
 {
 
-struct ThreadControlBlock;
-struct WaitGroup;
+struct thread_control_block;
+struct wait_group;
 
-enum class ReadyAction : uint8_t
+enum class ready_action : uint8_t
 {
-   None,
-   Reschedule
+   none,
+   reschedule,
 };
 
 /**
- * @brief Intrusive wait-queue node for a thread waiting on a Waitable
+ * @brief Intrusive wait-queue node for a thread waiting on a waitable
  *
- * A WaitNode represents a single thread's participation in a wait operation
- * on a specific Waitable. Nodes are allocated from a per-thread pool and are
- * linked into a Waitable's wait queue for the duration of the wait.
+ * A wait_node represents a single thread's participation in a wait operation
+ * on a specific waitable. Nodes are allocated from a per-thread pool and are
+ * linked into a waitable's wait queue for the duration of the wait.
  *
- * Each wait_for_any() call creates one WaitNode per Waitable involved.
+ * Each wait_for_any() call creates one wait_node per waitable involved.
  * Nodes are removed and returned to the pool when the wait completes.
  */
-struct WaitNode
+struct wait_node
 {
-   static constexpr uint8_t INVALID_INDEX = std::numeric_limits<uint8_t>::max();
+   static constexpr uint8_t invalid_index = std::numeric_limits<uint8_t>::max();
    // Pool bookkeeping
-   uint8_t slot{INVALID_INDEX};
+   uint8_t slot{invalid_index};
    bool  active{false};
 
-   // Intrusive links for the Waitable's waiter queue
-   WaitNode* next{nullptr};
-   WaitNode* prev{nullptr};
+   // Intrusive links for the waitable's waiter queue
+   wait_node* next{nullptr};
+   wait_node* prev{nullptr};
 
-   ThreadControlBlock* tcb{nullptr};
-   Waitable*    waitable{nullptr};
-   WaitGroup*      group{nullptr};
+   waitable*             active_waitable{nullptr};
+   wait_group*           active_group{nullptr};
+   thread_control_block* tcb{nullptr};
 
    // Which index in wait_for_any({span}) this node corresponds to
-   uint8_t index{INVALID_INDEX};
+   uint8_t index{invalid_index};
 
    constexpr void reset() noexcept
    {
       active   = false;
       next = prev = nullptr;
-      waitable = nullptr;
-      group    = nullptr;
-      index    = INVALID_INDEX;
+      active_waitable = nullptr;
+      active_group    = nullptr;
+      index    = invalid_index;
       // tcb and slot are explicitly not reset
    }
 
@@ -65,53 +65,53 @@ struct WaitNode
    /**
     * @brief Attempt to wake the owning thread for this wait node
     *
-    * Resolves a wait_for_any() race by attempting to "win" the associated WaitGroup.
-    * If this node wins, all wait nodes participating in the same WaitGroup are
+    * Resolves a wait_for_any() race by attempting to "win" the associated wait_group.
+    * If this node wins, all wait nodes participating in the same wait_group are
     * torn down (unlinked from their Waitables and returned to the per-thread pool),
     * and the owning thread is made runnable on its pinned core.
     *
-    * If the WaitGroup has already been won by another node, this call is a no-op.
+    * If the wait_group has already been won by another node, this call is a no-op.
     *
     * @param acquired True if the woken thread acquired a resource as part of the wake
-    *                 (e.g., mutex handoff). This is recorded in the WaitGroup result.
+    *                 (e.g., mutex handoff). This is recorded in the wait_group result.
     */
-   [[nodiscard]] ReadyAction wake_thread(bool acquired) const noexcept;
+   [[nodiscard]] ready_action wake_thread(bool acquired) const noexcept;
 };
 
 /**
- * @brief Per-thread pool of WaitNode objects
+ * @brief Per-thread pool of wait_node objects
  *
  * Each thread owns a fixed-capacity pool of WaitNodes used to represent
  * active wait operations. This avoids dynamic allocation in the kernel
  * and guarantees bounded resource usage.
  *
  * A single wait_for_any() operation may allocate multiple nodes from the
- * pool (one per Waitable). All nodes are reclaimed when the wait completes.
+ * pool (one per waitable). All nodes are reclaimed when the wait completes.
  */
-class WaitNodePool
+class wait_node_pool
 {
-   static constexpr std::size_t N = config::MAX_WAIT_NODES;
+   static constexpr std::size_t N = config::max_wait_nodes;
    static constexpr uint32_t ALL_NODES_FREE = (N == 32) ? std::numeric_limits<uint32_t>::max() : (1u << static_cast<uint32_t>(N)) - 1u;
-   std::array<WaitNode, N> nodes{};
+   std::array<wait_node, N> nodes{};
    uint32_t free_mask{ALL_NODES_FREE};
 
 public:
-   static_assert(N > 0, "MAX_WAIT_NODES must be > 0");
-   static_assert(N <= std::numeric_limits<uint32_t>::digits, "WaitNodePool currently supports up to 32 nodes via uint32_t mask");
+   static_assert(N > 0, "max_wait_nodes must be > 0");
+   static_assert(N <= std::numeric_limits<uint32_t>::digits, "wait_node_pool currently supports up to 32 nodes via uint32_t mask");
 
-   constexpr explicit WaitNodePool(ThreadControlBlock* tcb) noexcept
+   constexpr explicit wait_node_pool(thread_control_block* tcb) noexcept
    {
       for (std::size_t i = 0; auto& node : nodes) {
          node.tcb  = tcb;
          node.slot = i++;
       }
    }
-   ~WaitNodePool() = default;
+   ~wait_node_pool() = default;
 
-   WaitNodePool(WaitNodePool const&)            = delete;
-   WaitNodePool& operator=(WaitNodePool const&) = delete;
-   WaitNodePool(WaitNodePool&&)            = delete;
-   WaitNodePool& operator=(WaitNodePool&&) = delete;
+   wait_node_pool(wait_node_pool const&)            = delete;
+   wait_node_pool& operator=(wait_node_pool const&) = delete;
+   wait_node_pool(wait_node_pool&&)            = delete;
+   wait_node_pool& operator=(wait_node_pool&&) = delete;
 
    void reset_all() noexcept
    {
@@ -129,9 +129,9 @@ public:
     * Allocate a node, initialize its identity fields, and return it.
     * Returns nullptr if pool exhausted.
     */
-   WaitNode* alloc(WaitGroup& group, Waitable& waitable, uint8_t index) noexcept
+   wait_node* alloc(wait_group& g, waitable& w, uint8_t index) noexcept
    {
-      CORTOS_ASSERT(index != WaitNode::INVALID_INDEX);
+      CORTOS_ASSERT(index != wait_node::invalid_index);
 
       if (free_mask == 0) return nullptr;
 
@@ -146,8 +146,8 @@ public:
 
       node.reset();
       node.active   = true;
-      node.group    = &group;
-      node.waitable = &waitable;
+      node.active_group    = &g;
+      node.active_waitable = &w;
       node.index    = index;
 
       return &node;
@@ -155,9 +155,9 @@ public:
 
    /**
     * Free a node back to the pool.
-    * Caller is responsible for unlinking it from any Waitable queue first.
+    * Caller is responsible for unlinking it from any waitable queue first.
     */
-   void free(WaitNode& node) noexcept
+   void free(wait_node& node) noexcept
    {
       std::ptrdiff_t index = &node - nodes.data();
 
@@ -175,12 +175,12 @@ public:
     * Iterate active nodes (optionally filtered by group).
     * Useful for teardown: remove all nodes for a completed wait.
     */
-   void for_each_active(Function<void(WaitNode&), 32, HeapPolicy::NoHeap>&& fn, WaitGroup* only_group = nullptr) noexcept
+   void for_each_active(function<void(wait_node&), 32, heap_policy::no_heap>&& fn, wait_group* only_group = nullptr) noexcept
    {
       for (std::size_t i = 0; i < N; ++i) {
          auto& node = nodes[i];
          if (!node.active) continue;
-         if (only_group && node.group != only_group) continue;
+         if (only_group && node.active_group != only_group) continue;
          fn(node);
       }
    }
@@ -189,7 +189,7 @@ public:
     * Return pointer to node by slot index (even if inactive).
     * Primarily for debugging / assertions.
     */
-   [[nodiscard]] WaitNode* at(std::size_t slot) noexcept
+   [[nodiscard]] wait_node* at(std::size_t slot) noexcept
    {
       if (slot >= N) return nullptr;
       return &nodes[slot];
@@ -199,14 +199,14 @@ public:
 /**
  * @brief Coordination state for a multi-wait (wait_for_any) operation
  *
- * A WaitGroup tracks the outcome of a wait_for_any() call across multiple
+ * A wait_group tracks the outcome of a wait_for_any() call across multiple
  * Waitables. It records which waitable won the race and whether the waking
  * thread acquired a resource.
  *
  * Exactly one signal may win the group. All other signals are ignored once
  * the group is marked complete.
  */
-struct WaitGroup
+struct wait_group
 {
    std::atomic<bool> done{false};
    int       winner_index{-1};

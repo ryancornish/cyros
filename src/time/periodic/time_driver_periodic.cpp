@@ -17,51 +17,51 @@ namespace cortos::time::periodic
    /**
     * @brief Scheduled callback slot
     */
-   struct Slot
+   struct slot
    {
       uint32_t id{0};
       uint64_t when{0};
-      Callback cb{nullptr};
+      callback cb{nullptr};
       void* arg{nullptr};
    };
 
    /**
     * @brief RAII interrupt disable/restore guard
     */
-   struct IrqGuard
+   struct irq_guard
    {
       uint32_t state;
 
-      IrqGuard() noexcept : state(cortos_port_irq_save()) {}
-      ~IrqGuard() { cortos_port_irq_restore(state); }
+      irq_guard() noexcept : state(cortos_port_irq_save()) {}
+      ~irq_guard() { cortos_port_irq_restore(state); }
 
-      IrqGuard(IrqGuard const&) = delete;
-      IrqGuard& operator=(IrqGuard const&) = delete;
+      irq_guard(irq_guard const&) = delete;
+      irq_guard& operator=(irq_guard const&) = delete;
    };
 
    /**
     * @brief Internal periodic driver state
     */
-   struct DriverState
+   struct driver_state
    {
       bool initialised{false};
       uint32_t tick_frequency_hz{0};
       uint32_t next_id{1};
       bool started{false};
-      std::array<Slot, MAX_SCHEDULED_CALLBACKS> slots{};
+      std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
    };
 
-   static constinit DriverState ds{};
+   static constinit driver_state ds{};
 
    static void fire_due_isr(uint64_t now_ticks) noexcept
    {
       // No heap, ISR-safe.
       // Free slot before invoking callback to avoid reentrancy hazards.
-      for (auto& slot : ds.slots) {
-         if (slot.id != 0 && slot.when <= now_ticks) {
-            auto cb = slot.cb;
-            auto arg = slot.arg;
-            slot = Slot{};
+      for (auto& s : ds.slots) {
+         if (s.id != 0 && s.when <= now_ticks) {
+            auto cb = s.cb;
+            auto arg = s.arg;
+            s = slot{};
             cb(arg);
          }
       }
@@ -92,15 +92,15 @@ void initialise(uint32_t frequency_hz)
 void finalise()
 {
    CORTOS_ASSERT(periodic::ds.initialised);
-   periodic::ds = periodic::DriverState{};
+   periodic::ds = periodic::driver_state{};
 }
 
-[[nodiscard]] TimePoint now() noexcept
+[[nodiscard]] time_point now() noexcept
 {
-   return TimePoint{cortos_port_time_now()};
+   return time_point{cortos_port_time_now()};
 }
 
-[[nodiscard]] Handle schedule_at(TimePoint tp, Callback cb, void* arg) noexcept
+[[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept
 {
    if (!cb) {
       return {};
@@ -110,7 +110,7 @@ void finalise()
    // For now this assumes schedule_at() is called on the time core.
    // Future work can enqueue requests to the time core and poke it via IPI.
 
-   periodic::IrqGuard guard;
+   periodic::irq_guard guard;
 
    for (auto& slot : periodic::ds.slots) {
       if (slot.id == 0) {
@@ -126,25 +126,25 @@ void finalise()
 
          // In periodic mode, no one-shot rearm is required.
          // The periodic ISR will pick this callback up when due.
-         return Handle{id};
+         return handle{id};
       }
    }
 
    return {}; // out of slots
 }
 
-bool cancel(Handle h) noexcept
+bool cancel(handle h) noexcept
 {
    if (h.id == 0) {
       return false;
    }
 
    // Same SMP note as schedule_at().
-   periodic::IrqGuard guard;
+   periodic::irq_guard guard;
 
    for (auto& slot : periodic::ds.slots) {
       if (slot.id == h.id) {
-         slot = periodic::Slot{};
+         slot = periodic::slot{};
          return true;
       }
    }
@@ -152,18 +152,18 @@ bool cancel(Handle h) noexcept
    return false;
 }
 
-[[nodiscard]] Duration from_milliseconds(uint32_t ms) noexcept
+[[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
    const uint64_t f = cortos_port_time_freq_hz();
    const uint64_t ticks = periodic::ceil_div_u64(static_cast<uint64_t>(ms) * f, 1000ULL);
-   return Duration{ticks};
+   return duration{ticks};
 }
 
-[[nodiscard]] Duration from_microseconds(uint32_t us) noexcept
+[[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
    const uint64_t f = cortos_port_time_freq_hz();
    const uint64_t ticks = periodic::ceil_div_u64(static_cast<uint64_t>(us) * f, 1'000'000ULL);
-   return Duration{ticks};
+   return duration{ticks};
 }
 
 void start() noexcept

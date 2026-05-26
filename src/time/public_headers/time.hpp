@@ -14,67 +14,67 @@ namespace cortos::time
 /**
  * @brief Monotonic time point in driver ticks.
  *
- * A TimePoint is an absolute timestamp measured in the logical tick units of
+ * A time_point is an absolute timestamp measured in the logical tick units of
  * the active time driver. The underlying unit is defined by the driver
  * frequency passed to initialise().
  *
  * Time points may be compared directly. Use duration_between() to form a
- * non-negative Duration between two points.
+ * non-negative duration between two points.
  */
-struct TimePoint
+struct time_point
 {
    uint64_t value{0};
 
-   constexpr TimePoint() = default;
-   constexpr explicit TimePoint(uint64_t v) : value(v) {}
+   constexpr time_point() = default;
+   constexpr explicit time_point(uint64_t v) : value(v) {}
 
-   constexpr bool operator==(TimePoint rhs) const { return value == rhs.value; }
-   constexpr bool operator!=(TimePoint rhs) const { return value != rhs.value; }
-   constexpr bool operator< (TimePoint rhs) const { return value <  rhs.value; }
-   constexpr bool operator<=(TimePoint rhs) const { return value <= rhs.value; }
-   constexpr bool operator> (TimePoint rhs) const { return value >  rhs.value; }
-   constexpr bool operator>=(TimePoint rhs) const { return value >= rhs.value; }
+   constexpr bool operator==(time_point rhs) const { return value == rhs.value; }
+   constexpr bool operator!=(time_point rhs) const { return value != rhs.value; }
+   constexpr bool operator< (time_point rhs) const { return value <  rhs.value; }
+   constexpr bool operator<=(time_point rhs) const { return value <= rhs.value; }
+   constexpr bool operator> (time_point rhs) const { return value >  rhs.value; }
+   constexpr bool operator>=(time_point rhs) const { return value >= rhs.value; }
 
-   [[nodiscard]] static constexpr TimePoint max()
+   [[nodiscard]] static constexpr time_point max()
    {
-      return TimePoint{std::numeric_limits<uint64_t>::max()};
+      return time_point{std::numeric_limits<uint64_t>::max()};
    }
 };
 
 /**
  * @brief Time duration in driver ticks.
  *
- * A Duration is a relative span of time measured in the same logical units as
- * TimePoint.
+ * A duration is a relative span of time measured in the same logical units as
+ * time_point.
  */
-struct Duration
+struct duration
 {
    uint64_t value{0};
 
-   constexpr Duration() = default;
-   constexpr explicit Duration(uint64_t v) : value(v) {}
+   constexpr duration() = default;
+   constexpr explicit duration(uint64_t v) : value(v) {}
 
-   constexpr TimePoint operator+(TimePoint tp) const
+   constexpr time_point operator+(time_point tp) const
    {
-      return TimePoint{tp.value + value};
+      return time_point{tp.value + value};
    }
 
-   constexpr Duration operator+(Duration rhs) const
+   constexpr duration operator+(duration rhs) const
    {
-      return Duration{value + rhs.value};
+      return duration{value + rhs.value};
    }
 
-   constexpr bool operator==(Duration rhs) const { return value == rhs.value; }
-   constexpr bool operator< (Duration rhs) const { return value <  rhs.value; }
-   constexpr bool operator> (Duration rhs) const { return value >  rhs.value; }
+   constexpr bool operator==(duration rhs) const { return value == rhs.value; }
+   constexpr bool operator< (duration rhs) const { return value <  rhs.value; }
+   constexpr bool operator> (duration rhs) const { return value >  rhs.value; }
 };
 
 /**
  * @brief Add a duration to a time point.
  */
-constexpr TimePoint operator+(TimePoint tp, Duration d)
+constexpr time_point operator+(time_point tp, duration d)
 {
-   return TimePoint{tp.value + d.value};
+   return time_point{tp.value + d.value};
 }
 
 /**
@@ -82,22 +82,22 @@ constexpr TimePoint operator+(TimePoint tp, Duration d)
  *
  * If @p a is earlier than @p b, the result is clamped to zero.
  */
-constexpr Duration duration_between(TimePoint a, TimePoint b)
+constexpr duration duration_between(time_point a, time_point b)
 {
-   return (a.value >= b.value) ? Duration{a.value - b.value} : Duration{0};
+   return (a.value >= b.value) ? duration{a.value - b.value} : duration{0};
 }
 
 /**
  * @brief Scheduled callback function type.
  */
-using Callback = void(*)(void*);
+using callback = void(*)(void*);
 
 /**
  * @brief Opaque handle for a scheduled callback.
  *
  * A handle with id == 0 is invalid.
  */
-struct Handle
+struct handle
 {
    uint32_t id{0};
 };
@@ -112,7 +112,7 @@ struct Handle
  *
  * @param frequency_hz Logical driver frequency in Hz.
  *
- * This frequency defines the tick units used by TimePoint, Duration, and the
+ * This frequency defines the tick units used by time_point, duration, and the
  * conversion helpers such as from_milliseconds().
  */
 void initialise(uint32_t frequency_hz);
@@ -130,44 +130,44 @@ void finalise();
  *
  * @return Current time in driver ticks.
  */
-[[nodiscard]] TimePoint now() noexcept;
+[[nodiscard]] time_point now() noexcept;
 
 /**
  * @brief Schedule a callback to run at or after a specific time point.
  *
  * @param tp Absolute deadline in driver ticks.
- * @param cb Callback to invoke.
+ * @param cb callback to invoke.
  * @param arg User argument passed to the callback.
- * @return Handle for later cancellation, or an invalid handle on failure.
+ * @return handle for later cancellation, or an invalid handle on failure.
  *
  * The callback may execute in interrupt context on embedded targets, or in the
  * caller / simulation context depending on the active driver.
  */
-[[nodiscard]] Handle schedule_at(TimePoint tp, Callback cb, void* arg) noexcept;
+[[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept;
 
 /**
  * @brief Cancel a scheduled callback.
  *
- * @param h Handle returned by schedule_at().
+ * @param h handle returned by schedule_at().
  * @return True if the callback was cancelled before firing, false otherwise.
  *
  * It is safe to cancel an invalid, unknown, or already-fired handle.
  */
-bool cancel(Handle h) noexcept;
+bool cancel(handle h) noexcept;
 
 /**
- * @brief Convert milliseconds to a driver Duration.
+ * @brief Convert milliseconds to a driver duration.
  *
  * Conversion is rounded up so that non-zero durations do not undersleep.
  */
-[[nodiscard]] Duration from_milliseconds(uint32_t ms) noexcept;
+[[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept;
 
 /**
- * @brief Convert microseconds to a driver Duration.
+ * @brief Convert microseconds to a driver duration.
  *
  * Conversion is rounded up so that non-zero durations do not undersleep.
  */
-[[nodiscard]] Duration from_microseconds(uint32_t us) noexcept;
+[[nodiscard]] duration from_microseconds(uint32_t us) noexcept;
 
 /**
  * @brief Start the time driver.

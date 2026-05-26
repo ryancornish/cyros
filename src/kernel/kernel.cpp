@@ -1,4 +1,4 @@
-// TODO split up the implementation!
+// todo split up the implementation!
 
 #include <cortos/kernel/kernel.hpp>
 #include <cortos/port/port.h>
@@ -16,10 +16,10 @@
 #include <limits>
 #include <ranges>
 
-// Invariants list:
-// Only core X mutates Scheduler[X].ready_matrix, current_thread, blocked lists, etc.
-// Cross-core ops must go through Scheduler::post_to_inbox() + cortos_port_send_reschedule_ipi(core).
-// Spinlocks are only used with preemption disabled (and maybe IRQs) inside kernel land.
+// invariants list:
+// only core x mutates scheduler[x].ready_matrix, current_thread, blocked lists, etc.
+// cross-core ops must go through scheduler::post_to_inbox() + cortos_port_send_reschedule_ipi(core).
+// spinlocks are only used with preemption disabled (and maybe ir_qs) inside kernel land.
 
 
 namespace cortos
@@ -28,28 +28,28 @@ namespace cortos
 static void reschedule_this_core();
 static void core_entry();
 
-class Kernel
+class kernel_state
 {
 private:
-   Spinlock lock;
-   std::array<Scheduler, config::CORES> schedulers;
+   spinlock lock;
+   std::array<scheduler, config::cores> schedulers;
    std::atomic<bool>    initialised{false};
    std::atomic<bool>        running{false};
    std::atomic<uint32_t> active_threads{0};
    std::atomic<uint32_t> thread_id_generator{1};
 
-   template<std::size_t... Is>
-   constexpr explicit Kernel(std::index_sequence<Is...>) noexcept : schedulers{ Scheduler{Is}... } {}
+   template<std::size_t... is>
+   constexpr explicit kernel_state(std::index_sequence<is...>) noexcept : schedulers{ scheduler{is}... } {}
 
 public:
-   // Compile-time construct the scheduler list with incrementing core id's.
-   constexpr Kernel() noexcept : Kernel(std::make_index_sequence<config::CORES>{}) {}
+   // compile-time construct the scheduler list with incrementing core id's.
+   constexpr kernel_state() noexcept : kernel_state(std::make_index_sequence<config::cores>{}) {}
 
-   ~Kernel() = default;
-   Kernel(Kernel&&) = delete;
-   Kernel(Kernel const&) = delete;
-   Kernel& operator=(Kernel&&) = delete;
-   Kernel& operator=(Kernel const&) = delete;
+   ~kernel_state() = default;
+   kernel_state(kernel_state&&) = delete;
+   kernel_state(kernel_state const&) = delete;
+   kernel_state& operator=(kernel_state&&) = delete;
+   kernel_state& operator=(kernel_state const&) = delete;
 
    [[nodiscard]] bool  is_running() const noexcept
    {
@@ -61,19 +61,19 @@ public:
       return active_threads.load(std::memory_order_seq_cst);
    }
 
-   [[nodiscard]] Scheduler& scheduler_for_core(std::uint32_t core_id) noexcept
+   [[nodiscard]] scheduler& scheduler_for_core(std::uint32_t core_id) noexcept
    {
       return schedulers.at(core_id);
    }
 
-   [[nodiscard]] Scheduler& scheduler_for_this_core() noexcept
+   [[nodiscard]] scheduler& scheduler_for_this_core() noexcept
    {
       return scheduler_for_core(cortos_port_get_core_id());
    }
 
-   [[nodiscard]] Scheduler& scheduler_for_time_core() noexcept
+   [[nodiscard]] scheduler& scheduler_for_time_core() noexcept
    {
-      return scheduler_for_core(config::TIME_CORE_ID);
+      return scheduler_for_core(config::time_core_id);
    }
 
    [[nodiscard]] std::uint32_t generate_thread_id()
@@ -83,7 +83,7 @@ public:
 
    void initialise() noexcept
    {
-      CORTOS_ASSERT(!initialised); // Cannot invoke kernel::initialise twice (without finalising down in between)
+      CORTOS_ASSERT(!initialised); // cannot invoke kernel::initialise twice (without finalising down in between)
 
       cortos_port_init(reschedule_this_core);
 
@@ -96,16 +96,16 @@ public:
    void start() noexcept
    {
       CORTOS_ASSERT(initialised); // kernel::initialise() must be called first
-      CORTOS_ASSERT(active_threads > 0); // Starting the kernel with no registered threads is not allowed
+      CORTOS_ASSERT(active_threads > 0); // starting the kernel with no registered threads is not allowed
 
       running.store(true, std::memory_order_release);
 
-      cortos_port_start_cores(config::CORES, core_entry);
+      cortos_port_start_cores(config::cores, core_entry);
    }
 
    void finalise() noexcept
    {
-      CORTOS_ASSERT(initialised.load(std::memory_order_relaxed)); // In theory there shouldn't be anything to reset yet... so why was this invoked? smells buggy
+      CORTOS_ASSERT(initialised.load(std::memory_order_relaxed)); // in theory there shouldn't be anything to reset yet... so why was this invoked? smells buggy
 
       running.store(false, std::memory_order_relaxed);
       thread_id_generator.store(1, std::memory_order_relaxed);
@@ -117,8 +117,8 @@ public:
       }
    }
 
-   // Load-balancing pinner
-   void pin_thread_to_core(ThreadControlBlock& tcb) noexcept
+   // load-balancing pinner
+   void pin_thread_to_core(thread_control_block& tcb) noexcept
    {
       uint32_t best_core = std::numeric_limits<uint32_t>::max();
       uint32_t best_load = std::numeric_limits<uint32_t>::max();
@@ -134,21 +134,21 @@ public:
             found = true;
          }
       }
-      CORTOS_ASSERT(found); // Thread affinity mask allows no cores
+      CORTOS_ASSERT(found); // thread affinity mask allows no cores
 
       schedulers.at(best_core).pin_thread(tcb);
    }
 
-   void register_thread(ThreadControlBlock& tcb) noexcept
+   void register_thread(thread_control_block& tcb) noexcept
    {
       active_threads.fetch_add(1, std::memory_order_seq_cst);
 
       {
-         SpinlockGuard guard(lock);
+         spinlock_guard guard(lock);
          pin_thread_to_core(tcb);
       }
 
-      if (set_thread_ready(tcb) == ReadyAction::Reschedule) {
+      if (set_thread_ready(tcb) == ready_action::reschedule) {
          cortos_port_pend_reschedule();
       }
    }
@@ -160,27 +160,27 @@ public:
    }
 
    /**
-   * @brief Make a thread runnable on its pinned core (SMP-safe).
+   * @brief make a thread runnable on its pinned core (smp-safe).
    *
-   * Transitions @p tcb to the Ready state and enqueues it on the ready queue
-   * of its pinned core. If the thread belongs to another core, a cross-core
+   * transitions @p tcb to the ready state and enqueues it on the ready queue
+   * of its pinned core. if the thread belongs to another core, a cross-core
    * request is posted so that the owning scheduler performs the enqueue.
    *
-   * @param tcb Thread control block of the thread to make runnable.
-   * @return ReadyAction::Reschedule if the thread was queued on the current
+   * @param tcb thread control block of the thread to make runnable.
+   * @return ready_action::reschedule if the thread was queued on the current
    *         core and has higher priority than the running thread, indicating
    *         the caller should request a local reschedule.
    */
-   ReadyAction set_thread_ready(ThreadControlBlock& tcb) noexcept
+   ready_action set_thread_ready(thread_control_block& tcb) noexcept
    {
-      CORTOS_ASSERT_OP(tcb.state, !=, ThreadControlBlock::State::Terminated);
+      CORTOS_ASSERT_OP(tcb.state, !=, thread_control_block::thread_state::terminated);
 
       auto& scheduler = scheduler_for_core(tcb.pinned_core);
 
-      // If cores are not running yet, enqueue directly (even for remote cores)
+      // if cores are not running yet, enqueue directly (even for remote cores)
       if (!running.load(std::memory_order_acquire)) {
          scheduler.set_thread_ready(tcb);
-         return ReadyAction::None;
+         return ready_action::none;
       }
 
       auto this_core = cortos_port_get_core_id();
@@ -188,121 +188,121 @@ public:
          scheduler.set_thread_ready(tcb);
 
          if (tcb.is_higher_priority_than(scheduler.current_thread_priority())) {
-            return ReadyAction::Reschedule;
+            return ready_action::reschedule;
          }
       } else {
          bool posted = scheduler.post_to_inbox({
-            .type = CrossCoreRequest::SetThreadReady,
+            .type = cross_core_request::set_thread_ready,
             .tcb = &tcb
          });
          CORTOS_ASSERT(posted);
       }
-      return ReadyAction::None;
+      return ready_action::none;
    }
 };
-static constinit Kernel KERNEL;
+static constinit kernel_state kernel_instance;
 
-// Use this to examine how much memory the CoRTOS kernel uses.
-[[maybe_unused]] constexpr auto STATIC_SIZEOF_KERNEL = sizeof(KERNEL);
+// use this to examine how much memory the co_rtos kernel uses.
+[[maybe_unused]] constexpr auto static_sizeof_kernel = sizeof(kernel_instance);
 
-/**** KERNEL-global dependants ****/
+/**** kernel-global dependants ****/
 
-// Registered as ISR handler for preemptive scheduling
+// registered as isr handler for preemptive scheduling
 static void reschedule_this_core()
 {
-   auto& scheduler = KERNEL.scheduler_for_this_core();
+   auto& scheduler = kernel_instance.scheduler_for_this_core();
 
    scheduler.reschedule();
 }
 
 static void core_entry()
 {
-   auto& scheduler = KERNEL.scheduler_for_this_core();
+   auto& scheduler = kernel_instance.scheduler_for_this_core();
 
    scheduler.start();
 }
 
 void thread_launcher(void* tcb_ptr)
 {
-   auto* tcb = static_cast<ThreadControlBlock*>(tcb_ptr);
+   auto* tcb = static_cast<thread_control_block*>(tcb_ptr);
 
-   cortos_port_set_tls_pointer(tcb); // For now point TLS to the TCB, but in future, TLS sits just after TCB
+   cortos_port_set_tls_pointer(tcb); // for now point tls to the tcb, but in future, tls sits just after tcb
 
    tcb->entry();
 
-   tcb->state = ThreadControlBlock::State::Terminated;
+   tcb->state = thread_control_block::thread_state::terminated;
 
-   // Signal joiners
+   // signal joiners
    tcb->termination.terminate();
 
-   if (tcb->id == Scheduler::IDLE_THREAD_ID) return; // Idle threads are not apart of the same bookkeeping
+   if (tcb->id == scheduler::idle_thread_id) return; // idle threads are not apart of the same bookkeeping
 
-   KERNEL.unregister_thread();
+   kernel_instance.unregister_thread();
    cortos_port_thread_exit();
 }
 
 void idle_task()
 {
-   while (KERNEL.is_running()) {
+   while (kernel_instance.is_running()) {
       cortos_port_idle();
       cortos_port_pend_reschedule();
    }
 }
 
-ReadyAction WaitNode::wake_thread(bool acquired) const noexcept
+ready_action wait_node::wake_thread(bool acquired) const noexcept
 {
    CORTOS_ASSERT(tcb != nullptr);
-   CORTOS_ASSERT(group != nullptr);
-   CORTOS_ASSERT(waitable != nullptr);
-   CORTOS_ASSERT(index != INVALID_INDEX);
-   CORTOS_ASSERT_OP(tcb->state, ==, ThreadControlBlock::State::Blocked);
+   CORTOS_ASSERT(active_group != nullptr);
+   CORTOS_ASSERT(active_waitable != nullptr);
+   CORTOS_ASSERT(index != invalid_index);
+   CORTOS_ASSERT_OP(tcb->state, ==, thread_control_block::thread_state::blocked);
 
-   if (!group->try_win(static_cast<int>(index), acquired)) {
-      return ReadyAction::None; // lost
+   if (!active_group->try_win(static_cast<int>(index), acquired)) {
+      return ready_action::none; // lost
    }
 
-   // Winner: remove all nodes in this group (including this one)
-   tcb->teardown_wait_group(*group);
+   // winner: remove all nodes in this group (including this one)
+   tcb->teardown_wait_group(*active_group);
 
-   // Thread is ready to be enqueued on its pinned core
-   return KERNEL.set_thread_ready(*tcb);
+   // thread is ready to be enqueued on its pinned core
+   return kernel_instance.set_thread_ready(*tcb);
 }
 
-/**** PUBLIC ****/
+/**** public ****/
 
-Thread::Thread(EntryFn&& entry, std::span<std::byte> stack, Priority priority, CoreAffinity affinity)
+thread::thread(entry_fn&& entry, std::span<std::byte> stack, priority priority, core_affinity affinity)
 {
-   StackLayout slayout(stack, 0);
-   tcb = ::new (slayout.tcb) ThreadControlBlock(
-      KERNEL.generate_thread_id(),
+   stack_layout slayout(stack, 0);
+   tcb = ::new (slayout.tcb) thread_control_block(
+      kernel_instance.generate_thread_id(),
       priority,
       affinity,
       slayout.user_stack,
       std::move(entry)
    );
 
-   KERNEL.register_thread(*tcb);
+   kernel_instance.register_thread(*tcb);
 }
 
-Thread::~Thread()
+thread::~thread()
 {
-   if (tcb == nullptr) return; // Thread handle has been moved from, or is otherwise empty
-   CORTOS_ASSERT(tcb->state == ThreadControlBlock::State::Terminated);
+   if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty
+   CORTOS_ASSERT(tcb->state == thread_control_block::thread_state::terminated);
 }
 
-Thread::Thread(Thread&& other) noexcept : tcb(other.tcb)
+thread::thread(thread&& other) noexcept : tcb(other.tcb)
 {
    other.tcb = nullptr;
 }
 
-Thread& Thread::operator=(Thread&& other) noexcept
+thread& thread::operator=(thread&& other) noexcept
 {
    tcb = other.tcb;
    other.tcb = nullptr;
    return *this;
 }
 
-void Thread::join() noexcept
+void thread::join() noexcept
 {
    CORTOS_ASSERT(tcb != nullptr);
 
@@ -312,19 +312,19 @@ void Thread::join() noexcept
 }
 
 
-void Spinlock::lock()
+void spinlock::lock()
 {
-   KERNEL.scheduler_for_this_core().disable_preemption();
+   kernel_instance.scheduler_for_this_core().disable_preemption();
    while (flag.test_and_set(std::memory_order_acquire)) {
-      // Busy-wait with CPU yield hint
+      // busy-wait with cpu yield hint
       cortos_port_cpu_relax();
    }
 }
 
-void Spinlock::unlock()
+void spinlock::unlock()
 {
    flag.clear(std::memory_order_release);
-   KERNEL.scheduler_for_this_core().enable_preemption();
+   kernel_instance.scheduler_for_this_core().enable_preemption();
 }
 
 namespace kernel
@@ -332,37 +332,37 @@ namespace kernel
 
 void initialise()
 {
-   KERNEL.initialise();
+   kernel_instance.initialise();
 }
 
 void start()
 {
-   KERNEL.start();
+   kernel_instance.start();
 }
 
 void finalise()
 {
-   KERNEL.finalise();
+   kernel_instance.finalise();
 }
 
 std::uint32_t core_count() noexcept
 {
-   return config::CORES;
+   return config::cores;
 }
 
 std::uint32_t active_threads() noexcept
 {
-   return KERNEL.get_active_threads();
+   return kernel_instance.get_active_threads();
 }
 
-Waitable::Result wait_for_any(std::span<Waitable* const> waitables)
+waitable::result wait_for_any(std::span<waitable* const> waitables)
 {
-   CORTOS_ASSERT(waitables.size() > 0);
-   CORTOS_ASSERT_OP(waitables.size(), <=, config::MAX_WAIT_NODES);
+   CORTOS_ASSERT(!waitables.empty());
+   CORTOS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
 
-   auto& scheduler = KERNEL.scheduler_for_this_core();
+   auto& scheduler = kernel_instance.scheduler_for_this_core();
    {
-      WaitableGroupLock lock_group(waitables);
+      waitable_group_lock lock_group(waitables);
 
       scheduler.prepare_block_current_thread(waitables);
    }
@@ -373,24 +373,24 @@ Waitable::Result wait_for_any(std::span<Waitable* const> waitables)
    return result;
 }
 
-Waitable::Result wait_until(Waitable::Predicate predicate, std::span<Waitable* const> waitables)
+waitable::result wait_until(waitable::predicate predicate, std::span<waitable* const> waitables)
 {
-   CORTOS_ASSERT(waitables.size() > 0);
-   CORTOS_ASSERT_OP(waitables.size(), <=, config::MAX_WAIT_NODES);
+   CORTOS_ASSERT(!waitables.empty());
+   CORTOS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
    for (auto* w : waitables) CORTOS_ASSERT(w != nullptr);
 
-   Waitable::Result result{.index = -1, .acquired = false};
+   waitable::result result{.index = -1, .acquired = false};
 
-   // Fast-path: avoid locks
+   // fast-path: avoid locks
    if (predicate()) {
       return result;
    }
 
-   auto& scheduler = KERNEL.scheduler_for_this_core();
+   auto& scheduler = kernel_instance.scheduler_for_this_core();
 
    while (true) {
       {
-         WaitableGroupLock lock_group(waitables);
+         waitable_group_lock lock_group(waitables);
 
          if (predicate()) return result;
 
@@ -407,14 +407,14 @@ Waitable::Result wait_until(Waitable::Predicate predicate, std::span<Waitable* c
 namespace this_thread
 {
 
-[[nodiscard]] Thread::Id id()
+[[nodiscard]] thread::id id()
 {
-   return KERNEL.scheduler_for_this_core().current_thread_id();
+   return kernel_instance.scheduler_for_this_core().current_thread_id();
 }
 
-[[nodiscard]] Thread::Priority priority()
+[[nodiscard]] thread::priority priority()
 {
-   return KERNEL.scheduler_for_this_core().current_thread_priority();
+   return kernel_instance.scheduler_for_this_core().current_thread_priority();
 }
 
 [[nodiscard]] std::uint32_t core_id() noexcept
@@ -424,7 +424,7 @@ namespace this_thread
 
 [[noreturn]] void thread_exit()
 {
-   // TODO
+   // todo
    __builtin_unreachable();
 }
 

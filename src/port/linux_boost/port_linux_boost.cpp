@@ -58,14 +58,14 @@ static_assert(CORTOS_PORT_ENVIRONMENT == 2);
 
 /**
  * For simulating the SMP schedulers on top of linux, we
- * spawn a new pthread (AKA OS-thread) for each configured core - (Except Core0 because that is the initial thread).
+ * spawn a new pthread (AKA OS-thread) for each configured core - (Except core0 because that is the initial thread).
  * Each OS-thread encapsulates a scheduler fiber that is ther "outer-context" for each user-thread pinned to a core.
  * When the user-thread "pends reschedule", the context is switched to this outer fiber so that scheduling can happen
  * on a separate stack and context to the threads.
  */
-struct CpuCore
+struct cpu_core
 {
-   pthread_t pthread{}; // @note This is null/unused for Core0
+   pthread_t pthread{}; // @note This is null/unused for core0
    uint32_t  core_id{}; // Index from 0... num cores
    cortos_port_core_entry_t entry{};
    boost::context::fiber scheduler_fiber;
@@ -73,45 +73,45 @@ struct CpuCore
    /**
     * @brief Primitives to signal/communicate with other cores
     */
-   struct CorePoke
+   struct core_poke
    {
       pthread_mutex_t mutex{};
       pthread_cond_t  cond_var{};
       std::atomic<bool> pending{false}; // Can be set by any core
-      CorePoke()  { pthread_mutex_init(&mutex, nullptr); pthread_cond_init(&cond_var, nullptr); }
-      ~CorePoke() { pthread_cond_destroy(&cond_var); pthread_mutex_destroy(&mutex); }
+      core_poke()  { pthread_mutex_init(&mutex, nullptr); pthread_cond_init(&cond_var, nullptr); }
+      ~core_poke() { pthread_cond_destroy(&cond_var); pthread_mutex_destroy(&mutex); }
    } core_poke;
 
    void start_scheduler();
 };
 
 /**
- * @brief Dynamically-sized array/container wrapper for CpuCore's
+ * @brief Dynamically-sized array/container wrapper for cpu_core's
  *
- * Using a std::vector _would_ be preferable, but impossible as a CpuCore is non-copyable
+ * Using a std::vector _would_ be preferable, but impossible as a cpu_core is non-copyable
  */
-class CpuCoreArray
+class cpu_core_array
 {
 public:
-   using iterator = CpuCore*;
-   using const_iterator = const CpuCore*;
+   using iterator = cpu_core*;
+   using const_iterator = const cpu_core*;
 
-   constexpr CpuCoreArray() = default;
-   explicit CpuCoreArray(size_t count, cortos_port_core_entry_t core_entry)
-      : cores(std::make_unique<CpuCore[]>(count)), count(count)
+   constexpr cpu_core_array() = default;
+   explicit cpu_core_array(size_t count, cortos_port_core_entry_t core_entry)
+      : cores(std::make_unique<cpu_core[]>(count)), count(count)
    {
       for (uint32_t i = 0; i < count; ++i) {
          cores[i].core_id = i;
          cores[i].entry = core_entry;
       }
    }
-   CpuCoreArray(CpuCoreArray&&) noexcept            = default;
-   CpuCoreArray& operator=(CpuCoreArray&&) noexcept = default;
-   CpuCoreArray(CpuCoreArray const&)            = delete;
-   CpuCoreArray& operator=(CpuCoreArray const&) = delete;
+   cpu_core_array(cpu_core_array&&) noexcept            = default;
+   cpu_core_array& operator=(cpu_core_array&&) noexcept = default;
+   cpu_core_array(cpu_core_array const&)            = delete;
+   cpu_core_array& operator=(cpu_core_array const&) = delete;
 
-   CpuCore&       operator[](size_t index)       { return cores[index]; }
-   CpuCore const& operator[](size_t index) const { return cores[index]; }
+   cpu_core&       operator[](size_t index)       { return cores[index]; }
+   cpu_core const& operator[](size_t index) const { return cores[index]; }
 
    [[nodiscard]] size_t size() const { return count; }
 
@@ -122,7 +122,7 @@ public:
    [[nodiscard]] const_iterator end()   const { return cores.get() + count; }
 
 private:
-   std::unique_ptr<CpuCore[]> cores;
+   std::unique_ptr<cpu_core[]> cores;
    size_t count{0};
 };
 
@@ -135,12 +135,12 @@ private:
  * ========================================================================= */
 
 
-struct GlobalState
+struct global_state
 {
    std::atomic<bool>        shutdown_requested{false};
    std::atomic<uint32_t>    active_contexts{0};
    cortos_port_reschedule_t pend_reschedule_handler{nullptr};
-   CpuCoreArray cores;
+   cpu_core_array cores;
 
    /// @brief Have any cores been started?
    [[nodiscard]] bool cores_launched() const { return cores.size() > 0; }
@@ -153,11 +153,11 @@ struct GlobalState
       cores = {};
    }
 };
-static constinit GlobalState global;
+static constinit global_state global;
 
-struct CurrentCoreState
+struct current_core_state
 {
-   CpuCore* core{nullptr};
+   cpu_core* core{nullptr};
 
    // Non-null when we are currently executing inside a thread fiber.
    cortos_port_context* current_context{nullptr};
@@ -169,7 +169,7 @@ struct CurrentCoreState
    // Simulates pointing to fibers dedicated TLS block.
    void* tls_pointer{nullptr};
 };
-static thread_local constinit CurrentCoreState current_core;
+static thread_local constinit current_core_state current_core;
 
 /* ============================================================================
  * Platform Initialization
@@ -332,7 +332,7 @@ extern "C" void cortos_port_thread_exit(void)
  * ========================================================================= */
 
 
-void CpuCore::start_scheduler()
+void cpu_core::start_scheduler()
 {
    scheduler_fiber = boost::context::fiber(
       [this](boost::context::fiber&& caller) mutable -> boost::context::fiber
@@ -368,7 +368,7 @@ void cortos_port_start_cores(size_t cores_to_use, cortos_port_core_entry_t entry
    CORTOS_ASSERT(cores_to_use > 0); // Invoking with 0 cores_to_use is invalid
    CORTOS_ASSERT(cores_to_use <= CORTOS_PORT_CORE_COUNT);
 
-   global.cores = CpuCoreArray(cores_to_use, entry);
+   global.cores = cpu_core_array(cores_to_use, entry);
 
    for (auto& core : global.cores) {
       // No need to spawn the first core/thread as that is assigned to this current calling core/thread
@@ -379,27 +379,27 @@ void cortos_port_start_cores(size_t cores_to_use, cortos_port_core_entry_t entry
          nullptr,
          +[](void* arg)-> void*
          {
-            auto* init = static_cast<CpuCore*>(arg);
+            auto* init = static_cast<cpu_core*>(arg);
             current_core.core = init;
 
             // Enter the scheduler-fiber
             init->start_scheduler();
 
-            // On exit, we finish this OS-thread instance and Core0's OS-thread can join with us
+            // On exit, we finish this OS-thread instance and core0's OS-thread can join with us
             return nullptr;
          },
          &core
       );
    }
 
-   // Core0 runs on calling thread
+   // core0 runs on calling thread
    auto& core0 = global.cores[0];
    current_core.core = &core0;
 
-   // Enter the scheduler-fiber for Core0
+   // Enter the scheduler-fiber for core0
    core0.start_scheduler();
 
-   // When Core0's scheduler-fiber returns, join to any other active Core OS-thread
+   // When core0's scheduler-fiber returns, join to any other active Core OS-thread
    for (auto& core : global.cores) {
       if (core.core_id == 0) continue;
       pthread_join(core.pthread, nullptr);
@@ -409,7 +409,7 @@ void cortos_port_start_cores(size_t cores_to_use, cortos_port_core_entry_t entry
 
 extern "C" uint32_t cortos_port_get_core_id(void)
 {
-   // If no cores have been explicitly launched yet, then we must be on Core0
+   // If no cores have been explicitly launched yet, then we must be on core0
    if (!global.cores_launched()) return 0;
 
    CORTOS_ASSERT(current_core.core != nullptr);
@@ -460,7 +460,7 @@ extern "C" void* cortos_port_get_tls_pointer(void)
  * - Periodic driver unit tests call driver.on_timer_isr() directly.
  * ========================================================================= */
 
-struct TimeState
+struct time_state
 {
    std::atomic<bool>        irq_enabled{false};
    std::atomic<uint64_t>            now{0};
@@ -469,7 +469,7 @@ struct TimeState
    std::atomic<cortos_port_isr_handler_t> isr{nullptr};
    std::atomic<void*>                 isr_arg{nullptr};
 };
-static constinit TimeState time_state;
+static constinit time_state time_instance;
 
 extern "C" void cortos_port_time_setup(uint32_t tick_hz)
 {
@@ -478,7 +478,7 @@ extern "C" void cortos_port_time_setup(uint32_t tick_hz)
 
 extern "C" uint64_t cortos_port_time_now(void)
 {
-   return time_state.now.load(std::memory_order_relaxed);
+   return time_instance.now.load(std::memory_order_relaxed);
 }
 
 extern "C" uint64_t cortos_port_time_freq_hz(void)
@@ -488,25 +488,25 @@ extern "C" uint64_t cortos_port_time_freq_hz(void)
 
 extern "C" void cortos_port_time_reset(uint64_t t)
 {
-   time_state.now.store(t, std::memory_order_release);
-   time_state.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+   time_instance.now.store(t, std::memory_order_release);
+   time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
 }
 
 extern "C" void cortos_port_time_register_isr_handler(cortos_port_isr_handler_t h, void* arg)
 {
-   time_state.isr_arg.store(arg, std::memory_order_relaxed);
-   time_state.isr.store(h, std::memory_order_release);
+   time_instance.isr_arg.store(arg, std::memory_order_relaxed);
+   time_instance.isr.store(h, std::memory_order_release);
 }
 
-extern "C" void cortos_port_time_irq_enable(void)  { time_state.irq_enabled.store(true,  std::memory_order_release); }
-extern "C" void cortos_port_time_irq_disable(void) { time_state.irq_enabled.store(false, std::memory_order_release); }
+extern "C" void cortos_port_time_irq_enable(void)  { time_instance.irq_enabled.store(true,  std::memory_order_release); }
+extern "C" void cortos_port_time_irq_disable(void) { time_instance.irq_enabled.store(false, std::memory_order_release); }
 
 extern "C" void cortos_port_time_arm(uint64_t deadline)
 {
    // Keep earliest
-   uint64_t cur = time_state.armed_deadline.load(std::memory_order_relaxed);
+   uint64_t cur = time_instance.armed_deadline.load(std::memory_order_relaxed);
    while (deadline < cur &&
-            !time_state.armed_deadline.compare_exchange_weak(cur, deadline,
+            !time_instance.armed_deadline.compare_exchange_weak(cur, deadline,
                                                    std::memory_order_release,
                                                    std::memory_order_relaxed))
    {}
@@ -514,13 +514,13 @@ extern "C" void cortos_port_time_arm(uint64_t deadline)
 
 extern "C" void cortos_port_time_disarm(void)
 {
-   time_state.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+   time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
 }
 
 // Linux-only helper for tests
 extern "C" void cortos_port_time_advance(uint64_t delta)
 {
-   time_state.now.fetch_add(delta, std::memory_order_release);
+   time_instance.now.fetch_add(delta, std::memory_order_release);
 }
 
 extern "C" void cortos_port_send_time_ipi(uint32_t /*core_id*/)

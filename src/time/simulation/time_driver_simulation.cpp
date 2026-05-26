@@ -16,11 +16,11 @@ namespace cortos::time::sim
    /**
     * @brief Scheduled callback event
     */
-   struct Event
+   struct event
    {
       uint32_t id{0};
       uint64_t when{0};
-      Callback cb{nullptr};
+      callback cb{nullptr};
       void* arg{nullptr};
       bool cancelled{false};
    };
@@ -28,7 +28,7 @@ namespace cortos::time::sim
    /**
     * @brief Internal simulation time driver state
     */
-   struct DriverState
+   struct driver_state
    {
       simulation::Mode mode{simulation::Mode::Virtual};
 
@@ -36,7 +36,7 @@ namespace cortos::time::sim
       std::atomic<uint32_t> next_id{1};
 
       std::mutex mutex;
-      std::vector<Event> events;
+      std::vector<event> events;
 
       std::atomic<bool> running{false};
       std::thread realtime_thread;
@@ -47,11 +47,11 @@ namespace cortos::time::sim
       std::atomic<bool> started{false};
    };
 
-   static DriverState* ds = nullptr;
+   static driver_state* ds = nullptr;
 
    static void fire_due_callbacks(uint64_t now_ticks) noexcept
    {
-      std::vector<Event> due;
+      std::vector<event> due;
 
       {
          std::lock_guard lk(ds->mutex);
@@ -64,7 +64,7 @@ namespace cortos::time::sim
          }
 
          // Remove cancelled/consumed events
-         std::erase_if(ds->events, [](Event const& e) {
+         std::erase_if(ds->events, [](event const& e) {
             return e.cancelled;
          });
       }
@@ -108,7 +108,7 @@ namespace cortos::time
 void initialise(uint32_t frequency_hz)
 {
    CORTOS_ASSERT(sim::ds == nullptr);
-   sim::ds = new sim::DriverState;
+   sim::ds = new sim::driver_state;
    sim::ds->tick_frequency_hz = frequency_hz;
 }
 
@@ -119,18 +119,18 @@ void finalise()
    sim::ds = nullptr;
 }
 
-[[nodiscard]] TimePoint now() noexcept
+[[nodiscard]] time_point now() noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
 
    if (sim::ds->mode == simulation::Mode::Virtual) {
-      return TimePoint{sim::ds->virtual_now.load(std::memory_order_relaxed)};
+      return time_point{sim::ds->virtual_now.load(std::memory_order_relaxed)};
    }
 
-   return TimePoint{sim::realtime_now_ticks()};
+   return time_point{sim::realtime_now_ticks()};
 }
 
-[[nodiscard]] Handle schedule_at(TimePoint tp, Callback cb, void* arg) noexcept
+[[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
 
@@ -145,7 +145,7 @@ void finalise()
 
    {
       std::lock_guard lk(sim::ds->mutex);
-      sim::ds->events.push_back(sim::Event{
+      sim::ds->events.push_back(sim::event{
          .id = id,
          .when = tp.value,
          .cb = cb,
@@ -154,10 +154,10 @@ void finalise()
       });
    }
 
-   return Handle{id};
+   return handle{id};
 }
 
-bool cancel(Handle h) noexcept
+bool cancel(handle h) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
 
@@ -177,22 +177,22 @@ bool cancel(Handle h) noexcept
    return false;
 }
 
-[[nodiscard]] Duration from_milliseconds(uint32_t ms) noexcept
+[[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
 
    uint64_t const ticks = ((static_cast<uint64_t>(ms) * sim::ds->tick_frequency_hz) + 999) / 1000;
 
-   return Duration{ticks};
+   return duration{ticks};
 }
 
-[[nodiscard]] Duration from_microseconds(uint32_t us) noexcept
+[[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
 
    uint64_t const ticks = ((static_cast<uint64_t>(us) * sim::ds->tick_frequency_hz) + 999'999) / 1'000'000;
 
-   return Duration{ticks};
+   return duration{ticks};
 }
 
 void start() noexcept
@@ -255,7 +255,7 @@ void set_mode(Mode mode) noexcept
    return sim::ds->mode;
 }
 
-void reset(TimePoint tp) noexcept
+void reset(time_point tp) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
    CORTOS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
@@ -271,7 +271,7 @@ void reset(TimePoint tp) noexcept
    sim::ds->realtime_epoch = std::chrono::steady_clock::time_point{};
 }
 
-void advance_to(TimePoint tp) noexcept
+void advance_to(time_point tp) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
    CORTOS_ASSERT(sim::ds->mode == Mode::Virtual);
@@ -286,13 +286,13 @@ void advance_to(TimePoint tp) noexcept
    cortos::time::on_timer_isr();
 }
 
-void advance_by(Duration d) noexcept
+void advance_by(duration d) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
    CORTOS_ASSERT(sim::ds->mode == Mode::Virtual);
 
    uint64_t current = sim::ds->virtual_now.load(std::memory_order_relaxed);
-   advance_to(TimePoint{current + d.value});
+   advance_to(time_point{current + d.value});
 }
 
 } // namespace cortos::time::simulation

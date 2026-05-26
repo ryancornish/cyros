@@ -134,7 +134,7 @@ TEST_F(PeriodicDriverTest, ScheduleNullCallbackReturnsInvalidHandle)
 {
    cortos::time::start();
 
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, nullptr, nullptr);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, nullptr, nullptr);
    EXPECT_EQ(h.id, 0u);
 }
 
@@ -145,7 +145,7 @@ TEST_F(PeriodicDriverTest, ScheduleValidCallbackReturnsValidHandle)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    EXPECT_NE(h.id, 0u);
 }
 
@@ -156,24 +156,24 @@ TEST_F(PeriodicDriverTest, ScheduleBeyondCapacityReturnsInvalidHandle)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   std::vector<time::Handle> handles;
+   std::vector<time::handle> handles;
    handles.reserve(kMaxScheduledCallbacks);
 
    for (uint32_t i = 0; i < kMaxScheduledCallbacks; ++i)
    {
-      time::Handle h = cortos::time::schedule_at(
-         time::TimePoint{static_cast<uint64_t>(i) + 1000}, counting_callback, &count);
+      time::handle h = cortos::time::schedule_at(
+         time::time_point{static_cast<uint64_t>(i) + 1000}, counting_callback, &count);
       ASSERT_NE(h.id, 0u) << "slot " << i << " should still be free";
       handles.push_back(h);
    }
 
    // All slots are now occupied: the next schedule must fail.
-   time::Handle overflow = cortos::time::schedule_at(time::TimePoint{9999}, counting_callback, &count);
+   time::handle overflow = cortos::time::schedule_at(time::time_point{9999}, counting_callback, &count);
    EXPECT_EQ(overflow.id, 0u);
 
    // Freeing one slot makes room again.
    ASSERT_TRUE(cortos::time::cancel(handles.front()));
-   time::Handle reused = cortos::time::schedule_at(time::TimePoint{9999}, counting_callback, &count);
+   time::handle reused = cortos::time::schedule_at(time::time_point{9999}, counting_callback, &count);
    EXPECT_NE(reused.id, 0u);
 }
 
@@ -188,7 +188,7 @@ TEST_F(PeriodicDriverTest, CallbackFiresWhenDeadlineReached)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    // Before the deadline: the `when <= now` test is false -> no fire.
@@ -199,7 +199,7 @@ TEST_F(PeriodicDriverTest, CallbackFiresWhenDeadlineReached)
    advance_and_pump(1);
    EXPECT_EQ(count.load(), 1);
 
-   // Slot was freed on fire, so further pumps do not re-fire.
+   // slot was freed on fire, so further pumps do not re-fire.
    advance_and_pump(1000);
    EXPECT_EQ(count.load(), 1);
 }
@@ -210,7 +210,7 @@ TEST_F(PeriodicDriverTest, CallbackFiresAtExactDeadline)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{10}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{10}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    advance_and_pump(10);
@@ -227,7 +227,7 @@ TEST_F(PeriodicDriverTest, CallbackScheduledInPastFiresOnNextPump)
    ASSERT_EQ(cortos::time::now().value, 100u);
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{50}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{50}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    pump();  // no advance; deadline 50 <= now 100
@@ -240,9 +240,9 @@ TEST_F(PeriodicDriverTest, MultipleCallbacksFireIndependently)
    cortos::time::start();
 
    std::atomic<int> a{0}, b{0}, c{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{50},  counting_callback, &a).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &b).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{150}, counting_callback, &c).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{50},  counting_callback, &a).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &b).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{150}, counting_callback, &c).id, 0u);
 
    advance_and_pump(60);   // now = 60  -> only a
    EXPECT_EQ(a.load(), 1);
@@ -268,7 +268,7 @@ TEST_F(PeriodicDriverTest, AllDueCallbacksFireOnSamePump)
    std::atomic<int> count{0};
    for (int i = 0; i < 5; ++i)
    {
-      ASSERT_NE(cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count).id, 0u);
+      ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
    }
 
    advance_and_pump(200);
@@ -287,7 +287,7 @@ TEST_F(PeriodicDriverTest, PumpWithNothingDueFiresNothing)
    // One callback scheduled far in the future: loop visits an occupied slot
    // whose `when <= now` test is false.
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::TimePoint{10'000}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cortos::time::schedule_at(time::time_point{10'000}, counting_callback, &count).id, 0u);
    advance_and_pump(500);
    EXPECT_EQ(count.load(), 0);
 }
@@ -301,7 +301,7 @@ TEST_F(PeriodicDriverTest, CancelInvalidHandleReturnsFalse)
 {
    cortos::time::start();
 
-   EXPECT_FALSE(cortos::time::cancel(time::Handle{0}));
+   EXPECT_FALSE(cortos::time::cancel(time::handle{0}));
 }
 
 // cancel() of a non-zero id that matches no slot: the loop completes without
@@ -310,7 +310,7 @@ TEST_F(PeriodicDriverTest, CancelUnknownHandleReturnsFalse)
 {
    cortos::time::start();
 
-   EXPECT_FALSE(cortos::time::cancel(time::Handle{999999}));
+   EXPECT_FALSE(cortos::time::cancel(time::handle{999999}));
 }
 
 // cancel() before firing: matching slot is found and cleared -> returns true,
@@ -320,7 +320,7 @@ TEST_F(PeriodicDriverTest, CancelBeforeFiringPreventsCallback)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));
@@ -336,7 +336,7 @@ TEST_F(PeriodicDriverTest, CancelAfterFiringReturnsFalse)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{50}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{50}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    advance_and_pump(50);
@@ -352,7 +352,7 @@ TEST_F(PeriodicDriverTest, CancelTwiceReturnsFalseSecondTime)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
+   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
    EXPECT_TRUE(cortos::time::cancel(h));
@@ -365,9 +365,9 @@ TEST_F(PeriodicDriverTest, CancelOneOfManyLeavesOthers)
    cortos::time::start();
 
    std::atomic<int> count{0};
-   time::Handle h1 = cortos::time::schedule_at(time::TimePoint{100}, counting_callback, &count);
-   time::Handle h2 = cortos::time::schedule_at(time::TimePoint{200}, counting_callback, &count);
-   time::Handle h3 = cortos::time::schedule_at(time::TimePoint{300}, counting_callback, &count);
+   time::handle h1 = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h2 = cortos::time::schedule_at(time::time_point{200}, counting_callback, &count);
+   time::handle h3 = cortos::time::schedule_at(time::time_point{300}, counting_callback, &count);
    ASSERT_NE(h1.id, 0u);
    ASSERT_NE(h2.id, 0u);
    ASSERT_NE(h3.id, 0u);
@@ -379,7 +379,7 @@ TEST_F(PeriodicDriverTest, CancelOneOfManyLeavesOthers)
 }
 
 /* ============================================================================
- * Duration conversion
+ * duration conversion
  *
  * The Linux port reports a fixed frequency of 1'000'000 Hz (1 tick = 1 us),
  * so conversions are computed against that. ceil_div is exercised by both an

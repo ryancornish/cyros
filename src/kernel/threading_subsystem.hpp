@@ -17,7 +17,7 @@ namespace cortos
 
 void thread_launcher(void* tcb_ptr);
 
-class ThreadTermination : public Waitable
+class thread_termination : public waitable
 {
    std::atomic<bool> terminated{false};
 
@@ -36,14 +36,14 @@ public:
    }
 };
 
-struct ThreadControlBlock
+struct thread_control_block
 {
-   enum class State : uint8_t { Ready, Running, Blocked, Terminated };
-   State state{State::Ready};
+   enum class thread_state : uint8_t { ready, running, blocked, terminated };
+   thread_state state{thread_state::ready};
 
-   // Intrusive 'linked-list' links for a ThreadReadyQueue
-   ThreadControlBlock* next{nullptr};
-   ThreadControlBlock* prev{nullptr};
+   // Intrusive 'linked-list' links for a thread_ready_queue
+   thread_control_block* next{nullptr};
+   thread_control_block* prev{nullptr};
 
    uint32_t id;
    uint8_t base_priority;
@@ -51,16 +51,16 @@ struct ThreadControlBlock
 
    // Core pinning
    std::uint32_t pinned_core{0};
-   CoreAffinity  affinity;
+   core_affinity  affinity;
 
    std::span<std::byte> stack;
-   Thread::EntryFn entry;
+   thread::entry_fn entry;
 
-   WaitGroup wait_group{};
-   WaitNodePool wait_nodes{this};
+   wait_group wait_operation{};
+   wait_node_pool wait_nodes{this};
 
    // Thread-joining waitable
-   ThreadTermination termination;
+   thread_termination termination;
 
    // Opaque, in-place port context storage
    alignas(CORTOS_PORT_CONTEXT_ALIGN) std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> context_storage{};
@@ -72,7 +72,7 @@ struct ThreadControlBlock
       return next != nullptr || prev != nullptr;
    }
 
-   [[nodiscard]] constexpr bool is_higher_priority_than(ThreadControlBlock& rhs)  const noexcept
+   [[nodiscard]] constexpr bool is_higher_priority_than(thread_control_block& rhs)  const noexcept
    {
       return effective_priority < rhs.effective_priority;
    }
@@ -81,7 +81,7 @@ struct ThreadControlBlock
       return effective_priority < priority_level;
    }
 
-   [[nodiscard]] Waitable::Waiter create_waiter() const noexcept
+   [[nodiscard]] waitable::waiter create_waiter() const noexcept
    {
       return {
          .id                 = id,
@@ -92,42 +92,42 @@ struct ThreadControlBlock
       };
    }
 
-   ThreadControlBlock(uint32_t id, Thread::Priority priority, CoreAffinity affinity, std::span<std::byte> stack, Thread::EntryFn&& entry);
+   thread_control_block(uint32_t id, thread::priority priority, core_affinity affinity, std::span<std::byte> stack, thread::entry_fn&& entry);
 
-   void prepare_block(std::span<Waitable* const> waitables);
+   void prepare_block(std::span<waitable* const> waitables);
 
-   void notify_block(std::span<Waitable* const> waitables) const;
+   void notify_block(std::span<waitable* const> waitables) const;
 
-   Waitable::Result commence_block();
+   waitable::result commence_block();
 
-   void teardown_wait_group(WaitGroup& group) noexcept;
+   void teardown_wait_group(wait_group& group) noexcept;
 };
 
 
 /**
  * Carves a user-provided buffer region into:
  * +----------------------+ <-- buffer's end (high address)
- * +   ThreadControlBlock   + (Fixed size)
+ * +   thread_control_block   + (Fixed size)
  * +----------------------+
  * + Thread-local storage + (Variable size)
  * +----------------------+
  * +     User's stack     +
  * +----------------------+ <-- buffer's base (low address)
  */
-struct StackLayout
+struct stack_layout
 {
-   ThreadControlBlock* tcb;
+   thread_control_block* tcb;
    std::span<std::byte> tls_region;
    std::span<std::byte> user_stack;
 
-   explicit StackLayout(std::span<std::byte> buffer, std::size_t tls_bytes);
+   explicit stack_layout(std::span<std::byte> buffer, std::size_t tls_bytes);
 };
 
-class ThreadReadyQueue
+class thread_ready_queue
 {
 private:
-   ThreadControlBlock* head{nullptr};
-   ThreadControlBlock* tail{nullptr};
+   thread_control_block* head{nullptr};
+   thread_control_block* tail{nullptr};
 
 public:
    [[nodiscard]] constexpr bool empty() const noexcept
@@ -140,7 +140,7 @@ public:
       return head && head != tail;
    }
 
-   [[nodiscard]] constexpr ThreadControlBlock* front() const noexcept
+   [[nodiscard]] constexpr thread_control_block* front() const noexcept
    {
       return head;
    }
@@ -153,23 +153,23 @@ public:
       return n;
    }
 
-   void push_back(ThreadControlBlock& tcb) noexcept;
+   void push_back(thread_control_block& tcb) noexcept;
 
-   ThreadControlBlock* pop_front() noexcept;
+   thread_control_block* pop_front() noexcept;
 
-   void remove(ThreadControlBlock& tcb) noexcept;
+   void remove(thread_control_block& tcb) noexcept;
 };
 
-class ThreadReadyMatrix
+class thread_ready_matrix
 {
 private:
-   static constexpr std::size_t BITMAP_BITS = std::numeric_limits<uint32_t>::digits;
-   std::array<ThreadReadyQueue, config::MAX_PRIORITIES> matrix{};
+   static constexpr std::size_t bitmap_bits = std::numeric_limits<uint32_t>::digits;
+   std::array<thread_ready_queue, config::max_priorities> matrix{};
    uint32_t bitmap{0};
-   static_assert(config::MAX_PRIORITIES <= BITMAP_BITS, "bitmap cannot hold that many priorities!");
+   static_assert(config::max_priorities <= bitmap_bits, "bitmap cannot hold that many priorities!");
 
 public:
-   constexpr ThreadReadyMatrix() = default;
+   constexpr thread_ready_matrix() = default;
 
    [[nodiscard]] constexpr int best_priority() const noexcept
    {
@@ -196,23 +196,23 @@ public:
       return matrix[priority].size();
    }
 
-   [[nodiscard]] constexpr std::bitset<BITMAP_BITS> bitmap_view() const noexcept
+   [[nodiscard]] constexpr std::bitset<bitmap_bits> bitmap_view() const noexcept
    {
       return {bitmap};
    }
 
-   [[nodiscard]] constexpr ThreadControlBlock* peek_best_thread() const noexcept
+   [[nodiscard]] constexpr thread_control_block* peek_best_thread() const noexcept
    {
       if (bitmap == 0) return nullptr;
       auto const priority = std::countr_zero(bitmap);
       return matrix[priority].front();
    }
 
-   void enqueue_thread(ThreadControlBlock& tcb) noexcept;
+   void enqueue_thread(thread_control_block& tcb) noexcept;
 
-   ThreadControlBlock* pop_best_thread() noexcept;
+   thread_control_block* pop_best_thread() noexcept;
 
-   void remove_thread(ThreadControlBlock& tcb) noexcept;
+   void remove_thread(thread_control_block& tcb) noexcept;
 };
 
 } // namespace cortos

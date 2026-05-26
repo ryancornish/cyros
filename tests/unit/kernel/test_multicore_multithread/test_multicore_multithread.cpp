@@ -13,7 +13,7 @@
 
 using namespace cortos;
 
-static_assert(config::CORES >= 4, "Test suite is designed for (atleast) quad core configuration only");
+static_assert(config::cores >= 4, "Test suite is designed for (atleast) quad core configuration only");
 
 int main(int argc, char** argv)
 {
@@ -53,24 +53,24 @@ TEST_F(MultiCoreMultiThread_Test,
 
    // GIVEN:
 
-   Thread t0(
+   thread t0(
       [&]{
          seen_core0 = this_thread::core_id();
          ran0 = true;
       },
       s0,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
-   Thread t1(
+   thread t1(
       [&]{
          seen_core1 = this_thread::core_id();
          ran1 = true;
       },
       s1,
-      Thread::Priority(0),
-      Core1
+      thread::priority(0),
+      core1
    );
 
    EXPECT_EQ(kernel::active_threads(), 2u);
@@ -99,28 +99,28 @@ TEST_F(MultiCoreMultiThread_Test,
    bool remote_ran = false;
    uint32_t remote_seen_core = std::numeric_limits<uint32_t>::max();
 
-   Thread remote_thread;
+   thread remote_thread;
 
    // GIVEN:
 
-   Thread creator(
+   thread creator(
       [&]{
          EXPECT_EQ(this_thread::core_id(), 0u);
 
-         remote_thread = Thread(
+         remote_thread = thread(
             [&]{
                remote_seen_core = this_thread::core_id();
                remote_ran = true;
             },
             s_remote,
-            Thread::Priority(0),
-            Core1
+            thread::priority(0),
+            core1
          );
-         // We can happily terminate here as remote_thread will be started on Core1
+         // We can happily terminate here as remote_thread will be started on core1
       },
       s_creator,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
    // Only one thread should be registered (creator) as remote_thread handle is empty
@@ -150,7 +150,7 @@ TEST_F(MultiCoreMultiThread_Test,
 
    std::array<int, 4> stages{0};
 
-   auto make_thread = [&](uint32_t core_id, std::array<std::byte, 16 * 1024>& stack) -> Thread
+   auto make_thread = [&](uint32_t core_id, std::array<std::byte, 16 * 1024>& stack) -> thread
    {
       return {
          [&, core_id]{
@@ -166,8 +166,8 @@ TEST_F(MultiCoreMultiThread_Test,
             stages[core_id] = 2;
          },
          stack,
-         Thread::Priority(0),
-         CoreAffinity::from_id(core_id)
+         thread::priority(0),
+         core_affinity::from_id(core_id)
       };
    };
 
@@ -198,34 +198,34 @@ TEST_F(MultiCoreMultiThread_Test,
    alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s_core1_work{};
 
    bool core1_work_ran = false;
-   Thread core1_work; // Empty handle
+   thread core1_work; // Empty handle
 
    // GIVEN:
 
-   // Make Core1 have *no* initial threads queued pre-start by creating the core1 work post-start.
-   // Core1 will start in idle unless/until it receives inbox work + IPI.
-   Thread core0(
+   // Make core1 have *no* initial threads queued pre-start by creating the core1 work post-start.
+   // core1 will start in idle unless/until it receives inbox work + IPI.
+   thread core0_thread(
       [&]{
          EXPECT_EQ(this_thread::core_id(), 0u);
 
-         // Give Core1 a chance to enter idle first (cooperative).
+         // Give core1 a chance to enter idle first (cooperative).
          for (int i = 0; i < 3; ++i) this_thread::yield();
 
-         core1_work = Thread(
+         core1_work = thread(
             [&]{
                core1_work_ran = true;
             },
             s_core1_work,
-            Thread::Priority(0),
-            Core1
+            thread::priority(0),
+            core1
          );
 
          // Yield to allow IPI -> idle wake -> inbox drain -> thread run.
          for (int i = 0; i < 10; ++i) this_thread::yield();
       },
       s_core0,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
    EXPECT_EQ(kernel::active_threads(), 1u);
@@ -237,5 +237,5 @@ TEST_F(MultiCoreMultiThread_Test,
    // THEN:
 
    EXPECT_TRUE(core1_work_ran)
-      << "Core1 did not wake from idle to run queued work (possible missing condvar poke)";
+      << "core1 did not wake from idle to run queued work (possible missing condvar poke)";
 }

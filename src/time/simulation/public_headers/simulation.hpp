@@ -30,21 +30,21 @@ void set_mode(Mode mode) noexcept;
  *
  * Intended for deterministic tests.
  */
-void reset(TimePoint tp = TimePoint{0}) noexcept;
+void reset(time_point tp = time_point{0}) noexcept;
 
 /**
  * @brief Advance virtual time to a specific time point.
  *
  * Has no effect in RealTime mode.
  */
-void advance_to(TimePoint tp) noexcept;
+void advance_to(time_point tp) noexcept;
 
 /**
  * @brief Advance virtual time by a duration.
  *
  * Has no effect in RealTime mode.
  */
-void advance_by(Duration d) noexcept;
+void advance_by(duration d) noexcept;
 
 } // namespace cortos::time::simulation
 

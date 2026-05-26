@@ -39,11 +39,11 @@
  *
  * Example usage:
  * @code
- *   MpscRingBuffer<Event, 256> queue;
+ *   mpsc_ring_buffer<event, 256> queue;
  *
  *   // Producer threads (multiple)
  *   void producer_thread() {
- *     Event evt = create_event();
+ *     event evt = create_event();
  *     if (!queue.push(std::move(evt))) {
  *       // Buffer full, handle overflow
  *     }
@@ -51,7 +51,7 @@
  *
  *   // Consumer thread (single)
  *   void consumer_thread() {
- *     Event evt;
+ *     event evt;
  *     while (queue.pop(evt)) {
  *       process(evt);
  *     }
@@ -61,9 +61,9 @@
  * Algorithm:
  * Based on Dmitry Vyukov's MPMC queue adapted for single consumer.
  * Each cell has a sequence number that tracks its state:
- * - sequence == position: Cell is ready for producer to write
- * - sequence == position + 1: Cell contains data for consumer to read
- * - sequence == position + N: Cell is empty, waiting for wraparound
+ * - sequence == position: cell is ready for producer to write
+ * - sequence == position + 1: cell contains data for consumer to read
+ * - sequence == position + N: cell is empty, waiting for wraparound
  *
  * Producers use CAS on head to claim slots, then write data and publish
  * by updating the cell sequence. Consumer reads tail exclusively.
@@ -83,7 +83,7 @@ namespace cortos
 {
 
 template<typename T, std::size_t N>
-class MpscRingBuffer
+class mpsc_ring_buffer
 {
    static_assert(N > 0, "Buffer capacity must be greater than zero");
    static_assert((N & (N - 1)) == 0, "Buffer capacity must be a power of two (for fast modulo via masking)");
@@ -96,12 +96,12 @@ public:
     * Each cell is initialized with its index as the sequence number,
     * establishing the initial ready-for-producer state.
     */
-   constexpr MpscRingBuffer() noexcept : MpscRingBuffer(std::make_index_sequence<N>{}) {}
+   constexpr mpsc_ring_buffer() noexcept : mpsc_ring_buffer(std::make_index_sequence<N>{}) {}
 
-   MpscRingBuffer(MpscRingBuffer&&)            = delete;
-   MpscRingBuffer& operator=(MpscRingBuffer&&) = delete;
-   MpscRingBuffer(MpscRingBuffer const&)            = delete;
-   MpscRingBuffer& operator=(MpscRingBuffer const&) = delete;
+   mpsc_ring_buffer(mpsc_ring_buffer&&)            = delete;
+   mpsc_ring_buffer& operator=(mpsc_ring_buffer&&) = delete;
+   mpsc_ring_buffer(mpsc_ring_buffer const&)            = delete;
+   mpsc_ring_buffer& operator=(mpsc_ring_buffer const&) = delete;
 
    /**
     * @brief Destructor - drains remaining elements
@@ -112,7 +112,7 @@ public:
     *
     * Warning: Do not destroy the buffer while it's still being accessed.
     */
-   ~MpscRingBuffer() noexcept
+   ~mpsc_ring_buffer() noexcept
    {
       // Single-consumer destruction: drain remaining items
       T tmp;
@@ -274,21 +274,21 @@ private:
     * - Uninitialized storage for one T element
     *
     * The sequence number tracks the cell's state:
-    * - Even positions: Cell is empty, ready for producer
-    * - Odd positions: Cell contains data, ready for consumer
-    * - Large positions (+ N): Cell freed by consumer, waiting for wraparound
+    * - Even positions: cell is empty, ready for producer
+    * - Odd positions: cell contains data, ready for consumer
+    * - Large positions (+ N): cell freed by consumer, waiting for wraparound
     */
-   struct Cell
+   struct cell
    {
       std::atomic<std::size_t> sequence;  ///< Synchronization sequence number
       alignas(T) std::array<std::byte, sizeof(T)> storage{};  ///< Uninitialized storage for T
 
-      constexpr Cell() noexcept = default;
+      constexpr cell() noexcept = default;
       /**
        * @brief Construct cell with initial sequence number
        * @param seq Initial sequence (typically the cell's index)
        */
-      constexpr explicit Cell(std::size_t seq) noexcept : sequence(seq) {}
+      constexpr explicit cell(std::size_t seq) noexcept : sequence(seq) {}
 
       T&       item()       noexcept { return *std::launder(reinterpret_cast<T*>(storage.data())); }
       T const& item() const noexcept { return *std::launder(reinterpret_cast<T const*>(storage.data())); }
@@ -298,11 +298,11 @@ private:
     * @brief Index sequence constructor - initializes cells with sequential numbers
     * @tparam Is Index pack (0, 1, 2, ..., N-1)
     *
-    * This expands to: cells{ Cell{0}, Cell{1}, Cell{2}, ..., Cell{N-1} }
+    * This expands to: cells{ cell{0}, cell{1}, cell{2}, ..., cell{N-1} }
     * Each cell's sequence starts at its index, establishing the initial state.
     */
    template<std::size_t... Is>
-   constexpr explicit MpscRingBuffer(std::index_sequence<Is...>) noexcept : cells{ Cell{Is}... } {}
+   constexpr explicit mpsc_ring_buffer(std::index_sequence<Is...>) noexcept : cells{ cell{Is}... } {}
 
    // Memory layout optimized to reduce false sharing:
    // Each atomic is on its own cache line (CORTOS_PORT_CACHE_LINE bytes)
@@ -310,7 +310,7 @@ private:
 
    alignas(CORTOS_PORT_CACHE_LINE) std::atomic<std::size_t> head{0};  ///< Producer claim counter (many writers)
    alignas(CORTOS_PORT_CACHE_LINE) std::atomic<std::size_t> tail{0};  ///< Consumer pop counter (single writer)
-   alignas(CORTOS_PORT_CACHE_LINE) std::array<Cell, N> cells{};       ///< Ring buffer cells
+   alignas(CORTOS_PORT_CACHE_LINE) std::array<cell, N> cells{};       ///< Ring buffer cells
 };
 
 }  // namespace cortos

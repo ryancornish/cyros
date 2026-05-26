@@ -11,7 +11,7 @@
 
 using namespace cortos;
 
-static_assert(config::CORES == 1, "Test suite is designed for single core configuration only");
+static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
 int main(int argc, char** argv)
 {
@@ -34,11 +34,11 @@ TEST(SingleCoreSingleThread_Test,
 
    bool thread_ran = false;
 
-   Thread thread(
+   thread thread(
       [&thread_ran]{ thread_ran = true; },
       stack,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
    ASSERT_EQ(kernel::active_threads(), 1U);
@@ -67,11 +67,11 @@ TEST(SingleCoreSingleThread_Test,
 
    uint32_t thread_executed_on_core = std::numeric_limits<uint32_t>::max();
 
-   Thread thread(
+   thread thread(
       [&thread_executed_on_core]{ thread_executed_on_core = this_thread::core_id(); },
       stack,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
    ASSERT_EQ(kernel::active_threads(), 1U);
@@ -98,13 +98,13 @@ TEST(SingleCoreSingleThread_Test,
 
    alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
 
-   Thread::Priority threads_priority(std::numeric_limits<uint8_t>::max());
+   thread::priority threads_priority(std::numeric_limits<uint8_t>::max());
 
-   Thread thread(
+   thread thread(
       [&threads_priority]{ threads_priority = this_thread::priority(); },
       stack,
-      Thread::Priority(4),
-      Core0
+      thread::priority(4),
+      core0
    );
 
    ASSERT_EQ(kernel::active_threads(), 1U);
@@ -139,11 +139,11 @@ TEST(SingleCoreSingleThread_Test,
       thread_completed = true;
    };
 
-   Thread thread(
+   thread thread(
       entry,
       stack,
-      Thread::Priority(0),
-      Core0
+      thread::priority(0),
+      core0
    );
 
    ASSERT_EQ(kernel::active_threads(), 1U);

@@ -3,34 +3,34 @@
 namespace cortos
 {
 
-ThreadControlBlock::ThreadControlBlock(uint32_t id, Thread::Priority priority, CoreAffinity affinity, std::span<std::byte> stack, Thread::EntryFn&& entry)
+thread_control_block::thread_control_block(uint32_t id, thread::priority priority, core_affinity affinity, std::span<std::byte> stack, thread::entry_fn&& entry)
    : id(id), base_priority(priority), effective_priority(priority), affinity(affinity), stack(stack), entry(std::move(entry))
 {
    cortos_port_context_init(context(), stack.data(), stack.size(), thread_launcher, this);
 }
 
-void ThreadControlBlock::prepare_block(std::span<Waitable* const> waitables)
+void thread_control_block::prepare_block(std::span<waitable* const> waitables)
 {
-   CORTOS_ASSERT(state == State::Running);
-   CORTOS_ASSERT(waitables.size() > 0);
-   CORTOS_ASSERT(waitables.size() <= config::MAX_WAIT_NODES);
+   CORTOS_ASSERT(state == thread_state::running);
+   CORTOS_ASSERT(!waitables.empty());
+   CORTOS_ASSERT(waitables.size() <= config::max_wait_nodes);
 
-   wait_group.begin(waitables.size());
+   wait_operation.begin(waitables.size());
 
    // Allocate and enqueue nodes
    for (std::size_t i = 0; auto* waitable : waitables) {
       CORTOS_ASSERT(waitable != nullptr);
 
-      WaitNode* wait_node = wait_nodes.alloc(wait_group, *waitable, i++);
+      wait_node* wait_node = wait_nodes.alloc(wait_operation, *waitable, i++);
       CORTOS_ASSERT(wait_node != nullptr);
 
       waitable->add(*wait_node);
    }
 
-   state = State::Blocked;
+   state = thread_state::blocked;
 }
 
-void ThreadControlBlock::notify_block(std::span<Waitable* const> waitables) const
+void thread_control_block::notify_block(std::span<waitable* const> waitables) const
 {
    // Snapshot once: all blocks are given the same snapshot. This disregards
    // all side-effects on_thread_blocked invocations have on the effective priority.
@@ -41,40 +41,40 @@ void ThreadControlBlock::notify_block(std::span<Waitable* const> waitables) cons
    }
 }
 
-Waitable::Result ThreadControlBlock::commence_block()
+waitable::result thread_control_block::commence_block()
 {
    cortos_port_pend_reschedule();
 
-   // When we resume, winner info is in wait_group
-   return Waitable::Result{
-      .index    = wait_group.winner_index,
-      .acquired = wait_group.acquired,
+   // When we resume, winner info is in wait_operation
+   return waitable::result{
+      .index    = wait_operation.winner_index,
+      .acquired = wait_operation.acquired,
    };
 }
 
-void ThreadControlBlock::teardown_wait_group(WaitGroup& group) noexcept
+void thread_control_block::teardown_wait_group(wait_group& group) noexcept
 {
    // Snapshot once: all removals in this teardown relate to the same waiter (this thread).
    auto const waiter = create_waiter();
-   WaitableRefVector<config::MAX_WAIT_NODES> waitables;
+   waitable_ref_vector<config::max_wait_nodes> waitables;
 
    // First pass: collect involved waitables
-   wait_nodes.for_each_active([&](WaitNode& node) {
-      if (node.group != &group) return;
-      if (node.waitable) {
-         waitables.push(node.waitable);
+   wait_nodes.for_each_active([&](wait_node& node) {
+      if (node.active_group != &group) return;
+      if (node.active_waitable) {
+         waitables.push(node.active_waitable);
       }
    }, &group);
 
    {
-      WaitableGroupLock lock_group(waitables);
+      waitable_group_lock lock_group(waitables);
 
       // Second pass: unlink and free under lock
-      wait_nodes.for_each_active([&](WaitNode& node) {
-         if (node.group != &group) return;
+      wait_nodes.for_each_active([&](wait_node& node) {
+         if (node.active_group != &group) return;
 
-         if (node.waitable) {
-            node.waitable->remove(node);
+         if (node.active_waitable) {
+            node.active_waitable->remove(node);
          }
          wait_nodes.free(node);
       }, &group);
@@ -87,14 +87,14 @@ void ThreadControlBlock::teardown_wait_group(WaitGroup& group) noexcept
 }
 
 
-StackLayout::StackLayout(std::span<std::byte> const buffer, std::size_t const tls_bytes)
+stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const tls_bytes)
 {
    auto const base = reinterpret_cast<std::uintptr_t>(buffer.data());
    auto const end  = base + buffer.size();
 
    // TCB at very top, aligned down
-   auto const tcb_start = align_down(end - sizeof(ThreadControlBlock), alignof(ThreadControlBlock));
-   tcb = reinterpret_cast<ThreadControlBlock*>(tcb_start);
+   auto const tcb_start = align_down(end - sizeof(thread_control_block), alignof(thread_control_block));
+   tcb = reinterpret_cast<thread_control_block*>(tcb_start);
 
    // TLS just below TCB
    auto const tls_size = align_up(tls_bytes, alignof(std::max_align_t));
@@ -115,17 +115,17 @@ StackLayout::StackLayout(std::span<std::byte> const buffer, std::size_t const tl
 }
 
 
-void ThreadReadyQueue::push_back(ThreadControlBlock& tcb) noexcept
+void thread_ready_queue::push_back(thread_control_block& tcb) noexcept
 {
    CORTOS_ASSERT(!tcb.is_enqueued());
-   CORTOS_ASSERT_OP(tcb.state, ==, ThreadControlBlock::State::Ready); // Thread must be ready to be enqueued
+   CORTOS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready); // Thread must be ready to be enqueued
    tcb.next = nullptr;
    tcb.prev = tail;
    if (tail) tail->next = &tcb; else head = &tcb;
    tail = &tcb;
 }
 
-ThreadControlBlock* ThreadReadyQueue::pop_front() noexcept
+thread_control_block* thread_ready_queue::pop_front() noexcept
 {
    if (empty()) return nullptr;
    auto* tcb = head;
@@ -135,7 +135,7 @@ ThreadControlBlock* ThreadReadyQueue::pop_front() noexcept
    return tcb;
 }
 
-void ThreadReadyQueue::remove(ThreadControlBlock& tcb) noexcept
+void thread_ready_queue::remove(thread_control_block& tcb) noexcept
 {
    CORTOS_ASSERT(&tcb == head || tcb.prev != nullptr);
    CORTOS_ASSERT(&tcb == tail || tcb.next != nullptr);
@@ -148,24 +148,24 @@ void ThreadReadyQueue::remove(ThreadControlBlock& tcb) noexcept
 }
 
 
-void ThreadReadyMatrix::enqueue_thread(ThreadControlBlock& tcb) noexcept
+void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexcept
 {
-   CORTOS_ASSERT_OP(tcb.effective_priority, <, config::MAX_PRIORITIES);
-   CORTOS_ASSERT_OP(tcb.state, ==, ThreadControlBlock::State::Ready); // Can only enqueue Ready threads!
+   CORTOS_ASSERT_OP(tcb.effective_priority, <, config::max_priorities);
+   CORTOS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready); // Can only enqueue ready threads!
    matrix[tcb.effective_priority].push_back(tcb);
    bitmap |= (1u << tcb.effective_priority);
 }
 
-ThreadControlBlock* ThreadReadyMatrix::pop_best_thread() noexcept
+thread_control_block* thread_ready_matrix::pop_best_thread() noexcept
 {
    if (bitmap == 0) return nullptr;
    auto const priority = std::countr_zero(bitmap);
-   ThreadControlBlock* tcb = matrix[priority].pop_front();
+   thread_control_block* tcb = matrix[priority].pop_front();
    if (matrix[priority].empty()) bitmap &= ~(1u << priority);
    return tcb;
 }
 
-void ThreadReadyMatrix::remove_thread(ThreadControlBlock& tcb) noexcept
+void thread_ready_matrix::remove_thread(thread_control_block& tcb) noexcept
 {
    auto const priority = tcb.effective_priority;
    matrix[priority].remove(tcb);

@@ -14,22 +14,22 @@ namespace cortos::config
 /**
  * @brief How many cores for SMP
  */
-static constexpr std::size_t CORES = 1;
+inline constexpr std::size_t cores = 1;
 
 /**
  * @brief TODO
  */
-static constexpr std::size_t MAX_WAIT_NODES = 8;
+inline constexpr std::size_t max_wait_nodes = 8;
 
 /**
  * @brief TODO
  */
-static constexpr std::uint32_t TIME_CORE_ID = 0;
+inline constexpr std::uint32_t time_core_id = 0;
 
 /**
  * @brief TODO
  */
-static constexpr std::size_t MAX_PRIORITIES = 31;
+inline constexpr std::size_t max_priorities = 31;
 
 }  // namespace cortos::config
 

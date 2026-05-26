@@ -1,5 +1,5 @@
-#ifndef CORTOS_SPIN_LOCK_HPP
-#define CORTOS_SPIN_LOCK_HPP
+#ifndef CORTOS_SPINLOCK_HPP
+#define CORTOS_SPINLOCK_HPP
 
 #include <atomic>
 
@@ -13,29 +13,29 @@ namespace cortos
  * durations (microseconds). For longer critical sections, use a Mutex.
  *
  * Usage:
- *   Spinlock lock;
+ *   spinlock lock;
  *   lock.lock();
  *   // ... critical section ...
  *   lock.unlock();
  *
  * Or with RAII:
- *   Spinlock lock;
+ *   spinlock lock;
  *   {
- *       SpinlockGuard guard(lock);
+ *       spinlock_guard guard(lock);
  *       // ... critical section ...
  *   } // Automatically unlocked
  */
-class Spinlock
+class spinlock
 {
 public:
-   constexpr Spinlock() : flag(ATOMIC_FLAG_INIT) {}
+   constexpr spinlock() : flag(ATOMIC_FLAG_INIT) {}
 
-   ~Spinlock() = default;
+   ~spinlock() = default;
 
-   Spinlock(Spinlock const&)            = delete;
-   Spinlock& operator=(Spinlock const&) = delete;
-   Spinlock(Spinlock&&)                 = delete;
-   Spinlock& operator=(Spinlock&&)      = delete;
+   spinlock(spinlock const&)            = delete;
+   spinlock& operator=(spinlock const&) = delete;
+   spinlock(spinlock&&)                 = delete;
+   spinlock& operator=(spinlock&&)      = delete;
 
    /**
     * @brief Acquire the spinlock (busy-wait)
@@ -79,28 +79,28 @@ private:
  *
  * Automatically acquires lock on construction and releases on destruction.
  */
-class SpinlockGuard
+class spinlock_guard
 {
 public:
-   explicit SpinlockGuard(Spinlock& lock) : lock(lock)
+   explicit spinlock_guard(spinlock& lock) : lock(lock)
    {
       lock.lock();
    }
 
-   ~SpinlockGuard()
+   ~spinlock_guard()
    {
       lock.unlock();
    }
 
-   SpinlockGuard(SpinlockGuard const&)            = delete;
-   SpinlockGuard& operator=(SpinlockGuard const&) = delete;
-   SpinlockGuard(SpinlockGuard&&)                 = delete;
-   SpinlockGuard& operator=(SpinlockGuard&&)      = delete;
+   spinlock_guard(spinlock_guard const&)            = delete;
+   spinlock_guard& operator=(spinlock_guard const&) = delete;
+   spinlock_guard(spinlock_guard&&)                 = delete;
+   spinlock_guard& operator=(spinlock_guard&&)      = delete;
 
 private:
-   Spinlock& lock;
+   spinlock& lock;
 };
 
 } // namespace cortos
 
-#endif // CORTOS_SPIN_LOCK_HPP
+#endif // CORTOS_SPINLOCK_HPP

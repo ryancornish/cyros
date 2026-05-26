@@ -9,43 +9,43 @@ namespace cortos::time::tickless
 {
    static constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
 
-   struct Slot
+   struct slot
    {
       uint32_t id{0};      // 0 = free
       uint64_t when{0};    // absolute deadline in driver ticks
-      Callback cb{nullptr};
+      callback cb{nullptr};
       void* arg{nullptr};
    };
 
-   struct IrqGuard
+   struct irq_guard
    {
       uint32_t state;
-      IrqGuard() noexcept : state(cortos_port_irq_save()) {}
-      ~IrqGuard() { cortos_port_irq_restore(state); }
+      irq_guard() noexcept : state(cortos_port_irq_save()) {}
+      ~irq_guard() { cortos_port_irq_restore(state); }
 
-      IrqGuard(IrqGuard const&) = delete;
-      IrqGuard& operator=(IrqGuard const&) = delete;
+      irq_guard(irq_guard const&) = delete;
+      irq_guard& operator=(irq_guard const&) = delete;
    };
 
-   struct DriverState
+   struct driver_state
    {
       bool initialised{false};
       uint32_t frequency_hz{0};
       uint32_t next_id{1};
       bool started{false};
-      std::array<Slot, MAX_SCHEDULED_CALLBACKS> slots{};
+      std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
    };
 
-   static constinit DriverState ds{};
+   static constinit driver_state ds{};
 
    static void fire_due_isr(uint64_t now_ticks) noexcept
    {
       // ISR context: free slot before invoking callback to avoid reentrancy hazards.
-      for (auto& slot : ds.slots) {
-         if (slot.id != 0 && slot.when <= now_ticks) {
-            auto cb = slot.cb;
-            auto arg = slot.arg;
-            slot = Slot{};
+      for (auto& s : ds.slots) {
+         if (s.id != 0 && s.when <= now_ticks) {
+            auto cb = s.cb;
+            auto arg = s.arg;
+            s = slot{};
             cb(arg);
          }
       }
@@ -95,21 +95,21 @@ void initialise(uint32_t frequency_hz)
 void finalise()
 {
    CORTOS_ASSERT(tickless::ds.initialised);
-   tickless::ds = tickless::DriverState{};
+   tickless::ds = tickless::driver_state{};
 }
 
-[[nodiscard]] TimePoint now() noexcept
+[[nodiscard]] time_point now() noexcept
 {
-   return TimePoint{cortos_port_time_now()};
+   return time_point{cortos_port_time_now()};
 }
 
-[[nodiscard]] Handle schedule_at(TimePoint tp, Callback cb, void* arg) noexcept
+[[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept
 {
    if (!cb) {
       return {};
    }
 
-   tickless::IrqGuard guard;
+   tickless::irq_guard guard;
 
    for (auto& slot : tickless::ds.slots) {
       if (slot.id == 0) {
@@ -127,24 +127,24 @@ void finalise()
          // Rearm to the earliest deadline and let ISR path consume it.
          tickless::rearm_locked();
 
-         return Handle{id};
+         return handle{id};
       }
    }
 
    return {}; // out of slots
 }
 
-bool cancel(Handle h) noexcept
+bool cancel(handle h) noexcept
 {
    if (h.id == 0) {
       return false;
    }
 
-   tickless::IrqGuard guard;
+   tickless::irq_guard guard;
 
    for (auto& slot : tickless::ds.slots) {
       if (slot.id == h.id) {
-         slot = tickless::Slot{};
+         slot = tickless::slot{};
          tickless::rearm_locked();
          return true;
       }
@@ -153,18 +153,18 @@ bool cancel(Handle h) noexcept
    return false;
 }
 
-[[nodiscard]] Duration from_milliseconds(uint32_t ms) noexcept
+[[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
    const uint64_t ticks =
       tickless::ceil_div_u64(static_cast<uint64_t>(ms) * tickless::ds.frequency_hz, 1000ULL);
-   return Duration{ticks};
+   return duration{ticks};
 }
 
-[[nodiscard]] Duration from_microseconds(uint32_t us) noexcept
+[[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
    const uint64_t ticks =
       tickless::ceil_div_u64(static_cast<uint64_t>(us) * tickless::ds.frequency_hz, 1'000'000ULL);
-   return Duration{ticks};
+   return duration{ticks};
 }
 
 void start() noexcept
@@ -179,7 +179,7 @@ void start() noexcept
    cortos_port_time_setup(0);
 
    {
-      tickless::IrqGuard guard;
+      tickless::irq_guard guard;
       tickless::rearm_locked();
    }
 
@@ -204,7 +204,7 @@ void on_timer_isr() noexcept
 
    tickless::fire_due_isr(now_ticks);
 
-   tickless::IrqGuard guard;
+   tickless::irq_guard guard;
    tickless::rearm_locked();
 }
 

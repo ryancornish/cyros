@@ -9,7 +9,7 @@
 #define CORTOS_KERNEL_HPP
 
 #include <cortos/kernel/function.hpp>
-#include <cortos/kernel/spin_lock.hpp>
+#include <cortos/kernel/spinlock.hpp>
 #include <cortos/kernel/thread.hpp>
 #include <cortos/kernel/waitable.hpp>
 
@@ -60,9 +60,9 @@ void finalise();
  * when signal_one/all occurs, the signal is lost.
  *
  * @param waitables Non-empty list of waitables (must remain valid for the wait duration).
- * @return Result: index of the signalled waitable and whether it was acquired.
+ * @return result: index of the signalled waitable and whether it was acquired.
  */
-Waitable::Result wait_for_any(std::span<Waitable* const> waitables);
+waitable::result wait_for_any(std::span<waitable* const> waitables);
 
 /**
  * @brief Block current thread until `predicate` returns true, waking on any waitable.
@@ -81,7 +81,7 @@ Waitable::Result wait_for_any(std::span<Waitable* const> waitables);
  * - Otherwise returns the last wake source observed before `predicate` became true
  *   (index in [0..N-1]) and the acquired flag from that wake.
  */
-Waitable::Result wait_until(Waitable::Predicate predicate, std::span<Waitable* const> waitables);
+waitable::result wait_until(waitable::predicate predicate, std::span<waitable* const> waitables);
 
 /**
  * @brief Block current thread until ANY of the given waitables is signalled. (Preferred)
@@ -90,20 +90,20 @@ Waitable::Result wait_until(Waitable::Predicate predicate, std::span<Waitable* c
  *
  * @tparam Waitables One or more waitable types.
  * @param waitables One or more waitables (must remain valid for the wait duration).
- * @return Result: index of the signalled waitable and whether it was acquired.
+ * @return result: index of the signalled waitable and whether it was acquired.
  */
 template<typename... Waitables>
-inline Waitable::Result wait_for_any(Waitables&... waitables)
+inline waitable::result wait_for_any(Waitables&... waitables)
 {
    static_assert(sizeof...(Waitables) > 0);
-   return wait_for_any(std::initializer_list<Waitable* const>{ (&waitables)... });
+   return wait_for_any(std::initializer_list<waitable* const>{ (&waitables)... });
 }
 
 template<typename... Waitables>
-inline Waitable::Result wait_until(Waitable::Predicate predicate, Waitables&... waitables)
+inline waitable::result wait_until(waitable::predicate predicate, Waitables&... waitables)
 {
    static_assert(sizeof...(Waitables) > 0);
-   return wait_until(std::move(predicate), std::initializer_list<Waitable* const>{ (&waitables)... });
+   return wait_until(std::move(predicate), std::initializer_list<waitable* const>{ (&waitables)... });
 }
 
 /**
@@ -111,10 +111,10 @@ inline Waitable::Result wait_until(Waitable::Predicate predicate, Waitables&... 
  *
  * Equivalent to wait_for_any(waitable).
  *
- * @param waitable Waitable to block on (must remain valid for the wait duration).
- * @return Result for the wait (index will be 0).
+ * @param waitable waitable to block on (must remain valid for the wait duration).
+ * @return result for the wait (index will be 0).
  */
-inline Waitable::Result wait_for(Waitable& waitable)
+inline waitable::result wait_for(waitable& waitable)
 {
    return wait_for_any(waitable);
 }

@@ -15,7 +15,7 @@ sources_excluded_from_archive = [
 public_headers = [
   "public_headers/kernel.hpp -> cortos/kernel/kernel.hpp",
   "public_headers/function.hpp -> cortos/kernel/function.hpp",
-  "public_headers/spin_lock.hpp -> cortos/kernel/spin_lock.hpp",
+  "public_headers/spinlock.hpp -> cortos/kernel/spinlock.hpp",
   "public_headers/thread.hpp -> cortos/kernel/thread.hpp",
   "public_headers/waitable.hpp -> cortos/kernel/waitable.hpp",
 ]
