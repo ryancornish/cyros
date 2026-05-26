@@ -20,7 +20,7 @@ int main(int argc, char** argv)
 {
    ::testing::InitGoogleTest(&argc, argv);
 
-   int result = 0;//RUN_ALL_TESTS();
+   int result = RUN_ALL_TESTS();
 
    return result;
 }
