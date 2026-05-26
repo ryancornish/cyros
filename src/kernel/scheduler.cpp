@@ -86,10 +86,10 @@ bool scheduler::post_to_inbox(cross_core_request request) noexcept
 * Invariants / contract:
 * - Called only by the owning core of this scheduler (no cross-core mutation).
 * - @c current_thread is non-null and is the thread currently executing on this core.
-* - On entry, @c current_thread->state is NEVER ready:
-*     - running    => treated as preempted/rotated and re-enqueued as ready (except idle).
-*     - blocked    => must already be removed from ready structures - not re-enqueued.
-*     - terminated => must not be re-enqueued.
+* - On entry, @c current_thread->state is NEVER Ready:
+*     - Running    => treated as preempted/rotated and re-enqueued as Ready (except idle).
+*     - Blocked    => must already be removed from ready structures - not re-enqueued.
+*     - Terminated => must not be re-enqueued.
 * - The currently running thread is not present in the ready matrix on entry.
 * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
 */
@@ -139,27 +139,6 @@ void scheduler::notify_block_current_thread(std::span<waitable* const> waitables
    current_thread->notify_block(waitables);
 }
 
-void scheduler::disable_preemption()
-{
-   ++preempt_disable_depth;
-}
-
-void scheduler::enable_preemption()
-{
-   CORTOS_ASSERT(preempt_disable_depth > 0);
-   if (--preempt_disable_depth == 0) {
-      // Commenting the following out due to the bug on thread termination:
-      // - The thread has exited the entry(), marked itself as terminated, and wants to
-      //   signal all termination waiters - this requires holding a spin lock.
-      //   on destruction of the spin-lock, we reenable preemption which forces a reschedule due to below.
-      //   But the thread has already been marked as terminated so it does not get rotated in the reschedule
-      //   algorithm...
-      //   anyways either this should not happen on enable, or we are marking the thread as terminated too early!
-      //   I'll decide later which decision is correct.
-      //cortos_port_pend_reschedule(); // TODO: Should this really be here?
-   }
-}
-
 void scheduler::reset()
 {
    CORTOS_ASSERT_OP(inbox.approx_size(), ==, 0); // Cannot reset whilst inbox is not empty
@@ -167,7 +146,6 @@ void scheduler::reset()
 
    pinned_thread_counter.store(0, std::memory_order_relaxed);
    inbox_poke_pending.store(false, std::memory_order_relaxed);
-   preempt_disable_depth = 0;
    current_thread = nullptr;
 }
 

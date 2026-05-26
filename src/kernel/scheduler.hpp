@@ -38,8 +38,6 @@ private:
 
    thread_ready_matrix ready_matrix;
 
-   uint32_t preempt_disable_depth{0};
-
    std::atomic<bool> inbox_poke_pending{false};
    static constexpr uint32_t inbox_cap = 64; // tune later
    mpsc_ring_buffer<cross_core_request, inbox_cap> inbox;
@@ -90,10 +88,10 @@ public:
    * Invariants / contract:
    * - Called only by the owning core of this scheduler (no cross-core mutation).
    * - @c current_thread is non-null and is the thread currently executing on this core.
-   * - On entry, @c current_thread->state is NEVER ready:
-   *     - running    => treated as preempted/rotated and re-enqueued as ready (except idle).
-   *     - blocked    => must already be removed from ready structures - not re-enqueued.
-   *     - terminated => must not be re-enqueued.
+   * - On entry, @c current_thread->state is NEVER Ready:
+   *     - Running    => treated as preempted/rotated and re-enqueued as Ready (except idle).
+   *     - Blocked    => must already be removed from ready structures - not re-enqueued.
+   *     - Terminated => must not be re-enqueued.
    * - The currently running thread is not present in the ready matrix on entry.
    * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
    */
@@ -104,10 +102,6 @@ public:
    waitable::result commence_block_current_thread();
 
    void notify_block_current_thread(std::span<waitable* const> waitables) const;
-
-   void disable_preemption();
-
-   void enable_preemption();
 
    void reset();
 };

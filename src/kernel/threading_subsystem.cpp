@@ -43,7 +43,7 @@ void thread_control_block::notify_block(std::span<waitable* const> waitables) co
 
 waitable::result thread_control_block::commence_block()
 {
-   cortos_port_pend_reschedule();
+   cortos_port_thread_yield();
 
    // When we resume, winner info is in wait_operation
    return waitable::result{

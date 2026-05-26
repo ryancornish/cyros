@@ -107,6 +107,12 @@ typedef struct cortos_port_context cortos_port_context_t;
 
 /**
  * @brief Port->Kernel reschedule hook
+ *
+ * Installed by the kernel via cortos_port_init(). The port invokes this hook
+ * when a reschedule must be serviced on the calling core - i.e. as the
+ * back-end of both cortos_port_thread_yield() and cortos_port_pend_reschedule()
+ * once the port has determined a reschedule may safely run. The hook runs the
+ * core-local scheduler, which may perform a context switch.
  */
 typedef void (*cortos_port_reschedule_t)(void);
 
@@ -131,11 +137,17 @@ typedef void (*cortos_port_isr_handler_t)(void* arg);
 
 /**
  * @brief Initialize the port layer
+ * @param reschedule_handler Port->kernel hook invoked to service a reschedule
+ *                           on the calling core (see cortos_port_reschedule_t).
  */
-void cortos_port_init(cortos_port_reschedule_t pend_reschedule_handler);
+void cortos_port_init(cortos_port_reschedule_t reschedule_handler);
 
 /* ============================================================================
  * Critical Sections (Interrupt Control)
+ *
+ * Interrupt masking blocks the *hardware*: while raised, asynchronous
+ * interrupts cannot be delivered to the calling core. This is distinct from
+ * preemption control (below) - see the note in the Preemption Control section.
  * ========================================================================= */
 
 /**
@@ -165,8 +177,61 @@ uint32_t cortos_port_irq_save(void);
 /**
  * @brief Restore interrupt state
  * @param state Previous state returned by cortos_port_irq_save()
+ *
+ * When this restores interrupts to fully unmasked AND preemption is also
+ * enabled, the calling core is at baseline priority; if a reschedule was
+ * pended while masked it is resolved at that point (see Reschedule Requests).
  */
 void cortos_port_irq_restore(uint32_t state);
+
+/* ============================================================================
+ * Preemption Control
+ *
+ * Preemption disabling blocks the *scheduler*: while raised, no context switch
+ * may occur on the calling core. Interrupts are NOT affected - ISRs still fire
+ * and run. They simply cannot cause a thread switch until preemption is
+ * re-enabled.
+ *
+ * Preemption vs interrupt masking
+ * -------------------------------
+ * These are independent, separately-nesting facilities:
+ *  - Interrupt masking defends against a device ISR running mid-mutation.
+ *  - Preemption disabling defends against a thread switch while the caller
+ *    holds something (e.g. a spinlock) that makes switching unsafe, while
+ *    still permitting ISRs to run.
+ * A context switch on a core can occur only when BOTH are at zero depth:
+ * interrupts unmasked and preemption enabled. That joint condition is what
+ * port.h refers to as "baseline priority".
+ *
+ * The port owns the preemption mechanism because it is platform-specific
+ * (a real priority/mask action on bare metal, a counter on a cooperative
+ * simulation port). The kernel owns the policy: it decides when to call
+ * these, and with what nesting.
+ *
+ * Both functions nest. Calls must be balanced.
+ * ========================================================================= */
+
+/**
+ * @brief Disable preemption on the calling core (nestable).
+ *
+ * Increments the preemption-disable nesting depth. While the depth is non-zero
+ * no context switch will be performed on this core. ISRs continue to run. A
+ * reschedule they request via cortos_port_pend_reschedule() is recorded and
+ * deferred.
+ */
+void cortos_port_preempt_disable(void);
+
+/**
+ * @brief Enable preemption on the calling core (nestable).
+ *
+ * Decrements the preemption-disable nesting depth. When the depth reaches zero
+ * AND interrupts are not masked, the calling core is at baseline priority:
+ * this is a contract "safe point", and if a reschedule was pended while
+ * preemption was disabled it is resolved here before this call returns.
+ *
+ * Must be balanced against cortos_port_preempt_disable().
+ */
+void cortos_port_preempt_enable(void);
 
 /* ============================================================================
  * Context Management & Switching
@@ -216,10 +281,110 @@ void cortos_port_switch(cortos_port_context_t* from, cortos_port_context_t* to);
  */
 void cortos_port_start_first(cortos_port_context_t* first);
 
-/**
- * @brief Request a reschedule
+/* ============================================================================
+ * Reschedule Requests
  *
- * Yields back to the scheduler/dispatcher from the current context.
+ * CoRTOS distinguishes TWO reschedule operations. They differ in their
+ * preconditions and in the strength of their guarantee. The kernel selects the
+ * correct one per call site; a port MUST implement both to this contract.
+ *
+ * Terminology
+ * -----------
+ *  - "thread context": executing inside a thread's context, not inside an ISR.
+ *  - "kernel-masked": the kernel currently holds a critical section on this
+ *    core - interrupts masked via cortos_port_irq_save() AND/OR preemption
+ *    disabled via cortos_port_preempt_disable().
+ *  - "baseline priority": thread context, with interrupts NOT masked AND
+ *    preemption NOT disabled - i.e. both nesting depths at zero. On Cortex-M
+ *    this is Thread mode with PRIMASK clear, BASEPRI not raised above the
+ *    PendSV priority, and PendSV not otherwise gated.
+ *  - "next safe point": the next moment, on this core, at which execution
+ *    returns to baseline priority - typically the outermost
+ *    cortos_port_irq_restore() or cortos_port_preempt_enable(), or ISR return.
+ *
+ * Why two operations
+ * ------------------
+ * A reschedule cannot always be performed at the instant it becomes
+ * desirable: the requester may be inside an ISR, or inside a kernel critical
+ * section, and in either case switching context immediately would be unsound.
+ * Splitting the operation makes the caller's intent - and, importantly, the
+ * caller's obligations - explicit at every call site.
+ *
+ * Summary
+ * -------
+ *  cortos_port_thread_yield()      strong guarantee, thread context only,
+ *                                  baseline priority only, synchronous.
+ *  cortos_port_pend_reschedule()   weak guarantee, callable from any context,
+ *                                  may be deferred.
+ * ========================================================================= */
+
+/**
+ * @brief Yield the calling thread to the scheduler (synchronous reschedule).
+ *
+ * Strong-guarantee reschedule. The scheduler runs immediately on the calling
+ * core; if another thread is selected, the caller is switched out and this
+ * call does NOT return until the caller is later switched back in. When it
+ * does return, a full reschedule round-trip has provably completed.
+ *
+ * Precondition - the caller MUST satisfy ALL of:
+ *  - Called from thread context (NEVER from an ISR).
+ *  - Called at baseline priority: interrupts not masked AND preemption not
+ *    disabled.
+ *
+ * Ports that can observe the execution priority SHOULD assert the baseline
+ * precondition inside this function.
+ *
+ * Use when the caller is deliberately giving up the CPU and depends on the
+ * round-trip having completed on return - e.g. blocking in a wait operation,
+ * an explicit yield, or a join. Callers MAY rely on post-switch state being
+ * valid immediately after this function returns.
+ *
+ * Port implementation notes:
+ *  - Cortex-M: pend PendSV, then DSB/ISB. From baseline priority PendSV is
+ *    taken before the next instruction, making the call synchronous.
+ *  - RISC-V: trigger the software interrupt (or switch directly); from
+ *    baseline priority it is serviced immediately.
+ *  - Linux/boost.context: resume the scheduler fiber.
+ */
+void cortos_port_thread_yield(void);
+
+/**
+ * @brief Request a reschedule on the calling core (deferred-safe).
+ *
+ * Weak-guarantee reschedule. Guarantees ONLY that a reschedule will occur on
+ * this core at or before the next safe point. This call MAY return before any
+ * context switch has happened.
+ *
+ * Callable from ANY context: thread context or ISR, with or without a kernel
+ * critical section held.
+ *
+ * Behaviour by context:
+ *  - Baseline priority: the next safe point is "now", so the reschedule
+ *    resolves before this call returns. This is observationally identical to
+ *    cortos_port_thread_yield() - but see the caller obligation below.
+ *  - Kernel-masked, or ISR context: the request is recorded and the actual
+ *    reschedule is deferred to the next safe point - the outermost
+ *    cortos_port_irq_restore() or cortos_port_preempt_enable(), or ISR return.
+ *
+ * Caller obligation: callers MUST NOT assume that a context switch has
+ * occurred, or that any post-switch state is valid, after this call returns.
+ * This holds even in the baseline-priority case: the weak guarantee IS the
+ * contract, independent of how a particular context happens to satisfy it. A
+ * caller that needs the round-trip must use cortos_port_thread_yield().
+ *
+ * Use when the caller wants to flag that a reschedule may now be warranted but
+ * is not itself blocking - e.g. after making a higher-priority thread ready,
+ * from a signal/wake path, or from an ISR handing work to a thread.
+ *
+ * Port implementation notes:
+ *  - Cortex-M: set the PendSV pending bit (ICSR.PENDSVSET). The hardware
+ *    defers delivery until execution priority drops to the PendSV level.
+ *  - RISC-V: set the machine software interrupt pending bit (CLINT MSIP). The
+ *    hardware defers delivery until software interrupts are unmasked.
+ *  - Linux/boost.context: if at baseline priority, resume the scheduler fiber
+ *    now; otherwise set a per-core "reschedule pending" flag that the
+ *    irq_restore / preempt_enable safe points (and simulated-ISR return)
+ *    check and resolve.
  */
 void cortos_port_pend_reschedule(void);
 
@@ -261,6 +426,11 @@ void cortos_port_start_cores(size_t cores_to_use, cortos_port_core_entry_t entry
 /**
  * @brief Send an IPI to another core to trigger a reschedule
  * @param core_id Target core ID
+ *
+ * Causes the target core to perform a reschedule at its next safe point. This
+ * is the cross-core analogue of cortos_port_pend_reschedule(): it carries the
+ * same weak guarantee and the receiving core resolves it exactly as a locally
+ * pended reschedule would be.
  */
 void cortos_port_send_reschedule_ipi(uint32_t core_id);
 
@@ -289,8 +459,8 @@ void* cortos_port_get_tls_pointer(void);
  * tests, plus tickless one-shot arming and ISR delivery when pumped.
  *
  * Note:
- * - SimulationTimeDriver owns time and does NOT use this.
- * - Periodic driver unit tests call driver.on_timer_isr() directly.
+ * - The simulation time driver owns time and does NOT use this.
+ * - Periodic driver unit tests call on_timer_isr() directly.
  * ========================================================================= */
 
 /**
@@ -306,7 +476,7 @@ void* cortos_port_get_tls_pointer(void);
  *   The driver will call cortos_port_time_arm()/disarm() to schedule deadlines.
  *   The port must deliver the registered ISR handler when time_now() >= armed deadline.
  *
- * Called by the selected TimeDriver during start().
+ * Called by the selected time driver during start().
  */
 void cortos_port_time_setup(uint32_t tick_hz);
 

@@ -8,6 +8,37 @@
  *
  * SMP support: Each pthread represents a "core". Use cortos_port_get_core_id()
  * to determine which simulated core is running.
+ *
+ * Reschedule model
+ * ----------------
+ * This port implements the two-operation reschedule contract from port.h:
+ *
+ *   cortos_port_thread_yield()    - strong guarantee, synchronous. Resumes the
+ *                                   scheduler fiber immediately. Caller must be
+ *                                   in thread context at baseline priority.
+ *
+ *   cortos_port_pend_reschedule() - weak guarantee, deferred-safe. If invoked
+ *                                   at baseline priority it resolves now (same
+ *                                   fiber resume). If invoked while the core is
+ *                                   kernel-masked it sets a per-core
+ *                                   "reschedule pending" flag instead.
+ *
+ * Baseline priority and the two depth counters
+ * --------------------------------------------
+ * "Kernel-masked" on this port means EITHER counter is non-zero:
+ *   - interrupt_disable_depth : interrupt masking (Critical Sections).
+ *   - preempt_disable_depth   : preemption disabling (Preemption Control).
+ * A context switch may occur only at "baseline priority": inside a thread
+ * fiber with BOTH counters at zero.
+ *
+ * Resolving the pending flag
+ * --------------------------
+ * The flag is drained at whichever safe point is reached last - that is,
+ * whenever a counter returns to zero and the OTHER counter is already zero:
+ *   - cortos_port_irq_restore()  reaching interrupt depth 0, and
+ *   - cortos_port_preempt_enable() reaching preempt depth 0.
+ * Both paths funnel through resolve_pending_reschedule_if_baseline(), which
+ * only acts when the full baseline condition holds.
  */
 
 #include <cortos/port/port.h>
@@ -139,7 +170,7 @@ struct global_state
 {
    std::atomic<bool>        shutdown_requested{false};
    std::atomic<uint32_t>    active_contexts{0};
-   cortos_port_reschedule_t pend_reschedule_handler{nullptr};
+   cortos_port_reschedule_t reschedule_handler{nullptr};
    cpu_core_array cores;
 
    /// @brief Have any cores been started?
@@ -149,7 +180,7 @@ struct global_state
    {
       shutdown_requested.store(false);
       active_contexts.store(0);
-      pend_reschedule_handler = nullptr;
+      reschedule_handler = nullptr;
       cores = {};
    }
 };
@@ -168,6 +199,19 @@ struct current_core_state
    boost::context::fiber os_caller;
    // Simulates pointing to fibers dedicated TLS block.
    void* tls_pointer{nullptr};
+
+   // Interrupt-masking nesting depth (Critical Sections). Blocks the hardware.
+   uint32_t interrupt_disable_depth{0};
+
+   // Preemption-disable nesting depth (Preemption Control). Blocks the
+   // scheduler from switching while non-zero; interrupts still flow.
+   uint32_t preempt_disable_depth{0};
+
+   // Set by cortos_port_pend_reschedule() when it cannot resolve immediately
+   // (i.e. the core is kernel-masked). Drained at the next safe point: either
+   // irq_restore() reaching interrupt depth 0, or preempt_enable() reaching
+   // preempt depth 0 - whichever leaves BOTH counters at zero.
+   bool reschedule_pending{false};
 };
 static thread_local constinit current_core_state current_core;
 
@@ -175,39 +219,69 @@ static thread_local constinit current_core_state current_core;
  * Platform Initialization
  * ========================================================================= */
 
-extern "C" void cortos_port_init(cortos_port_reschedule_t pend_reschedule_handler)
+extern "C" void cortos_port_init(cortos_port_reschedule_t reschedule_handler)
 {
-   global.pend_reschedule_handler = pend_reschedule_handler;
+   global.reschedule_handler = reschedule_handler;
 }
 
 /* ============================================================================
- * Critical Sections (Simulated)
+ * Reschedule resolution helper
+ *
+ * Shared by the two safe points (irq_restore depth 0, preempt_enable depth 0).
+ * Declared early so the critical-section and preemption code below can use it.
  * ========================================================================= */
 
-static thread_local uint32_t interrupt_disable_depth = 0;
+static void switch_to_scheduler_fiber();
+
+/**
+ * @brief Drain a deferred reschedule if the core is now at baseline priority.
+ *
+ * Baseline = inside a thread fiber, interrupt depth 0, preempt depth 0.
+ * Called whenever either depth counter returns to zero.
+ */
+static void resolve_pending_reschedule_if_baseline()
+{
+   if (!current_core.reschedule_pending) return;
+
+   // Baseline requires BOTH counters at zero...
+   if (current_core.interrupt_disable_depth != 0) return;
+   if (current_core.preempt_disable_depth   != 0) return;
+   // ...and that we are inside a thread fiber to switch away from.
+   if (!current_core.current_context) return;
+
+   current_core.reschedule_pending = false;
+   switch_to_scheduler_fiber();
+}
+
+/* ============================================================================
+ * Critical Sections (Interrupt Control) - Simulated
+ *
+ * Tracks an interrupt-masking nesting depth. Blocks the hardware: while
+ * non-zero, (simulated) interrupts cannot be delivered.
+ * ========================================================================= */
 
 extern "C" void cortos_port_disable_interrupts(void)
 {
-   interrupt_disable_depth++;
+   current_core.interrupt_disable_depth++;
 }
 
 extern "C" void cortos_port_enable_interrupts(void)
 {
-   if (interrupt_disable_depth > 0) {
-      interrupt_disable_depth--;
+   if (current_core.interrupt_disable_depth > 0) {
+      current_core.interrupt_disable_depth--;
    }
 }
 
 extern "C" bool cortos_port_interrupts_enabled(void)
 {
-   return interrupt_disable_depth == 0;
+   return current_core.interrupt_disable_depth == 0;
 }
 
 extern "C" uint32_t cortos_port_irq_save(void)
 {
    // Return previous enabled-state as 1/0 (simple)
-   uint32_t prev_enabled = (interrupt_disable_depth == 0) ? 1u : 0u;
-   interrupt_disable_depth++;
+   uint32_t prev_enabled = (current_core.interrupt_disable_depth == 0) ? 1u : 0u;
+   current_core.interrupt_disable_depth++;
    return prev_enabled;
 }
 
@@ -215,9 +289,38 @@ extern "C" void cortos_port_irq_restore(uint32_t state)
 {
    (void)state;
    // Unwind one nesting level
-   if (interrupt_disable_depth > 0) {
-      interrupt_disable_depth--;
+   if (current_core.interrupt_disable_depth > 0) {
+      current_core.interrupt_disable_depth--;
    }
+
+   // Interrupt depth reaching 0 is one of the contract's safe points: if a
+   // reschedule was pended while masked, resolve it (only fires if preemption
+   // is also enabled).
+   resolve_pending_reschedule_if_baseline();
+}
+
+/* ============================================================================
+ * Preemption Control - Simulated
+ *
+ * Tracks a preemption-disable nesting depth. Blocks the scheduler: while
+ * non-zero, no context switch is performed on this core. Interrupts are
+ * unaffected.
+ * ========================================================================= */
+
+extern "C" void cortos_port_preempt_disable(void)
+{
+   current_core.preempt_disable_depth++;
+}
+
+extern "C" void cortos_port_preempt_enable(void)
+{
+   CORTOS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
+   current_core.preempt_disable_depth--;
+
+   // Preempt depth reaching 0 is one of the contract's safe points: if a
+   // reschedule was pended while preemption was disabled, resolve it (only
+   // fires if interrupts are also unmasked).
+   resolve_pending_reschedule_if_baseline();
 }
 
 /* ============================================================================
@@ -308,14 +411,61 @@ extern "C" void cortos_port_start_first(cortos_port_context_t* first)
    cortos_port_switch(nullptr, first);
 }
 
+/* ============================================================================
+ * Reschedule Requests
+ *
+ * See port.h "Reschedule Requests" for the full contract. On this cooperative
+ * simulation port the synchronous switch is a resume of the scheduler fiber
+ * (current_core.thread_caller).
+ * ========================================================================= */
+
+/**
+ * @brief Perform the synchronous switch into the scheduler fiber.
+ *
+ * Precondition: we are inside a thread fiber (current_context != nullptr).
+ * The scheduler fiber ('thread_caller') runs the kernel reschedule and, when
+ * this thread is later selected again, control returns here.
+ */
+static void switch_to_scheduler_fiber()
+{
+   CORTOS_ASSERT(current_core.current_context); // not inside a thread fiber
+   CORTOS_ASSERT(current_core.thread_caller);   // no scheduler fiber to resume
+   current_core.thread_caller = std::move(current_core.thread_caller).resume();
+}
+
+extern "C" void cortos_port_thread_yield(void)
+{
+   // Strong-guarantee, synchronous. Contract precondition: thread context at
+   // baseline priority. Assert it - this port can observe all conditions.
+   CORTOS_ASSERT(current_core.current_context);            // must be a thread
+   CORTOS_ASSERT(current_core.interrupt_disable_depth == 0); // interrupts unmasked
+   CORTOS_ASSERT(current_core.preempt_disable_depth   == 0); // preemption enabled
+
+   switch_to_scheduler_fiber();
+}
+
 extern "C" void cortos_port_pend_reschedule(void)
 {
-   // Only meaningful if we're currently inside a thread fiber on this OS-thread.
+   // Weak-guarantee, deferred-safe. Callable from any context.
+
+   // Not inside a thread fiber (e.g. called from scheduler/idle context with
+   // no current thread): nothing to switch away from. The cooperative pump in
+   // start_scheduler() drives progress in that case.
    if (!current_core.current_context) return;
 
-   // The outer fiber 'thread_caller' is the scheduler fiber.
-   CORTOS_ASSERT(current_core.thread_caller);
-   current_core.thread_caller = std::move(current_core.thread_caller).resume();
+   const bool baseline = (current_core.interrupt_disable_depth == 0) &&
+                         (current_core.preempt_disable_depth   == 0);
+
+   if (baseline) {
+      // The next safe point is now - resolve immediately. Clear any stale
+      // pending flag; we are servicing it here.
+      current_core.reschedule_pending = false;
+      switch_to_scheduler_fiber();
+   } else {
+      // Kernel-masked: defer. The flag is drained at the next safe point -
+      // whichever of irq_restore() / preempt_enable() leaves both depths at 0.
+      current_core.reschedule_pending = true;
+   }
 }
 
 extern "C" void cortos_port_thread_exit(void)
@@ -344,7 +494,7 @@ void cpu_core::start_scheduler()
 
          // Cooperative pump until only idle threads remain (one idle thread per core).
          while (global.active_contexts.load(std::memory_order_acquire) > global.cores.size()) {
-            global.pend_reschedule_handler();
+            global.reschedule_handler();
          }
 
          // First core to observe quiescence initiates shutdown.
@@ -431,6 +581,9 @@ extern "C" void cortos_port_send_reschedule_ipi(uint32_t core_id)
    pthread_mutex_unlock(&core_poke.mutex);
 
    if (core_id == current_core.core->core_id && current_core.current_context) {
+      // Targeting our own core from within a thread fiber: an IPI is a weak,
+      // deferred-safe request - route through pend_reschedule(), not a forced
+      // synchronous yield.
       cortos_port_pend_reschedule();
    }
 }
@@ -456,8 +609,8 @@ extern "C" void* cortos_port_get_tls_pointer(void)
  * tests, plus tickless one-shot arming and ISR delivery when pumped.
  *
  * Note:
- * - SimulationTimeDriver owns time and does NOT use this.
- * - Periodic driver unit tests call driver.on_timer_isr() directly.
+ * - The simulation time driver owns time and does NOT use this.
+ * - Periodic driver unit tests call on_timer_isr() directly.
  * ========================================================================= */
 
 struct time_state
@@ -547,7 +700,7 @@ extern "C" void cortos_port_idle(void)
    std::printf("(CORE %d) cortos_port_idle()\n", current_core.core->core_id);
    auto& core_poke = global.cores[current_core.core->core_id].core_poke;
 
-   // Fast path: don’t sleep if already pending.
+   // Fast path: don't sleep if already pending.
    if (core_poke.pending.exchange(false, std::memory_order_acq_rel)) {
       return;
    }

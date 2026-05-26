@@ -19,7 +19,8 @@
 // invariants list:
 // only core x mutates scheduler[x].ready_matrix, current_thread, blocked lists, etc.
 // cross-core ops must go through scheduler::post_to_inbox() + cortos_port_send_reschedule_ipi(core).
-// spinlocks are only used with preemption disabled (and maybe ir_qs) inside kernel land.
+// spinlocks disable preemption for the duration of the lock (via the port's
+// preemption control); they do not mask interrupts.
 
 
 namespace cortos
@@ -149,6 +150,8 @@ public:
       }
 
       if (set_thread_ready(tcb) == ready_action::reschedule) {
+         // Weak request: the registering thread is not itself blocking, it is
+         // only flagging that a higher-priority thread became ready.
          cortos_port_pend_reschedule();
       }
    }
@@ -245,6 +248,8 @@ void idle_task()
 {
    while (kernel_instance.is_running()) {
       cortos_port_idle();
+      // Weak request: idle never blocks, it only asks the scheduler to
+      // re-check whether any thread has become ready.
       cortos_port_pend_reschedule();
    }
 }
@@ -314,7 +319,10 @@ void thread::join() noexcept
 
 void spinlock::lock()
 {
-   kernel_instance.scheduler_for_this_core().disable_preemption();
+   // A spinlock disables preemption (so the holder cannot be switched out
+   // mid-section) but does NOT mask interrupts. Preemption control is owned
+   // by the port - see port.h "Preemption Control".
+   cortos_port_preempt_disable();
    while (flag.test_and_set(std::memory_order_acquire)) {
       // busy-wait with cpu yield hint
       cortos_port_cpu_relax();
@@ -324,7 +332,9 @@ void spinlock::lock()
 void spinlock::unlock()
 {
    flag.clear(std::memory_order_release);
-   kernel_instance.scheduler_for_this_core().enable_preemption();
+   // Re-enabling preemption is a contract safe point: if a reschedule was
+   // pended while the lock was held, the port resolves it here.
+   cortos_port_preempt_enable();
 }
 
 namespace kernel
@@ -430,7 +440,9 @@ namespace this_thread
 
 void yield()
 {
-   cortos_port_pend_reschedule();
+   // Strong request: an explicit yield deliberately gives up the CPU and
+   // relies on the reschedule round-trip having completed on return.
+   cortos_port_thread_yield();
 }
 
 }  // namespace this_thread
