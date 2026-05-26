@@ -6,24 +6,24 @@
 namespace cortos::time::simulation
 {
 
-enum class Mode
+enum class mode
 {
-   RealTime,
-   Virtual
+   real_time,
+   virtual_time,
 };
 
 /**
  * @brief Select simulation time progression mode.
  *
- * RealTime mode follows wall-clock time.
- * Virtual mode advances only when explicitly driven by tests.
+ * real_time mode follows wall-clock time.
+ * virtual_time mode advances only when explicitly driven by tests.
  */
-void set_mode(Mode mode) noexcept;
+void set_mode(mode m) noexcept;
 
 /**
  * @brief Get the current simulation mode.
  */
-[[nodiscard]] Mode get_mode() noexcept;
+[[nodiscard]] mode get_mode() noexcept;
 
 /**
  * @brief Reset simulation driver state to a known time point.
@@ -35,14 +35,14 @@ void reset(time_point tp = time_point{0}) noexcept;
 /**
  * @brief Advance virtual time to a specific time point.
  *
- * Has no effect in RealTime mode.
+ * Has no effect in real_time mode.
  */
 void advance_to(time_point tp) noexcept;
 
 /**
  * @brief Advance virtual time by a duration.
  *
- * Has no effect in RealTime mode.
+ * Has no effect in real_time mode.
  */
 void advance_by(duration d) noexcept;
 

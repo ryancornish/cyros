@@ -30,7 +30,7 @@ namespace cortos::time::sim
     */
    struct driver_state
    {
-      simulation::Mode mode{simulation::Mode::Virtual};
+      simulation::mode mode{simulation::mode::virtual_time};
 
       uint32_t tick_frequency_hz{1000};
       std::atomic<uint32_t> next_id{1};
@@ -123,7 +123,7 @@ void finalise()
 {
    CORTOS_ASSERT(sim::ds != nullptr);
 
-   if (sim::ds->mode == simulation::Mode::Virtual) {
+   if (sim::ds->mode == simulation::mode::virtual_time) {
       return time_point{sim::ds->virtual_now.load(std::memory_order_relaxed)};
    }
 
@@ -201,7 +201,7 @@ void start() noexcept
 
    sim::ds->started.store(true, std::memory_order_release);
 
-   if (sim::ds->mode == simulation::Mode::RealTime) {
+   if (sim::ds->mode == simulation::mode::real_time) {
       bool expected = false;
       if (!sim::ds->running.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
          return; // already running
@@ -216,7 +216,7 @@ void stop() noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
 
-   if (sim::ds->mode == simulation::Mode::RealTime) {
+   if (sim::ds->mode == simulation::mode::real_time) {
       bool was_running = sim::ds->running.exchange(false, std::memory_order_acq_rel);
       if (!was_running) {
          return;
@@ -241,15 +241,15 @@ void on_timer_isr() noexcept
 namespace cortos::time::simulation
 {
 
-void set_mode(Mode mode) noexcept
+void set_mode(mode m) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
    CORTOS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
 
-   sim::ds->mode = mode;
+   sim::ds->mode = m;
 }
 
-[[nodiscard]] Mode get_mode() noexcept
+[[nodiscard]] mode get_mode() noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
    return sim::ds->mode;
@@ -274,7 +274,7 @@ void reset(time_point tp) noexcept
 void advance_to(time_point tp) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
-   CORTOS_ASSERT(sim::ds->mode == Mode::Virtual);
+   CORTOS_ASSERT(sim::ds->mode == mode::virtual_time);
 
    uint64_t cur = sim::ds->virtual_now.load(std::memory_order_relaxed);
    uint64_t target = tp.value;
@@ -289,7 +289,7 @@ void advance_to(time_point tp) noexcept
 void advance_by(duration d) noexcept
 {
    CORTOS_ASSERT(sim::ds != nullptr);
-   CORTOS_ASSERT(sim::ds->mode == Mode::Virtual);
+   CORTOS_ASSERT(sim::ds->mode == mode::virtual_time);
 
    uint64_t current = sim::ds->virtual_now.load(std::memory_order_relaxed);
    advance_to(time_point{current + d.value});

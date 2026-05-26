@@ -3,7 +3,7 @@
  * @brief Unit tests for the simulation time driver (src/time/simulation).
  *
  * The simulation driver implements the free-function API declared in
- * <cortos/time/time.hpp>, plus the Virtual/RealTime control surface declared
+ * <cortos/time/time.hpp>, plus the virtual_time/real_time control surface declared
  * in <cortos/time/simulation.hpp>. A test binary links exactly ONE time
  * driver, selected via test.toml [components].time_driver = "simulation".
  *
@@ -12,12 +12,12 @@
  * Unlike the periodic and tickless drivers, the simulation driver OWNS time --
  * it does not read the Linux port counter. It has two modes:
  *
- *   - Virtual  : time only moves when a test calls advance_to()/advance_by().
- *                Each advance invokes on_timer_isr() to fire due callbacks.
- *                Fully deterministic; this is what the coverage gate targets.
+ *   - virtual_time  : time only moves when a test calls advance_to()/advance_by().
+ *                     Each advance invokes on_timer_isr() to fire due callbacks.
+ *                     Fully deterministic; this is what the coverage gate targets.
  *
- *   - RealTime : a background thread tracks wall-clock time and pumps the ISR
- *                roughly every millisecond. Inherently timing-dependent.
+ *   - real_time : a background thread tracks wall-clock time and pumps the ISR
+ *                 roughly every millisecond. Inherently timing-dependent.
  *
  * Lifecycle: the simulation driver heap-allocates its state in initialise()
  * and frees it in finalise(), so unlike the other two drivers BOTH must be
@@ -26,20 +26,20 @@
  * Coverage
  * --------
  * Goal: 100% branch coverage of the simulation translation unit via the
- * Virtual-mode and lifecycle tests below.
+ * virtual_time-mode and lifecycle tests below.
  *
- * The RealTime-mode branches (the `mode == RealTime` arms of start(), stop(),
+ * The real_time-mode branches (the `mode == real_time` arms of start(), stop(),
  * now()/realtime_now_ticks(), and the realtime_thread_main loop) are exercised
- * ONLY by the DISABLED_ RealTime tests at the end of this file. They are
+ * ONLY by the DISABLED_ real_time tests at the end of this file. They are
  * disabled because they depend on wall-clock sleeps and would make the suite
  * timing-flaky. Consequently those branches are NOT hit by the default run.
  *
- * To keep the coverage gate honest, the RealTime-only blocks in
+ * To keep the coverage gate honest, the real_time-only blocks in
  * time_driver_simulation.cpp should be wrapped in coverage-exclusion markers
  * (for gcov/lcov: LCOV_EXCL_START / LCOV_EXCL_STOP), namely:
- *   - the `if (mode == RealTime) { ... }` block in start()
- *   - the `if (mode == RealTime) { ... }` block in stop()
- *   - the RealTime return path in now()
+ *   - the `if (mode == real_time) { ... }` block in start()
+ *   - the `if (mode == real_time) { ... }` block in stop()
+ *   - the real_time return path in now()
  *   - realtime_now_ticks() and realtime_thread_main() in their entirety
  * With those markers, "100%" means 100% of the deterministically tested paths.
  */
@@ -71,7 +71,7 @@ void counting_callback(void* arg) noexcept
  *
  * The simulation driver allocates its driver_state on the heap in initialise()
  * and frees it in finalise(); both must be paired. Tests run in the default
- * Virtual mode unless they explicitly switch. reset() returns virtual time and
+ * virtual_time mode unless they explicitly switch. reset() returns virtual time and
  * the event list to a known state.
  * ========================================================================= */
 class SimulationDriverTest : public ::testing::Test
@@ -80,22 +80,22 @@ protected:
    void SetUp() override
    {
       cortos::time::initialise(1'000 /* Hz */);
-      // Default mode is Virtual; make it explicit and deterministic.
-      cortos::time::simulation::set_mode(time::simulation::Mode::Virtual);
+      // Default mode is virtual_time; make it explicit and deterministic.
+      cortos::time::simulation::set_mode(time::simulation::mode::virtual_time);
       cortos::time::simulation::reset(time::time_point{0});
    }
 
    void TearDown() override
    {
-      // stop() is safe whether or not start() ran. In Virtual mode it is a
-      // near no-op; pairing it keeps RealTime-leaning tests tidy too.
+      // stop() is safe whether or not start() ran. In virtual_time mode it is a
+      // near no-op; pairing it keeps real_time-leaning tests tidy too.
       cortos::time::stop();
       cortos::time::finalise();
    }
 };
 
 /* ============================================================================
- * Lifecycle  (initialise / finalise / start / stop, Virtual mode)
+ * Lifecycle  (initialise / finalise / start / stop, virtual_time mode)
  * ========================================================================= */
 
 // initialise() allocated state; reset() in SetUp left virtual time at 0.
@@ -104,8 +104,8 @@ TEST_F(SimulationDriverTest, InitialTimeIsZero)
    EXPECT_EQ(cortos::time::now().value, 0u);
 }
 
-// start() in Virtual mode sets `started` but spawns no thread; the
-// `mode == RealTime` branch is not taken.
+// start() in virtual_time mode sets `started` but spawns no thread; the
+// `mode == real_time` branch is not taken.
 TEST_F(SimulationDriverTest, StartInVirtualModeDoesNotSpawnThread)
 {
    cortos::time::start();
@@ -113,12 +113,12 @@ TEST_F(SimulationDriverTest, StartInVirtualModeDoesNotSpawnThread)
    EXPECT_EQ(cortos::time::now().value, 0u);
 }
 
-// stop() in Virtual mode takes the non-RealTime path and is a no-op.
+// stop() in virtual_time mode takes the non-real_time path and is a no-op.
 TEST_F(SimulationDriverTest, StopInVirtualModeIsHarmless)
 {
    cortos::time::start();
    cortos::time::stop();
-   cortos::time::stop();  // again -- still harmless in Virtual mode
+   cortos::time::stop();  // again -- still harmless in virtual_time mode
    SUCCEED();
 }
 
@@ -138,25 +138,25 @@ TEST_F(SimulationDriverTest, StopThenRestart)
 }
 
 /* ============================================================================
- * time::Simulation::time::simulation::Mode control  (set_mode / get_mode)
+ * time::Simulation::time::simulation::mode control  (set_mode / get_mode)
  * ========================================================================= */
 
-// get_mode() reports the default Virtual mode set in SetUp().
+// get_mode() reports the default virtual_time mode set in SetUp().
 TEST_F(SimulationDriverTest, DefaultModeIsVirtual)
 {
-   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::Mode::Virtual);
+   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::mode::virtual_time);
 }
 
-// set_mode() round-trips both enumerators. (Switching to RealTime here is
+// set_mode() round-trips both enumerators. (Switching to real_time here is
 // safe: the driver has not been started, so set_mode()'s `!running` assertion
-// holds. We switch straight back without ever starting in RealTime.)
+// holds. We switch straight back without ever starting in real_time.)
 TEST_F(SimulationDriverTest, SetModeRoundTrips)
 {
-   cortos::time::simulation::set_mode(time::simulation::Mode::RealTime);
-   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::Mode::RealTime);
+   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
+   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::mode::real_time);
 
-   cortos::time::simulation::set_mode(time::simulation::Mode::Virtual);
-   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::Mode::Virtual);
+   cortos::time::simulation::set_mode(time::simulation::mode::virtual_time);
+   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::mode::virtual_time);
 }
 
 /* ============================================================================
@@ -185,7 +185,7 @@ TEST_F(SimulationDriverTest, ResetClearsPendingEvents)
 }
 
 /* ============================================================================
- * schedule_at  (Virtual mode)
+ * schedule_at  (virtual_time mode)
  * ========================================================================= */
 
 // Null callback: the `!cb` branch returns an invalid handle.
@@ -213,7 +213,7 @@ TEST_F(SimulationDriverTest, SuccessiveHandlesAreDistinct)
 }
 
 /* ============================================================================
- * Firing semantics  (Virtual mode)
+ * Firing semantics  (virtual_time mode)
  * ========================================================================= */
 
 // advance_to() exactly at the deadline fires the callback (boundary of the
@@ -390,7 +390,7 @@ TEST_F(SimulationDriverTest, CallbackCanScheduleAnotherCallback)
 }
 
 /* ============================================================================
- * cancel()  (Virtual mode)
+ * cancel()  (virtual_time mode)
  * ========================================================================= */
 
 // cancel() of an invalid (id == 0) handle: the `h.id == 0` branch -> false.
@@ -514,7 +514,7 @@ TEST_F(SimulationDriverTest, FromMicrosecondsZero)
 
 // Calling on_timer_isr() directly (no advance) fires anything already due.
 // After advancing virtual time without going through advance_to(), this is the
-// path the RealTime background thread would use.
+// path the real_time background thread would use.
 TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
 {
    std::atomic<int> count{0};
@@ -526,10 +526,10 @@ TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
 }
 
 /* ============================================================================
- * RealTime mode  (DISABLED -- timing-dependent, see file header)
+ * real_time mode  (DISABLED -- timing-dependent, see file header)
  *
- * These cover the wall-clock branches: the RealTime arms of start()/stop(),
- * the RealTime return path of now()/realtime_now_ticks(), and the background
+ * These cover the wall-clock branches: the real_time arms of start()/stop(),
+ * the real_time return path of now()/realtime_now_ticks(), and the background
  * realtime_thread_main loop. They use generous sleeps and assert only loose,
  * monotonic properties. They are DISABLED so the default suite stays
  * deterministic; run them manually with
@@ -538,10 +538,10 @@ TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
  * coverage gate is not skewed by their absence.
  * ========================================================================= */
 
-// RealTime mode: now() advances on its own as wall-clock time passes.
+// real_time mode: now() advances on its own as wall-clock time passes.
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeTimeProgresses)
 {
-   cortos::time::simulation::set_mode(time::simulation::Mode::RealTime);
+   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
    cortos::time::start();
 
    const time::time_point t1 = cortos::time::now();
@@ -553,11 +553,11 @@ TEST_F(SimulationDriverTest, DISABLED_RealTimeModeTimeProgresses)
    cortos::time::stop();
 }
 
-// RealTime mode: a scheduled callback fires on its own once wall-clock time
+// real_time mode: a scheduled callback fires on its own once wall-clock time
 // reaches the deadline (the background thread pumps the ISR).
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCallbackFiresAutonomously)
 {
-   cortos::time::simulation::set_mode(time::simulation::Mode::RealTime);
+   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
    cortos::time::start();
 
    std::atomic<int> count{0};
@@ -571,10 +571,10 @@ TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCallbackFiresAutonomously)
    cortos::time::stop();
 }
 
-// RealTime mode: cancelling before the deadline prevents the autonomous fire.
+// real_time mode: cancelling before the deadline prevents the autonomous fire.
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCancelBeforeAutonomousFire)
 {
-   cortos::time::simulation::set_mode(time::simulation::Mode::RealTime);
+   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
    cortos::time::start();
 
    std::atomic<int> count{0};
@@ -590,11 +590,11 @@ TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCancelBeforeAutonomousFire)
    cortos::time::stop();
 }
 
-// RealTime mode: start() is idempotent -- a second start() while the thread is
+// real_time mode: start() is idempotent -- a second start() while the thread is
 // already running hits the `compare_exchange_strong` false branch.
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeStartIsIdempotent)
 {
-   cortos::time::simulation::set_mode(time::simulation::Mode::RealTime);
+   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
    cortos::time::start();
    cortos::time::start();  // already running -> early return
 
