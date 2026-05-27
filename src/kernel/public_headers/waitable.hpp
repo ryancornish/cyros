@@ -38,6 +38,17 @@ public:
    using predicate = function<bool(), 64, heap_policy::no_heap>;
 
    /**
+    * @brief Caller's instruction for whether signalling should trigger a
+    *        reschedule on the *local* core.
+    */
+   enum class reschedule_policy
+   {
+      automatic, ///< Conditionally trigger a local reschedule if a better thread is made ready (preferred)
+      never,     ///< Never trigger a local reschedule
+      always,    ///< Always trigger a local reschedule
+   };
+
+   /**
    * @brief Result of a wait operation
    *
    * Returned from `wait_for()` and `wait_for_any()` to indicate which `waitable`
@@ -92,6 +103,8 @@ public:
    /**
     * @brief Signal one waiting thread (highest priority)
     * @param acquired True if signalled thread acquired the resource (e.g., mutex lock)
+    * @param policy Whether/when to trigger a local reschedule (default:
+    *               reschedule_policy::automatic, correct for normal callers).
     *
     * Moves the highest-priority waiting thread to the ready queue.
     * If no threads are waiting, this is a no-op.
@@ -103,16 +116,18 @@ public:
     *
     * Called by the owning primitive (e.g., Mutex::unlock(), Timer expiry).
     */
-   void signal_one(bool acquired = true) noexcept;
+   void signal_one(bool acquired = true, reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
    /**
     * @brief Signal all waiting threads
     * @param acquired True if signalled threads acquired the resource
+    * @param policy Whether/when to trigger a local reschedule (default:
+    *               reschedule_policy::automatic, correct for normal callers).
     *
     * Moves all waiting threads to the ready queue.
     * If no threads are waiting, this is a no-op.
     */
-   void signal_all(bool acquired = true) noexcept;
+   void signal_all(bool acquired = true, reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
 protected:
    // Abstract Base Class

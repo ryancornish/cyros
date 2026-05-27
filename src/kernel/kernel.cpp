@@ -149,7 +149,7 @@ public:
          pin_thread_to_core(tcb);
       }
 
-      if (set_thread_ready(tcb) == ready_action::reschedule) {
+      if (set_thread_ready(tcb) == schedule_hint::warranted) {
          // Weak request: the registering thread is not itself blocking, it is
          // only flagging that a higher-priority thread became ready.
          cortos_port_pend_reschedule();
@@ -174,7 +174,7 @@ public:
    *         core and has higher priority than the running thread, indicating
    *         the caller should request a local reschedule.
    */
-   ready_action set_thread_ready(thread_control_block& tcb) noexcept
+   schedule_hint set_thread_ready(thread_control_block& tcb) noexcept
    {
       CORTOS_ASSERT_OP(tcb.state, !=, thread_control_block::thread_state::terminated);
 
@@ -183,7 +183,7 @@ public:
       // if cores are not running yet, enqueue directly (even for remote cores)
       if (!running.load(std::memory_order_acquire)) {
          scheduler.set_thread_ready(tcb);
-         return ready_action::none;
+         return schedule_hint::unwarranted;
       }
 
       auto this_core = cortos_port_get_core_id();
@@ -191,7 +191,7 @@ public:
          scheduler.set_thread_ready(tcb);
 
          if (tcb.is_higher_priority_than(scheduler.current_thread_priority())) {
-            return ready_action::reschedule;
+            return schedule_hint::warranted;
          }
       } else {
          bool posted = scheduler.post_to_inbox({
@@ -200,7 +200,7 @@ public:
          });
          CORTOS_ASSERT(posted);
       }
-      return ready_action::none;
+      return schedule_hint::unwarranted;
    }
 };
 static constinit kernel_state kernel_instance;
@@ -254,7 +254,7 @@ void idle_task()
    }
 }
 
-ready_action wait_node::wake_thread(bool acquired) const noexcept
+schedule_hint wait_node::wake_thread(bool acquired) const noexcept
 {
    CORTOS_ASSERT(tcb != nullptr);
    CORTOS_ASSERT(active_group != nullptr);
@@ -263,7 +263,7 @@ ready_action wait_node::wake_thread(bool acquired) const noexcept
    CORTOS_ASSERT_OP(tcb->state, ==, thread_control_block::thread_state::blocked);
 
    if (!active_group->try_win(static_cast<int>(index), acquired)) {
-      return ready_action::none; // lost
+      return schedule_hint::unwarranted; // lost
    }
 
    // winner: remove all nodes in this group (including this one)

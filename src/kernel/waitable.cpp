@@ -7,6 +7,25 @@
 namespace cortos
 {
 
+using reschedule_policy = waitable::reschedule_policy;
+
+/**
+ * @brief Applies the caller's reschedule_policy to a completed wake.
+ *
+ * Governs only the LOCAL pend: cross-core wakes have already emitted their IPI via the
+ * ready path before this runs, so 'never' does not (and must not) suppress those.
+ */
+static void apply_reschedule_policy(reschedule_policy const policy, schedule_hint const hint)
+{
+   if (policy == reschedule_policy::never) {
+      return;
+   }
+
+   if (policy == reschedule_policy::always || hint == schedule_hint::warranted) {
+      cortos_port_pend_reschedule();
+   }
+}
+
 [[nodiscard]] bool waitable::empty() const noexcept
 {
    return head == nullptr && tail == nullptr;
@@ -69,7 +88,7 @@ wait_node* waitable::pick_best() noexcept
    return best;
 }
 
-void waitable::signal_one(bool acquired) noexcept
+void waitable::signal_one(bool const acquired, reschedule_policy const policy) noexcept
 {
    wait_node* wait_node = nullptr;
    {
@@ -78,14 +97,14 @@ void waitable::signal_one(bool acquired) noexcept
    }
    if (!wait_node) return; // No current waiters
 
-   if (wait_node->wake_thread(acquired) == ready_action::reschedule) {
-      cortos_port_pend_reschedule();
-   }
+   auto hint = wait_node->wake_thread(acquired);
+
+   apply_reschedule_policy(policy, hint);
 }
 
-void waitable::signal_all(bool acquired) noexcept
+void waitable::signal_all(bool const acquired, reschedule_policy const policy) noexcept
 {
-   bool reschedule = false;
+   schedule_hint hint = schedule_hint::unwarranted;
 
    while (true) {
       wait_node* wait_node = nullptr;
@@ -95,13 +114,12 @@ void waitable::signal_all(bool acquired) noexcept
       }
       if (!wait_node) break;
 
-      if (wait_node->wake_thread(acquired) == ready_action::reschedule) {
-         reschedule = true;
+      if (wait_node->wake_thread(acquired) == schedule_hint::warranted) {
+         hint = schedule_hint::warranted;
       }
    }
-   if (reschedule) {
-      cortos_port_pend_reschedule();
-   }
+
+   apply_reschedule_policy(policy, hint);
 }
 
 void waitable::for_each_waiter(waiter_visitor visitor) const

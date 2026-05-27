@@ -13,10 +13,13 @@ namespace cortos
 struct thread_control_block;
 struct wait_group;
 
-enum class ready_action : uint8_t
+/**
+ * @brief TODO
+ */
+enum class schedule_hint
 {
-   none,
-   reschedule,
+   unwarranted, ///< TODO
+   warranted,   ///< TODO
 };
 
 /**
@@ -75,7 +78,7 @@ struct wait_node
     * @param acquired True if the woken thread acquired a resource as part of the wake
     *                 (e.g., mutex handoff). This is recorded in the wait_group result.
     */
-   [[nodiscard]] ready_action wake_thread(bool acquired) const noexcept;
+   [[nodiscard]] schedule_hint wake_thread(bool acquired) const noexcept;
 };
 
 /**

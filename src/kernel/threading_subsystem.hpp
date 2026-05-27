@@ -32,7 +32,10 @@ public:
       bool expected = false;
       CORTOS_ASSERT(terminated.compare_exchange_strong(expected, true, std::memory_order_release));
 
-      signal_all(false);
+      // terminate() is invoked on the teardown path of the thread launcher.
+      // Invoking a reschedule is forbidden during this period as it as we might
+      // otherwise switch away and never return to continue the teardown.
+      signal_all(false, reschedule_policy::never);
    }
 };
 
