@@ -1,10 +1,10 @@
-#include <cortos/kernel/waitable.hpp>
-#include <cortos/port/port.h>
+#include <cyros/kernel/waitable.hpp>
+#include <cyros/port/port.h>
 
 #include "wait_subsystem.hpp"
 #include "threading_subsystem.hpp"
 
-namespace cortos
+namespace cyros
 {
 
 using reschedule_policy = waitable::reschedule_policy;
@@ -22,7 +22,7 @@ static void apply_reschedule_policy(reschedule_policy const policy, schedule_hin
    }
 
    if (policy == reschedule_policy::always || hint == schedule_hint::warranted) {
-      cortos_port_pend_reschedule();
+      cyros_port_pend_reschedule();
    }
 }
 
@@ -33,8 +33,8 @@ static void apply_reschedule_policy(reschedule_policy const policy, schedule_hin
 
 void waitable::add(wait_node& wait_node) noexcept
 {
-   CORTOS_ASSERT1(wait_node.active_waitable == this || wait_node.active_waitable == nullptr, wait_node.active_waitable);
-   CORTOS_ASSERT(!wait_node.is_enqueued());
+   CYROS_ASSERT1(wait_node.active_waitable == this || wait_node.active_waitable == nullptr, wait_node.active_waitable);
+   CYROS_ASSERT(!wait_node.is_enqueued());
 
    wait_node.active_waitable = this;
 
@@ -72,9 +72,9 @@ wait_node* waitable::pick_best() noexcept
    uint8_t best_priority = std::numeric_limits<uint8_t>::max();
 
    for (auto* iter = head; iter; iter = iter->next) {
-      CORTOS_ASSERT(iter->active);
-      CORTOS_ASSERT(iter->tcb != nullptr);
-      CORTOS_ASSERT(iter->active_waitable == this);
+      CYROS_ASSERT(iter->active);
+      CYROS_ASSERT(iter->tcb != nullptr);
+      CYROS_ASSERT(iter->active_waitable == this);
 
       // Skip nodes from already-satisfied wait_for_any groups (race window during teardown / multi-signal).
       if (iter->active_group && iter->active_group->done.load(std::memory_order_acquire)) continue;
@@ -134,4 +134,4 @@ void waitable::for_each_waiter(waiter_visitor visitor) const
    }
 }
 
-} // namespace cortos
+} // namespace cyros

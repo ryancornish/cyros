@@ -2,7 +2,7 @@ name = "time"
 kind = "time"
 
 public_headers = [
-  "public_headers/time.hpp -> cortos/time/time.hpp",
+  "public_headers/time.hpp -> cyros/time/time.hpp",
 ]
 
 variants = [

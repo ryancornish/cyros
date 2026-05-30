@@ -1,14 +1,14 @@
-#ifndef CORTOS_WAITABLE_UTILITIES_HPP
-#define CORTOS_WAITABLE_UTILITIES_HPP
+#ifndef CYROS_WAITABLE_UTILITIES_HPP
+#define CYROS_WAITABLE_UTILITIES_HPP
 
-#include <cortos/kernel/waitable.hpp>
-#include <cortos/config/config.hpp>
-#include <cortos/port/port.h>
+#include <cyros/kernel/waitable.hpp>
+#include <cyros/config/config.hpp>
+#include <cyros/port/port.h>
 
 #include <array>
 #include <algorithm>
 
-namespace cortos
+namespace cyros
 {
 
 template<std::size_t Max>
@@ -60,26 +60,26 @@ public:
 
    waitable* const& operator[](std::size_t index) const noexcept
    {
-      CORTOS_ASSERT(index < count);
+      CYROS_ASSERT(index < count);
       return store[index];
    }
 
    void push(waitable* waitable)
    {
-      CORTOS_ASSERT(count < store.size());
+      CYROS_ASSERT(count < store.size());
       store[count++] = waitable;
    }
 
    void push_range(std::span<waitable* const> waitables)
    {
-      CORTOS_ASSERT(count + waitables.size() <= store.size());
+      CYROS_ASSERT(count + waitables.size() <= store.size());
       std::ranges::copy(waitables, store.data() + count);
       count += waitables.size();
    }
 
    void pop()
    {
-      CORTOS_ASSERT(!empty());
+      CYROS_ASSERT(!empty());
       --count;
    }
 
@@ -113,7 +113,7 @@ public:
       group.sort_by_address();
       // Enforce uniqueness
       for (std::size_t i = 1; i < group.size(); ++i) {
-         CORTOS_ASSERT(group[i] != group[i - 1]);
+         CYROS_ASSERT(group[i] != group[i - 1]);
       }
 
       // Lock in order
@@ -131,6 +131,6 @@ public:
    }
 };
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_WAITABLE_UTILITIES_HPP
+#endif // CYROS_WAITABLE_UTILITIES_HPP

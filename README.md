@@ -1,6 +1,6 @@
-# CoRTOS
+# Cyros
 
-CoRTOS is a small, modern C++ real-time kernel for embedded systems.
+Cyros is a small, modern C++ real-time kernel for embedded systems.
 
 I'm building it around one idea: an RTOS should be something you can *read*
 before you *trust*. The core is intentionally tiny, the layers are cleanly
@@ -21,19 +21,19 @@ Most RTOSes make two choices I wanted to avoid:
    every use case, and you pay (in code size and in cognitive load) for
    features you never enable.
 
-CoRTOS keeps a tight, time-agnostic core instead, and layers everything else on
+Cyros keeps a tight, time-agnostic core instead, and layers everything else on
 top as components and features you choose to include.
 
 ## Architecture
 
-CoRTOS is organised into four layers. I take the boundaries between them
+Cyros is organised into four layers. I take the boundaries between them
 seriously: each layer depends only on the ones it's allowed to, and I've picked
 the seams deliberately so behaviour stays consistent across very different
 targets.
 
 ```
         +-------------------------------------------------+
-        |  userlib  (libcortos)                           |
+        |  userlib  (libcyros)                           |
         |  Mutex, and other opt-in primitives & features  |
         +-------------------------------------------------+
                  |                          |
@@ -68,7 +68,7 @@ identically whether the port is:
 - on **bare metal** - an ARM Cortex-M port is my intended first target.
 
 The kernel never sees a fiber or a thread, only an opaque context. So an
-application built on CoRTOS gets *nearly* reproducible behaviour between a
+application built on Cyros gets *nearly* reproducible behaviour between a
 hosted unit test and the real device. That's useful to me while developing the
 kernel, and it should be just as useful to anyone building on top of it.
 
@@ -103,7 +103,7 @@ on the port, but the kernel and the time driver don't depend on each other.
 
 Because I keep time outside the core, it's genuinely optional. If you want
 nothing to do with time, you can omit the time driver entirely (along with any
-feature that transitively needs it) and still have a valid CoRTOS instance. If
+feature that transitively needs it) and still have a valid Cyros instance. If
 you already have your own timer infrastructure, you can implement the time
 driver interface yourself and sidestep mine completely.
 
@@ -113,7 +113,7 @@ I ship a few time driver implementations to pick between:
 - a **tickless** driver, and
 - a **simulation** driver for deterministic host-side testing.
 
-### userlib layer (`libcortos`)
+### userlib layer (`libcyros`)
 
 userlib is where the convenient, user-facing primitives live - the things built
 *on top of* the kernel primitives (thread creation and `waitable` blocking).
@@ -132,7 +132,7 @@ force anything on you.
 
 ## Building
 
-CoRTOS is assembled with **CoRTOS-Builder**, a separate Python-based tool I'm
+Cyros is assembled with **Cyros-Builder**, a separate Python-based tool I'm
 writing alongside it. It reads component and profile descriptions, selects the
 port, time driver, and feature set you want, and produces a packaged library
 plus headers.
@@ -140,11 +140,11 @@ plus headers.
 The component layout in this repo (the `component.toml` files, public header
 mappings, and build profiles) is tailored for that builder. For build
 instructions, the profile format, and how feature opt-in works mechanically,
-see the CoRTOS-Builder project.
+see the Cyros-Builder project.
 
 ## Project Status
 
-CoRTOS is in early development. Roughly where things stand:
+Cyros is in early development. Roughly where things stand:
 
 **Implemented and under test**
 
@@ -153,7 +153,7 @@ CoRTOS is in early development. Roughly where things stand:
   (`wait_for`, `wait_for_any`).
 - Linux / Boost.Context simulation port.
 - Time driver implementations (periodic, tickless, simulation).
-- A `Mutex` in `libcortos`.
+- A `Mutex` in `libcyros`.
 
 **In flux / being redesigned**
 
@@ -166,7 +166,7 @@ CoRTOS is in early development. Roughly where things stand:
 **Planned**
 
 - A bare-metal port (ARM Cortex-M first).
-- More `libcortos` features - additional sync primitives, an optional heap, and
+- More `libcyros` features - additional sync primitives, an optional heap, and
   so on.
 - Example projects, including on-device demos.
 

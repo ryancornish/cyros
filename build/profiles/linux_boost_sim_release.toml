@@ -15,4 +15,4 @@ time_driver = "simulation"
 enable = []
 
 [output]
-archive = "libcortos.a"
+archive = "libcyros.a"

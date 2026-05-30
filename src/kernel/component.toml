@@ -13,9 +13,9 @@ sources_excluded_from_archive = [
 ]
 
 public_headers = [
-  "public_headers/kernel.hpp -> cortos/kernel/kernel.hpp",
-  "public_headers/function.hpp -> cortos/kernel/function.hpp",
-  "public_headers/spinlock.hpp -> cortos/kernel/spinlock.hpp",
-  "public_headers/thread.hpp -> cortos/kernel/thread.hpp",
-  "public_headers/waitable.hpp -> cortos/kernel/waitable.hpp",
+  "public_headers/kernel.hpp -> cyros/kernel/kernel.hpp",
+  "public_headers/function.hpp -> cyros/kernel/function.hpp",
+  "public_headers/spinlock.hpp -> cyros/kernel/spinlock.hpp",
+  "public_headers/thread.hpp -> cyros/kernel/thread.hpp",
+  "public_headers/waitable.hpp -> cyros/kernel/waitable.hpp",
 ]

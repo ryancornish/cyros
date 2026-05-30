@@ -1,28 +1,28 @@
 #include "threading_subsystem.hpp"
 
-namespace cortos
+namespace cyros
 {
 
 thread_control_block::thread_control_block(uint32_t id, thread::priority priority, core_affinity affinity, std::span<std::byte> stack, thread::entry_fn&& entry)
    : id(id), base_priority(priority), effective_priority(priority), affinity(affinity), stack(stack), entry(std::move(entry))
 {
-   cortos_port_context_init(context(), stack.data(), stack.size(), thread_launcher, this);
+   cyros_port_context_init(context(), stack.data(), stack.size(), thread_launcher, this);
 }
 
 void thread_control_block::prepare_block(std::span<waitable* const> waitables)
 {
-   CORTOS_ASSERT(state == thread_state::running);
-   CORTOS_ASSERT(!waitables.empty());
-   CORTOS_ASSERT(waitables.size() <= config::max_wait_nodes);
+   CYROS_ASSERT(state == thread_state::running);
+   CYROS_ASSERT(!waitables.empty());
+   CYROS_ASSERT(waitables.size() <= config::max_wait_nodes);
 
    wait_operation.begin(waitables.size());
 
    // Allocate and enqueue nodes
    for (std::size_t i = 0; auto* waitable : waitables) {
-      CORTOS_ASSERT(waitable != nullptr);
+      CYROS_ASSERT(waitable != nullptr);
 
       wait_node* wait_node = wait_nodes.alloc(wait_operation, *waitable, i++);
-      CORTOS_ASSERT(wait_node != nullptr);
+      CYROS_ASSERT(wait_node != nullptr);
 
       waitable->add(*wait_node);
    }
@@ -43,7 +43,7 @@ void thread_control_block::notify_block(std::span<waitable* const> waitables) co
 
 waitable::result thread_control_block::commence_block()
 {
-   cortos_port_thread_yield();
+   cyros_port_thread_yield();
 
    // When we resume, winner info is in wait_operation
    return waitable::result{
@@ -101,7 +101,7 @@ stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const 
    auto const tls_top  = tcb_start;
    auto const tls_base = align_down(tls_top - tls_size, alignof(std::max_align_t));
 
-   CORTOS_ASSERT_OP(tls_base, >=, base); // Buffer too small for TLS+TCB
+   CYROS_ASSERT_OP(tls_base, >=, base); // Buffer too small for TLS+TCB
 
    auto const tls_offset = static_cast<std::size_t>(tls_base - base);
    auto const tls_length = static_cast<std::size_t>(tls_top  - tls_base);
@@ -109,7 +109,7 @@ stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const 
 
    // User stack: everything below TLS
    auto const stack_len = static_cast<std::size_t>(tls_base - base);
-   CORTOS_ASSERT_OP(stack_len, >, 64); // Buffer too small after carving TCB/TLS
+   CYROS_ASSERT_OP(stack_len, >, 64); // Buffer too small after carving TCB/TLS
 
    user_stack = buffer.subspan(0, stack_len);
 }
@@ -117,8 +117,8 @@ stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const 
 
 void thread_ready_queue::push_back(thread_control_block& tcb) noexcept
 {
-   CORTOS_ASSERT(!tcb.is_enqueued());
-   CORTOS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready); // Thread must be ready to be enqueued
+   CYROS_ASSERT(!tcb.is_enqueued());
+   CYROS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready); // Thread must be ready to be enqueued
    tcb.next = nullptr;
    tcb.prev = tail;
    if (tail) tail->next = &tcb; else head = &tcb;
@@ -137,21 +137,21 @@ thread_control_block* thread_ready_queue::pop_front() noexcept
 
 void thread_ready_queue::remove(thread_control_block& tcb) noexcept
 {
-   CORTOS_ASSERT(&tcb == head || tcb.prev != nullptr);
-   CORTOS_ASSERT(&tcb == tail || tcb.next != nullptr);
+   CYROS_ASSERT(&tcb == head || tcb.prev != nullptr);
+   CYROS_ASSERT(&tcb == tail || tcb.next != nullptr);
 
    if (tcb.prev) tcb.prev->next = tcb.next; else head = tcb.next;
    if (tcb.next) tcb.next->prev = tcb.prev; else tail = tcb.prev;
    tcb.next = tcb.prev = nullptr;
    // Invariant: if one end is null, both are null
-   CORTOS_ASSERT((head == nullptr) == (tail == nullptr));
+   CYROS_ASSERT((head == nullptr) == (tail == nullptr));
 }
 
 
 void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexcept
 {
-   CORTOS_ASSERT_OP(tcb.effective_priority, <, config::max_priorities);
-   CORTOS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready); // Can only enqueue ready threads!
+   CYROS_ASSERT_OP(tcb.effective_priority, <, config::max_priorities);
+   CYROS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready); // Can only enqueue ready threads!
    matrix[tcb.effective_priority].push_back(tcb);
    bitmap |= (1u << tcb.effective_priority);
 }
@@ -172,4 +172,4 @@ void thread_ready_matrix::remove_thread(thread_control_block& tcb) noexcept
    if (matrix[priority].empty()) bitmap &= ~(1u << priority);
 }
 
-} // namespace cortos
+} // namespace cyros

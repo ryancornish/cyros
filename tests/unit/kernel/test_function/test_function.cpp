@@ -1,7 +1,7 @@
-#include <cortos/kernel/kernel.hpp>
+#include <cyros/kernel/kernel.hpp>
 #include <gtest/gtest.h>
 
-using namespace cortos;
+using namespace cyros;
 
 
 /**

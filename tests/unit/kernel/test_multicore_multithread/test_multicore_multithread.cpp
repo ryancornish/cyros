@@ -1,7 +1,7 @@
 // test_multicore.cpp
-#include <cortos/kernel/kernel.hpp>
-#include <cortos/config/config.hpp>
-#include <cortos/port/port_traits.h>
+#include <cyros/kernel/kernel.hpp>
+#include <cyros/config/config.hpp>
+#include <cyros/port/port_traits.h>
 
 #include "gtest/gtest.h"
 
@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <vector>
 
-using namespace cortos;
+using namespace cyros;
 
 static_assert(config::cores >= 4, "Test suite is designed for (atleast) quad core configuration only");
 
@@ -43,8 +43,8 @@ class MultiCoreMultiThread_Test : public ::testing::Test
 TEST_F(MultiCoreMultiThread_Test,
        GivenTwoCoresAndOneThreadPinnedToEach_WhenKernelStarts_ThenBothThreadsRunOnExpectedCore)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s0{};
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s1{};
 
    bool ran0 = false;
    bool ran1 = false;
@@ -93,8 +93,8 @@ TEST_F(MultiCoreMultiThread_Test,
 TEST_F(MultiCoreMultiThread_Test,
        GivenTwoCores_WhenCore0CreatesAThreadPinnedToCore1AfterStart_ThenCore1RunsIt)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_creator{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_remote{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_creator{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_remote{};
 
    bool remote_ran = false;
    uint32_t remote_seen_core = std::numeric_limits<uint32_t>::max();
@@ -143,10 +143,10 @@ TEST_F(MultiCoreMultiThread_Test,
 {
    if (kernel::core_count() < 4)  GTEST_SKIP() << "Need at least 4 cores for this test";
 
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s0{};
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s1{};
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s2{};
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s3{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s2{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s3{};
 
    std::array<int, 4> stages{0};
 
@@ -194,8 +194,8 @@ TEST_F(MultiCoreMultiThread_Test,
 TEST_F(MultiCoreMultiThread_Test,
        GivenTwoCores_WhenCore0PokesCore1WhileCore1IsIdle_ThenCore1WakesAndRunsQueuedWork)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s_core0{};
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s_core1_work{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s_core0{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s_core1_work{};
 
    bool core1_work_ran = false;
    thread core1_work; // Empty handle

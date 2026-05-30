@@ -1,6 +1,6 @@
-#include <cortos/kernel/kernel.hpp>
-#include <cortos/config/config.hpp>
-#include <cortos/port/port_traits.h>
+#include <cyros/kernel/kernel.hpp>
+#include <cyros/config/config.hpp>
+#include <cyros/port/port_traits.h>
 
 #include "gtest/gtest.h"
 
@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 
-using namespace cortos;
+using namespace cyros;
 
 static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
@@ -30,7 +30,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
 
    bool thread_ran = false;
 
@@ -63,7 +63,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
 
    uint32_t thread_executed_on_core = std::numeric_limits<uint32_t>::max();
 
@@ -96,7 +96,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
 
    thread::priority threads_priority(std::numeric_limits<uint8_t>::max());
 
@@ -128,7 +128,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
 
    bool thread_completed = false;
 

@@ -3,7 +3,7 @@
  * @brief Unit tests for port layer (boost.context backend)
  */
 
-#include <cortos/port/port.h>
+#include <cyros/port/port.h>
 
 #include <gtest/gtest.h>
 
@@ -17,14 +17,14 @@
 #include <vector>
 
 
-static_assert(CORTOS_PORT_CORE_COUNT > 0);
+static_assert(CYROS_PORT_CORE_COUNT > 0);
 
 // ----------------------------------------------------------------------------
 // Test harness: per-core scheduler loop driven by port->kernel hook.
 // ----------------------------------------------------------------------------
 
 
-// Global pointer used by the C reschedule hook installed via cortos_port_init().
+// Global pointer used by the C reschedule hook installed via cyros_port_init().
 static constinit struct PortHarness* g_harness = nullptr;
 
 struct PortHarness
@@ -32,12 +32,12 @@ struct PortHarness
    static constexpr std::size_t MAX_READY = 32;
 
    // Simple single-core ready queue (FIFO). Enough for port-level tests.
-   std::array<cortos_port_context_t*, MAX_READY> ready{};
+   std::array<cyros_port_context_t*, MAX_READY> ready{};
    std::size_t r_head{0};
    std::size_t r_tail{0};
 
    // Track what the harness believes is currently running (optional / informational).
-   cortos_port_context_t* current{nullptr};
+   cyros_port_context_t* current{nullptr};
 
    void reset() noexcept
    {
@@ -50,7 +50,7 @@ struct PortHarness
 
    std::size_t size() const noexcept { return r_tail - r_head; }
 
-   void enqueue(cortos_port_context_t* ctx)
+   void enqueue(cyros_port_context_t* ctx)
    {
       ASSERT_NE(ctx, nullptr);
       ASSERT_LT(size(), MAX_READY) << "Ready queue overflow in test harness";
@@ -58,7 +58,7 @@ struct PortHarness
       ++r_tail;
    }
 
-   cortos_port_context_t* dequeue() noexcept
+   cyros_port_context_t* dequeue() noexcept
    {
       if (empty()) return nullptr;
       auto* ctx = ready[r_head % MAX_READY];
@@ -67,7 +67,7 @@ struct PortHarness
       return ctx;
    }
 
-   // Called by the port via cortos_port_pend_reschedule_handler.
+   // Called by the port via cyros_port_pend_reschedule_handler.
    void reschedule_once()
    {
       auto* next = dequeue();
@@ -75,10 +75,10 @@ struct PortHarness
 
       // In these unit tests we always resume threads from the test's OS fiber.
       // That means the "caller" captured by Boost for each thread is the test thread,
-      // and cortos_port_pend_reschedule() returns control back here.
+      // and cyros_port_pend_reschedule() returns control back here.
       if (!current) {
          current = next;
-         cortos_port_start_first(next);
+         cyros_port_start_first(next);
          // When the thread yields/exits, we return here.
          // `current` is only "best effort" bookkeeping; the thread may have exited.
          current = nullptr;
@@ -87,7 +87,7 @@ struct PortHarness
 
       auto* prev = current;
       current = next;
-      cortos_port_switch(prev, next);
+      cyros_port_switch(prev, next);
       current = nullptr;
    }
 
@@ -112,7 +112,7 @@ struct PortHarness
 struct ThreadArg
 {
    PortHarness* harness{};
-   cortos_port_context_t* ctx{};
+   cyros_port_context_t* ctx{};
    std::atomic<int>* stage_counter{};
    int stages{};
    int thread_id{};
@@ -138,7 +138,7 @@ static void thread_yield_n(void* varg)
 
       // Cooperative yield: put ourselves back on the ready queue, then yield to caller.
       a->harness->enqueue(a->ctx);
-      cortos_port_pend_reschedule();
+      cyros_port_pend_reschedule();
    }
 
    // Return = thread exits; port test harness regains control.
@@ -159,8 +159,8 @@ static void thread_run_once(void* varg)
 struct DeferArg
 {
    PortHarness*       harness{};
-   cortos_port_context_t* self_ctx{};
-   cortos_port_context_t* peer_ctx{};   // may be nullptr
+   cyros_port_context_t* self_ctx{};
+   cyros_port_context_t* peer_ctx{};   // may be nullptr
    std::array<int, 16>* trace{};
    std::atomic<int>*    trace_len{};
    int                  id{};
@@ -175,7 +175,7 @@ static void defer_record(DeferArg* a, int marker)
 }
 
 // Entry: pends a reschedule while preemption is disabled, and proves the
-// switch does not happen until cortos_port_preempt_enable() is called.
+// switch does not happen until cyros_port_preempt_enable() is called.
 static void thread_defer_probe(void* varg)
 {
    auto* a = static_cast<DeferArg*>(varg);
@@ -185,10 +185,10 @@ static void thread_defer_probe(void* varg)
       a->harness->enqueue(a->peer_ctx);
    }
 
-   cortos_port_preempt_disable();
+   cyros_port_preempt_disable();
    defer_record(a, 100 + a->id);
 
-   cortos_port_pend_reschedule();          // deferred - no switch yet
+   cyros_port_pend_reschedule();          // deferred - no switch yet
    defer_record(a, 200 + a->id);           // still running - deferral proven
 
    // Re-enqueue self BEFORE the safe point, so the deferred switch has a
@@ -196,7 +196,7 @@ static void thread_defer_probe(void* varg)
    // to run again must be on the ready queue before it yields control.)
    a->harness->enqueue(a->self_ctx);
 
-   cortos_port_preempt_enable();           // deferred reschedule resolves here
+   cyros_port_preempt_enable();           // deferred reschedule resolves here
    defer_record(a, 300 + a->id);           // resumed after peer ran
 }
 
@@ -217,7 +217,7 @@ protected:
    {
       port_harness.reset();
       g_harness = &port_harness;
-      cortos_port_init(&PortHarness::reschedule_hook);
+      cyros_port_init(&PortHarness::reschedule_hook);
    }
 
    void TearDown() override
@@ -232,68 +232,68 @@ protected:
 
 TEST_F(PortTest, GivenInterrupts_WhenDisableEnableNested_ThenInterruptsEnabledTracksDepth)
 {
-   EXPECT_TRUE(cortos_port_interrupts_enabled());
+   EXPECT_TRUE(cyros_port_interrupts_enabled());
 
-   cortos_port_disable_interrupts();
-   EXPECT_FALSE(cortos_port_interrupts_enabled());
+   cyros_port_disable_interrupts();
+   EXPECT_FALSE(cyros_port_interrupts_enabled());
 
-   cortos_port_disable_interrupts();
-   EXPECT_FALSE(cortos_port_interrupts_enabled());
+   cyros_port_disable_interrupts();
+   EXPECT_FALSE(cyros_port_interrupts_enabled());
 
-   cortos_port_enable_interrupts();
-   EXPECT_FALSE(cortos_port_interrupts_enabled());
+   cyros_port_enable_interrupts();
+   EXPECT_FALSE(cyros_port_interrupts_enabled());
 
-   cortos_port_enable_interrupts();
-   EXPECT_TRUE(cortos_port_interrupts_enabled());
+   cyros_port_enable_interrupts();
+   EXPECT_TRUE(cyros_port_interrupts_enabled());
 }
 
 TEST_F(PortTest, GivenIrqSaveRestore_WhenNested_ThenRestoreReturnsToPriorState)
 {
-   EXPECT_TRUE(cortos_port_interrupts_enabled());
+   EXPECT_TRUE(cyros_port_interrupts_enabled());
 
-   uint32_t s0 = cortos_port_irq_save();
+   uint32_t s0 = cyros_port_irq_save();
    EXPECT_EQ(s0, 1u);
-   EXPECT_FALSE(cortos_port_interrupts_enabled());
+   EXPECT_FALSE(cyros_port_interrupts_enabled());
 
-   uint32_t s1 = cortos_port_irq_save();
+   uint32_t s1 = cyros_port_irq_save();
    EXPECT_EQ(s1, 0u);
-   EXPECT_FALSE(cortos_port_interrupts_enabled());
+   EXPECT_FALSE(cyros_port_interrupts_enabled());
 
    // Restore one level (still disabled)
-   cortos_port_irq_restore(s1);
-   EXPECT_FALSE(cortos_port_interrupts_enabled());
+   cyros_port_irq_restore(s1);
+   EXPECT_FALSE(cyros_port_interrupts_enabled());
 
    // Restore to original enabled state
-   cortos_port_irq_restore(s0);
-   EXPECT_TRUE(cortos_port_interrupts_enabled());
+   cyros_port_irq_restore(s0);
+   EXPECT_TRUE(cyros_port_interrupts_enabled());
 }
 
 TEST_F(PortTest, GivenTlsPointer_WhenSetThenGet_ThenValueRoundTrips)
 {
    int x = 123;
-   cortos_port_set_tls_pointer(&x);
-   EXPECT_EQ(cortos_port_get_tls_pointer(), &x);
+   cyros_port_set_tls_pointer(&x);
+   EXPECT_EQ(cyros_port_get_tls_pointer(), &x);
 
-   cortos_port_set_tls_pointer(nullptr);
-   EXPECT_EQ(cortos_port_get_tls_pointer(), nullptr);
+   cyros_port_set_tls_pointer(nullptr);
+   EXPECT_EQ(cyros_port_get_tls_pointer(), nullptr);
 }
 
 TEST_F(PortTest, GivenGetCoreId_WhenNotStartedCores_ThenIsZero)
 {
    // In the Linux boost port, core_id defaults to 0 on the calling thread unless start_cores sets it.
-   EXPECT_EQ(cortos_port_get_core_id(), 0u);
+   EXPECT_EQ(cyros_port_get_core_id(), 0u);
 }
 
 TEST_F(PortTest, GivenSingleThread_WhenStartFirst_ThenThreadRunsAndReturnsToCaller)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> ctx_storage{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> ctx_storage{};
 
-   auto* ctx = reinterpret_cast<cortos_port_context_t*>(ctx_storage.data());
+   auto* ctx = reinterpret_cast<cyros_port_context_t*>(ctx_storage.data());
 
    std::atomic<bool> ran{false};
 
-   cortos_port_context_init(
+   cyros_port_context_init(
       ctx,
       stack.data(),
       stack.size(),
@@ -309,19 +309,19 @@ TEST_F(PortTest, GivenSingleThread_WhenStartFirst_ThenThreadRunsAndReturnsToCall
 
    // Thread should have completed and returned control to us.
    // (The port's context_destroy is owned by the kernel normally, but port-level test can still destroy.)
-   cortos_port_context_destroy(ctx);
+   cyros_port_context_destroy(ctx);
 }
 
 TEST_F(PortTest, GivenTwoThreads_WhenTheyYieldAndReenqueue_ThenTheyInterleaveInFIFOOrder)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s0{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s1{};
 
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c0_storage{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c1_storage{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c0_storage{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c1_storage{};
 
-   auto* c0 = reinterpret_cast<cortos_port_context_t*>(c0_storage.data());
-   auto* c1 = reinterpret_cast<cortos_port_context_t*>(c1_storage.data());
+   auto* c0 = reinterpret_cast<cyros_port_context_t*>(c0_storage.data());
+   auto* c1 = reinterpret_cast<cyros_port_context_t*>(c1_storage.data());
 
    std::atomic<int> stages_done{0};
    std::atomic<int> trace_len{0};
@@ -348,8 +348,8 @@ TEST_F(PortTest, GivenTwoThreads_WhenTheyYieldAndReenqueue_ThenTheyInterleaveInF
       .trace_len = &trace_len,
    };
 
-   cortos_port_context_init(c0, s0.data(), s0.size(), &thread_yield_n, &a0);
-   cortos_port_context_init(c1, s1.data(), s1.size(), &thread_yield_n, &a1);
+   cyros_port_context_init(c0, s0.data(), s0.size(), &thread_yield_n, &a0);
+   cyros_port_context_init(c1, s1.data(), s1.size(), &thread_yield_n, &a1);
 
    // Enqueue in a known order
    port_harness.enqueue(c0);
@@ -370,29 +370,29 @@ TEST_F(PortTest, GivenTwoThreads_WhenTheyYieldAndReenqueue_ThenTheyInterleaveInF
    EXPECT_EQ(trace[4], 0);
    EXPECT_EQ(trace[5], 1);
 
-   cortos_port_context_destroy(c0);
-   cortos_port_context_destroy(c1);
+   cyros_port_context_destroy(c0);
+   cyros_port_context_destroy(c1);
 }
 
 /* ============================================================================
  * Deferred reschedule contract (Preemption Control)
  *
  * These exercise the mechanism the kernel-side preemption refactor introduced:
- * cortos_port_pend_reschedule() must DEFER when preemption is disabled, and the
- * deferred reschedule must RESOLVE at cortos_port_preempt_enable() depth 0.
+ * cyros_port_pend_reschedule() must DEFER when preemption is disabled, and the
+ * deferred reschedule must RESOLVE at cyros_port_preempt_enable() depth 0.
  * ========================================================================= */
 
 // pend_reschedule() with preemption disabled must NOT switch immediately;
 // the switch is observed only after preempt_enable().
 TEST_F(PortTest, GivenPreemptionDisabled_WhenPendReschedule_ThenSwitchDeferredUntilEnable)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_probe{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_peer{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c_probe{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c_peer{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_probe{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_peer{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c_probe{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c_peer{};
 
-   auto* probe = reinterpret_cast<cortos_port_context_t*>(c_probe.data());
-   auto* peer  = reinterpret_cast<cortos_port_context_t*>(c_peer.data());
+   auto* probe = reinterpret_cast<cyros_port_context_t*>(c_probe.data());
+   auto* peer  = reinterpret_cast<cyros_port_context_t*>(c_peer.data());
 
    std::array<int, 16> trace{};
    trace.fill(-1);
@@ -407,8 +407,8 @@ TEST_F(PortTest, GivenPreemptionDisabled_WhenPendReschedule_ThenSwitchDeferredUn
       .trace = &trace, .trace_len = &trace_len, .id = 0,
    };
 
-   cortos_port_context_init(probe, s_probe.data(), s_probe.size(), &thread_defer_probe, &probe_arg);
-   cortos_port_context_init(peer,  s_peer.data(),  s_peer.size(),  &thread_defer_peer,  &peer_arg);
+   cyros_port_context_init(probe, s_probe.data(), s_probe.size(), &thread_defer_probe, &probe_arg);
+   cyros_port_context_init(peer,  s_peer.data(),  s_peer.size(),  &thread_defer_peer,  &peer_arg);
 
    port_harness.enqueue(probe);
    port_harness.run_until_quiescent();
@@ -424,21 +424,21 @@ TEST_F(PortTest, GivenPreemptionDisabled_WhenPendReschedule_ThenSwitchDeferredUn
    EXPECT_EQ(trace[2], 900) << "peer did not run at preempt_enable - resolution failed";
    EXPECT_EQ(trace[3], 300);
 
-   cortos_port_context_destroy(probe);
-   cortos_port_context_destroy(peer);
+   cyros_port_context_destroy(probe);
+   cyros_port_context_destroy(peer);
 }
 
 // Nested preemption disable: the deferred reschedule must wait for the
 // OUTERMOST preempt_enable (depth returning to 0), not an inner one.
 TEST_F(PortTest, GivenNestedPreemptDisable_WhenPendReschedule_ThenResolvesOnlyAtOutermostEnable)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_probe{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_peer{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c_probe{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c_peer{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_probe{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_peer{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c_probe{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c_peer{};
 
-   auto* probe = reinterpret_cast<cortos_port_context_t*>(c_probe.data());
-   auto* peer  = reinterpret_cast<cortos_port_context_t*>(c_peer.data());
+   auto* probe = reinterpret_cast<cyros_port_context_t*>(c_probe.data());
+   auto* peer  = reinterpret_cast<cyros_port_context_t*>(c_peer.data());
 
    std::array<int, 16> trace{};
    trace.fill(-1);
@@ -460,23 +460,23 @@ TEST_F(PortTest, GivenNestedPreemptDisable_WhenPendReschedule_ThenResolvesOnlyAt
       auto* a = static_cast<DeferArg*>(varg);
       a->harness->enqueue(a->peer_ctx);
 
-      cortos_port_preempt_disable();          // depth 1
-      cortos_port_preempt_disable();          // depth 2
+      cyros_port_preempt_disable();          // depth 1
+      cyros_port_preempt_disable();          // depth 2
       defer_record(a, 100 + a->id);
 
-      cortos_port_pend_reschedule();          // deferred
+      cyros_port_pend_reschedule();          // deferred
 
-      cortos_port_preempt_enable();           // depth 1 - still masked, no switch
+      cyros_port_preempt_enable();           // depth 1 - still masked, no switch
       defer_record(a, 200 + a->id);           // must still be running
 
       a->harness->enqueue(a->self_ctx);
 
-      cortos_port_preempt_enable();           // depth 0 - switch resolves here
+      cyros_port_preempt_enable();           // depth 0 - switch resolves here
       defer_record(a, 300 + a->id);
    };
 
-   cortos_port_context_init(probe, s_probe.data(), s_probe.size(), nested_entry, &probe_arg);
-   cortos_port_context_init(peer,  s_peer.data(),  s_peer.size(),  &thread_defer_peer, &peer_arg);
+   cyros_port_context_init(probe, s_probe.data(), s_probe.size(), nested_entry, &probe_arg);
+   cyros_port_context_init(peer,  s_peer.data(),  s_peer.size(),  &thread_defer_peer, &peer_arg);
 
    port_harness.enqueue(probe);
    port_harness.run_until_quiescent();
@@ -489,21 +489,21 @@ TEST_F(PortTest, GivenNestedPreemptDisable_WhenPendReschedule_ThenResolvesOnlyAt
    EXPECT_EQ(trace[2], 901);
    EXPECT_EQ(trace[3], 301);
 
-   cortos_port_context_destroy(probe);
-   cortos_port_context_destroy(peer);
+   cyros_port_context_destroy(probe);
+   cyros_port_context_destroy(peer);
 }
 
 // Baseline sanity: with preemption ENABLED, pend_reschedule resolves
 // immediately - the peer runs before the line after pend_reschedule.
 TEST_F(PortTest, GivenBaselinePriority_WhenPendReschedule_ThenSwitchIsImmediate)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_probe{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_peer{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c_probe{};
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> c_peer{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_probe{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_peer{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c_probe{};
+   alignas(CYROS_PORT_CONTEXT_ALIGN) static std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> c_peer{};
 
-   auto* probe = reinterpret_cast<cortos_port_context_t*>(c_probe.data());
-   auto* peer  = reinterpret_cast<cortos_port_context_t*>(c_peer.data());
+   auto* probe = reinterpret_cast<cyros_port_context_t*>(c_probe.data());
+   auto* peer  = reinterpret_cast<cyros_port_context_t*>(c_peer.data());
 
    std::array<int, 16> trace{};
    trace.fill(-1);
@@ -525,12 +525,12 @@ TEST_F(PortTest, GivenBaselinePriority_WhenPendReschedule_ThenSwitchIsImmediate)
 
       defer_record(a, 100 + a->id);           // running, no critical section
       a->harness->enqueue(a->self_ctx);
-      cortos_port_pend_reschedule();          // baseline -> resolves NOW
+      cyros_port_pend_reschedule();          // baseline -> resolves NOW
       defer_record(a, 300 + a->id);           // resumed after peer
    };
 
-   cortos_port_context_init(probe, s_probe.data(), s_probe.size(), baseline_entry, &probe_arg);
-   cortos_port_context_init(peer,  s_peer.data(),  s_peer.size(),  &thread_defer_peer, &peer_arg);
+   cyros_port_context_init(probe, s_probe.data(), s_probe.size(), baseline_entry, &probe_arg);
+   cyros_port_context_init(peer,  s_peer.data(),  s_peer.size(),  &thread_defer_peer, &peer_arg);
 
    port_harness.enqueue(probe);
    port_harness.run_until_quiescent();
@@ -541,40 +541,40 @@ TEST_F(PortTest, GivenBaselinePriority_WhenPendReschedule_ThenSwitchIsImmediate)
    EXPECT_EQ(trace[1], 902) << "peer did not run - baseline pend_reschedule was not immediate";
    EXPECT_EQ(trace[2], 302);
 
-   cortos_port_context_destroy(probe);
-   cortos_port_context_destroy(peer);
+   cyros_port_context_destroy(probe);
+   cyros_port_context_destroy(peer);
 }
 
 TEST_F(PortTest, GivenCpuRelax_WhenCalled_ThenDoesNotCrash)
 {
    // Not asserting timing/behaviour; just that it's callable.
-   cortos_port_cpu_relax();
-   cortos_port_cpu_relax();
+   cyros_port_cpu_relax();
+   cyros_port_cpu_relax();
 }
 
 TEST_F(PortTest, GivenGetStackPointer_WhenCalled_ThenReturnsNonNull)
 {
-   void* sp = cortos_port_get_stack_pointer();
+   void* sp = cyros_port_get_stack_pointer();
    EXPECT_NE(sp, nullptr);
 }
 
 TEST_F(PortTest, Asserts)
 {
-   CORTOS_ASSERT(true);
-   CORTOS_ASSERT1(true == true, 30);
-   CORTOS_ASSERT2(!false, 30, 20);
-   CORTOS_ASSERT_OP(1, <, 2);
+   CYROS_ASSERT(true);
+   CYROS_ASSERT1(true == true, 30);
+   CYROS_ASSERT2(!false, 30, 20);
+   CYROS_ASSERT_OP(1, <, 2);
    int* i_am_null = nullptr;
-   CORTOS_ASSERT_NULL(i_am_null);
+   CYROS_ASSERT_NULL(i_am_null);
 }
 
 // Uncomment each line to test kernel panics
 TEST_F(PortTest, MakesError)
 {
-   // CORTOS_ASSERT(false); // ...Some handy error diagnosis comment...
-   // CORTOS_ASSERT1(true == false, 30);
-   // CORTOS_ASSERT2(!true, 30, 20); // ...Some handy error diagnosis comment...
-   // CORTOS_ASSERT_OP(1, >, 2);  // ...Some handy error diagnosis comment...
-   // int x; CORTOS_ASSERT_NULL(&x);  // ...Some handy error diagnosis comment...
+   // CYROS_ASSERT(false); // ...Some handy error diagnosis comment...
+   // CYROS_ASSERT1(true == false, 30);
+   // CYROS_ASSERT2(!true, 30, 20); // ...Some handy error diagnosis comment...
+   // CYROS_ASSERT_OP(1, >, 2);  // ...Some handy error diagnosis comment...
+   // int x; CYROS_ASSERT_NULL(&x);  // ...Some handy error diagnosis comment...
 }
 

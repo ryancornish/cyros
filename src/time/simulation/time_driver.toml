@@ -5,5 +5,5 @@ sources = [
 ]
 
 public_headers = [
-  "public_headers/simulation.hpp -> cortos/time/simulation.hpp",
+  "public_headers/simulation.hpp -> cyros/time/simulation.hpp",
 ]

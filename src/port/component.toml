@@ -2,7 +2,7 @@ name = "port"
 kind = "port"
 
 public_headers = [
-  "public_headers/port.h -> cortos/port/port.h",
+  "public_headers/port.h -> cyros/port/port.h",
 ]
 
 variants = [

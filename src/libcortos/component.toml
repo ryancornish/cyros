@@ -1,4 +1,4 @@
-name = "libcortos"
+name = "libcyros"
 kind = "library"
 
 sources = [

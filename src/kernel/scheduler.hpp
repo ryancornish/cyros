@@ -1,5 +1,5 @@
-#ifndef CORTOS_SCHEDULER_HPP
-#define CORTOS_SCHEDULER_HPP
+#ifndef CYROS_SCHEDULER_HPP
+#define CYROS_SCHEDULER_HPP
 
 #include "mpsc_ring_buffer.hpp"
 #include "threading_subsystem.hpp"
@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <span>
 
-namespace cortos
+namespace cyros
 {
 
 void idle_task();
@@ -34,7 +34,7 @@ private:
    std::atomic<uint32_t> pinned_thread_counter{0};
    thread_control_block* current_thread{nullptr};
    thread_control_block*    idle_thread{nullptr};
-   alignas(CORTOS_PORT_STACK_ALIGN) std::array<std::byte, 4 * 1024> idle_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 4 * 1024> idle_stack{};
 
    thread_ready_matrix ready_matrix;
 
@@ -106,6 +106,6 @@ public:
    void reset();
 };
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_SCHEDULER_HPP
+#endif // CYROS_SCHEDULER_HPP

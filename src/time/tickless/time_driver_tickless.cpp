@@ -1,11 +1,11 @@
-#include <cortos/time/time.hpp>
-#include <cortos/port/port.h>
+#include <cyros/time/time.hpp>
+#include <cyros/port/port.h>
 
 #include <array>
 #include <cstdint>
 #include <limits>
 
-namespace cortos::time::tickless
+namespace cyros::time::tickless
 {
    static constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
 
@@ -20,8 +20,8 @@ namespace cortos::time::tickless
    struct irq_guard
    {
       uint32_t state;
-      irq_guard() noexcept : state(cortos_port_irq_save()) {}
-      ~irq_guard() { cortos_port_irq_restore(state); }
+      irq_guard() noexcept : state(cyros_port_irq_save()) {}
+      ~irq_guard() { cyros_port_irq_restore(state); }
 
       irq_guard(irq_guard const&) = delete;
       irq_guard& operator=(irq_guard const&) = delete;
@@ -62,45 +62,45 @@ namespace cortos::time::tickless
       }
 
       if (earliest == std::numeric_limits<uint64_t>::max()) {
-         cortos_port_time_disarm();
+         cyros_port_time_disarm();
       } else {
          // Arm earliest absolute deadline. If already due, port should deliver
          // an immediate or next-possible interrupt according to platform policy.
-         cortos_port_time_arm(earliest);
+         cyros_port_time_arm(earliest);
       }
    }
 
    static void isr_trampoline(void*) noexcept
    {
-      cortos::time::on_timer_isr();
+      cyros::time::on_timer_isr();
    }
 
    static inline uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
    {
       return (a + b - 1) / b;
    }
-} // namespace cortos::time::tickless
+} // namespace cyros::time::tickless
 
 
-namespace cortos::time
+namespace cyros::time
 {
 
 void initialise(uint32_t frequency_hz)
 {
-   CORTOS_ASSERT(!tickless::ds.initialised);
+   CYROS_ASSERT(!tickless::ds.initialised);
    tickless::ds.initialised = true;
    tickless::ds.frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CORTOS_ASSERT(tickless::ds.initialised);
+   CYROS_ASSERT(tickless::ds.initialised);
    tickless::ds = tickless::driver_state{};
 }
 
 [[nodiscard]] time_point now() noexcept
 {
-   return time_point{cortos_port_time_now()};
+   return time_point{cyros_port_time_now()};
 }
 
 [[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept
@@ -173,17 +173,17 @@ void start() noexcept
       return;
    }
 
-   cortos_port_time_register_isr_handler(&tickless::isr_trampoline, nullptr);
+   cyros_port_time_register_isr_handler(&tickless::isr_trampoline, nullptr);
 
    // By convention, tick_hz == 0 means tickless / one-shot mode.
-   cortos_port_time_setup(0);
+   cyros_port_time_setup(0);
 
    {
       tickless::irq_guard guard;
       tickless::rearm_locked();
    }
 
-   cortos_port_time_irq_enable();
+   cyros_port_time_irq_enable();
    tickless::ds.started = true;
 }
 
@@ -193,14 +193,14 @@ void stop() noexcept
       return;
    }
 
-   cortos_port_time_irq_disable();
-   cortos_port_time_disarm();
+   cyros_port_time_irq_disable();
+   cyros_port_time_disarm();
    tickless::ds.started = false;
 }
 
 void on_timer_isr() noexcept
 {
-   const uint64_t now_ticks = cortos_port_time_now();
+   const uint64_t now_ticks = cyros_port_time_now();
 
    tickless::fire_due_isr(now_ticks);
 
@@ -208,4 +208,4 @@ void on_timer_isr() noexcept
    tickless::rearm_locked();
 }
 
-} // namespace cortos::time
+} // namespace cyros::time

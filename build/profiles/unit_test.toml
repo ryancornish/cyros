@@ -17,4 +17,4 @@ port = "linux_boost"
 enable = []
 
 [output]
-archive = "libcortos.a"
+archive = "libcyros.a"

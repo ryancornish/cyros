@@ -15,4 +15,4 @@ time_driver = "tickless"
 enable = []
 
 [output]
-archive = "libcortos.a"
+archive = "libcyros.a"

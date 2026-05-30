@@ -1,18 +1,18 @@
 /**
  * @file port.h
- * @brief CoRTOS Port Layer API (C ABI)
+ * @brief Cyros Port Layer API (C ABI)
  *
- * This is the hardware abstraction layer between the CoRTOS kernel and
+ * This is the hardware abstraction layer between the Cyros kernel and
  * platform-specific code. All functions use C linkage for easy implementation
  * in assembly or C.
  *
  * Port implementations must provide all functions declared here.
  */
 
-#ifndef CORTOS_PORT_H
-#define CORTOS_PORT_H
+#ifndef CYROS_PORT_H
+#define CYROS_PORT_H
 
-#include <cortos/port/port_traits.h>
+#include <cyros/port/port_traits.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -26,72 +26,72 @@ extern "C" {
  * Port Configuration Validation
  * ========================================================================= */
 
-#ifndef CORTOS_PORT_CONTEXT_SIZE
-# error "Port must define CORTOS_PORT_CONTEXT_SIZE"
+#ifndef CYROS_PORT_CONTEXT_SIZE
+# error "Port must define CYROS_PORT_CONTEXT_SIZE"
 #endif
 
-#ifndef CORTOS_PORT_CONTEXT_ALIGN
-# error "Port must define CORTOS_PORT_CONTEXT_ALIGN"
+#ifndef CYROS_PORT_CONTEXT_ALIGN
+# error "Port must define CYROS_PORT_CONTEXT_ALIGN"
 #endif
 
-#ifndef CORTOS_PORT_STACK_ALIGN
-# error "Port must define CORTOS_PORT_STACK_ALIGN"
+#ifndef CYROS_PORT_STACK_ALIGN
+# error "Port must define CYROS_PORT_STACK_ALIGN"
 #endif
 
-#ifndef CORTOS_PORT_CACHE_LINE
-# error "Port must define CORTOS_PORT_CACHE_LINE"
+#ifndef CYROS_PORT_CACHE_LINE
+# error "Port must define CYROS_PORT_CACHE_LINE"
 #endif
 
-#ifndef CORTOS_PORT_CORE_COUNT
-# error "Port must define CORTOS_PORT_CORE_COUNT"
+#ifndef CYROS_PORT_CORE_COUNT
+# error "Port must define CYROS_PORT_CORE_COUNT"
 #endif
 
-#ifndef CORTOS_PORT_SCHEDULING_TYPE
-# error "Port must define CORTOS_PORT_SCHEDULING_TYPE (CORTOS_PORT_SCHED_PREEMPTIVE or CORTOS_PORT_SCHED_COOPERATIVE)"
+#ifndef CYROS_PORT_SCHEDULING_TYPE
+# error "Port must define CYROS_PORT_SCHEDULING_TYPE (CYROS_PORT_SCHED_PREEMPTIVE or CYROS_PORT_SCHED_COOPERATIVE)"
 #endif
 
-#ifndef CORTOS_PORT_ENVIRONMENT
-# error "Port must define CORTOS_PORT_ENVIRONMENT (CORTOS_PORT_ENV_BARE_METAL or CORTOS_PORT_ENV_SIMULATION)"
+#ifndef CYROS_PORT_ENVIRONMENT
+# error "Port must define CYROS_PORT_ENVIRONMENT (CYROS_PORT_ENV_BARE_METAL or CYROS_PORT_ENV_SIMULATION)"
 #endif
 
-#if (CORTOS_PORT_CONTEXT_SIZE) <= 0
-# error "CORTOS_PORT_CONTEXT_SIZE must be > 0"
+#if (CYROS_PORT_CONTEXT_SIZE) <= 0
+# error "CYROS_PORT_CONTEXT_SIZE must be > 0"
 #endif
 
-#if (CORTOS_PORT_CONTEXT_ALIGN) <= 0
-# error "CORTOS_PORT_CONTEXT_ALIGN must be > 0"
+#if (CYROS_PORT_CONTEXT_ALIGN) <= 0
+# error "CYROS_PORT_CONTEXT_ALIGN must be > 0"
 #endif
 
-#if (CORTOS_PORT_STACK_ALIGN) <= 0
-# error "CORTOS_PORT_STACK_ALIGN must be > 0"
+#if (CYROS_PORT_STACK_ALIGN) <= 0
+# error "CYROS_PORT_STACK_ALIGN must be > 0"
 #endif
 
-#if (CORTOS_PORT_CACHE_LINE) <= 0
-# error "CORTOS_PORT_CACHE_LINE must be > 0"
+#if (CYROS_PORT_CACHE_LINE) <= 0
+# error "CYROS_PORT_CACHE_LINE must be > 0"
 #endif
 
-#if (CORTOS_PORT_CORE_COUNT) <= 0
-# error "CORTOS_PORT_CORE_COUNT must be > 0"
+#if (CYROS_PORT_CORE_COUNT) <= 0
+# error "CYROS_PORT_CORE_COUNT must be > 0"
 #endif
 
-#if ((CORTOS_PORT_CONTEXT_ALIGN & (CORTOS_PORT_CONTEXT_ALIGN - 1)) != 0)
-# error "CORTOS_PORT_CONTEXT_ALIGN must be a power of two"
+#if ((CYROS_PORT_CONTEXT_ALIGN & (CYROS_PORT_CONTEXT_ALIGN - 1)) != 0)
+# error "CYROS_PORT_CONTEXT_ALIGN must be a power of two"
 #endif
 
-#if ((CORTOS_PORT_STACK_ALIGN & (CORTOS_PORT_STACK_ALIGN - 1)) != 0)
-# error "CORTOS_PORT_STACK_ALIGN must be a power of two"
+#if ((CYROS_PORT_STACK_ALIGN & (CYROS_PORT_STACK_ALIGN - 1)) != 0)
+# error "CYROS_PORT_STACK_ALIGN must be a power of two"
 #endif
 
-#if ((CORTOS_PORT_CACHE_LINE & (CORTOS_PORT_CACHE_LINE - 1)) != 0)
-# error "CORTOS_PORT_CACHE_LINE must be a power of two"
+#if ((CYROS_PORT_CACHE_LINE & (CYROS_PORT_CACHE_LINE - 1)) != 0)
+# error "CYROS_PORT_CACHE_LINE must be a power of two"
 #endif
 
-#if (CORTOS_PORT_SCHEDULING_TYPE != 1) && (CORTOS_PORT_SCHEDULING_TYPE != 2)
-# error "Invalid CORTOS_PORT_SCHEDULING_TYPE. Use CORTOS_SCHED_PREEMPTIVE (1) or CORTOS_SCHED_COOPERATIVE (2)."
+#if (CYROS_PORT_SCHEDULING_TYPE != 1) && (CYROS_PORT_SCHEDULING_TYPE != 2)
+# error "Invalid CYROS_PORT_SCHEDULING_TYPE. Use CYROS_SCHED_PREEMPTIVE (1) or CYROS_SCHED_COOPERATIVE (2)."
 #endif
 
-#if (CORTOS_PORT_ENVIRONMENT != 1) && (CORTOS_PORT_ENVIRONMENT != 2)
-# error "Invalid CORTOS_PORT_ENVIRONMENT. Use CORTOS_ENV_BARE_METAL (1) or CORTOS_ENV_SIMULATION (2)."
+#if (CYROS_PORT_ENVIRONMENT != 1) && (CYROS_PORT_ENVIRONMENT != 2)
+# error "Invalid CYROS_PORT_ENVIRONMENT. Use CYROS_ENV_BARE_METAL (1) or CYROS_ENV_SIMULATION (2)."
 #endif
 
 /* ============================================================================
@@ -103,33 +103,33 @@ extern "C" {
  *
  * Each port defines the actual structure. The kernel treats this as opaque.
  */
-typedef struct cortos_port_context cortos_port_context_t;
+typedef struct cyros_port_context cyros_port_context_t;
 
 /**
  * @brief Port->Kernel reschedule hook
  *
- * Installed by the kernel via cortos_port_init(). The port invokes this hook
+ * Installed by the kernel via cyros_port_init(). The port invokes this hook
  * when a reschedule must be serviced on the calling core - i.e. as the
- * back-end of both cortos_port_thread_yield() and cortos_port_pend_reschedule()
+ * back-end of both cyros_port_thread_yield() and cyros_port_pend_reschedule()
  * once the port has determined a reschedule may safely run. The hook runs the
  * core-local scheduler, which may perform a context switch.
  */
-typedef void (*cortos_port_reschedule_t)(void);
+typedef void (*cyros_port_reschedule_t)(void);
 
 /**
  * @brief Thread entry point signature
  */
-typedef void (*cortos_port_entry_t)(void* arg);
+typedef void (*cyros_port_entry_t)(void* arg);
 
 /**
  * @brief Core entry point signature
  */
-typedef void (*cortos_port_core_entry_t)(void);
+typedef void (*cyros_port_core_entry_t)(void);
 
 /**
  * @brief ISR signature
  */
-typedef void (*cortos_port_isr_handler_t)(void* arg);
+typedef void (*cyros_port_isr_handler_t)(void* arg);
 
 /* ============================================================================
  * Platform Initialization
@@ -138,9 +138,9 @@ typedef void (*cortos_port_isr_handler_t)(void* arg);
 /**
  * @brief Initialize the port layer
  * @param reschedule_handler Port->kernel hook invoked to service a reschedule
- *                           on the calling core (see cortos_port_reschedule_t).
+ *                           on the calling core (see cyros_port_reschedule_t).
  */
-void cortos_port_init(cortos_port_reschedule_t reschedule_handler);
+void cyros_port_init(cyros_port_reschedule_t reschedule_handler);
 
 /* ============================================================================
  * Critical Sections (Interrupt Control)
@@ -155,34 +155,34 @@ void cortos_port_init(cortos_port_reschedule_t reschedule_handler);
  *
  * In simulation, this may be a no-op or track nesting depth.
  */
-void cortos_port_disable_interrupts(void);
+void cyros_port_disable_interrupts(void);
 
 /**
  * @brief Enable interrupts
  */
-void cortos_port_enable_interrupts(void);
+void cyros_port_enable_interrupts(void);
 
 /**
  * @brief Check if interrupts are currently enabled
  * @return true if interrupts are enabled, false otherwise
  */
-bool cortos_port_interrupts_enabled(void);
+bool cyros_port_interrupts_enabled(void);
 
 /**
  * @brief Save interrupt state and disable interrupts
  * @return Previous interrupt state
  */
-uint32_t cortos_port_irq_save(void);
+uint32_t cyros_port_irq_save(void);
 
 /**
  * @brief Restore interrupt state
- * @param state Previous state returned by cortos_port_irq_save()
+ * @param state Previous state returned by cyros_port_irq_save()
  *
  * When this restores interrupts to fully unmasked AND preemption is also
  * enabled, the calling core is at baseline priority; if a reschedule was
  * pended while masked it is resolved at that point (see Reschedule Requests).
  */
-void cortos_port_irq_restore(uint32_t state);
+void cyros_port_irq_restore(uint32_t state);
 
 /* ============================================================================
  * Preemption Control
@@ -216,10 +216,10 @@ void cortos_port_irq_restore(uint32_t state);
  *
  * Increments the preemption-disable nesting depth. While the depth is non-zero
  * no context switch will be performed on this core. ISRs continue to run. A
- * reschedule they request via cortos_port_pend_reschedule() is recorded and
+ * reschedule they request via cyros_port_pend_reschedule() is recorded and
  * deferred.
  */
-void cortos_port_preempt_disable(void);
+void cyros_port_preempt_disable(void);
 
 /**
  * @brief Enable preemption on the calling core (nestable).
@@ -229,9 +229,9 @@ void cortos_port_preempt_disable(void);
  * this is a contract "safe point", and if a reschedule was pended while
  * preemption was disabled it is resolved here before this call returns.
  *
- * Must be balanced against cortos_port_preempt_disable().
+ * Must be balanced against cyros_port_preempt_disable().
  */
-void cortos_port_preempt_enable(void);
+void cyros_port_preempt_enable(void);
 
 /* ============================================================================
  * Context Management & Switching
@@ -248,10 +248,10 @@ void cortos_port_preempt_enable(void);
  * This function sets up the context so that when port_switch() is called
  * with this context, the thread starts executing at entry(arg).
  */
-void cortos_port_context_init(cortos_port_context_t* context,
+void cyros_port_context_init(cyros_port_context_t* context,
                               void* stack_base,
                               size_t stack_size,
-                              cortos_port_entry_t entry,
+                              cyros_port_entry_t entry,
                               void* arg);
 
 /**
@@ -260,7 +260,7 @@ void cortos_port_context_init(cortos_port_context_t* context,
  *
  * Called when a thread exits. Allows the port to clean up any resources.
  */
-void cortos_port_context_destroy(cortos_port_context_t* context);
+void cyros_port_context_destroy(cyros_port_context_t* context);
 
 /**
  * @brief Switch from one context to another
@@ -270,7 +270,7 @@ void cortos_port_context_destroy(cortos_port_context_t* context);
  * Saves the current CPU state into 'from' and loads the state from 'to'.
  * Execution resumes in 'to' context.
  */
-void cortos_port_switch(cortos_port_context_t* from, cortos_port_context_t* to);
+void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to);
 
 /**
  * @brief Start executing the first thread
@@ -279,12 +279,12 @@ void cortos_port_switch(cortos_port_context_t* from, cortos_port_context_t* to);
  * This is called once at scheduler startup to begin execution.
  * Unlike port_switch(), there's no "from" context to save.
  */
-void cortos_port_start_first(cortos_port_context_t* first);
+void cyros_port_start_first(cyros_port_context_t* first);
 
 /* ============================================================================
  * Reschedule Requests
  *
- * CoRTOS distinguishes TWO reschedule operations. They differ in their
+ * Cyros distinguishes TWO reschedule operations. They differ in their
  * preconditions and in the strength of their guarantee. The kernel selects the
  * correct one per call site; a port MUST implement both to this contract.
  *
@@ -292,15 +292,15 @@ void cortos_port_start_first(cortos_port_context_t* first);
  * -----------
  *  - "thread context": executing inside a thread's context, not inside an ISR.
  *  - "kernel-masked": the kernel currently holds a critical section on this
- *    core - interrupts masked via cortos_port_irq_save() AND/OR preemption
- *    disabled via cortos_port_preempt_disable().
+ *    core - interrupts masked via cyros_port_irq_save() AND/OR preemption
+ *    disabled via cyros_port_preempt_disable().
  *  - "baseline priority": thread context, with interrupts NOT masked AND
  *    preemption NOT disabled - i.e. both nesting depths at zero. On Cortex-M
  *    this is Thread mode with PRIMASK clear, BASEPRI not raised above the
  *    PendSV priority, and PendSV not otherwise gated.
  *  - "next safe point": the next moment, on this core, at which execution
  *    returns to baseline priority - typically the outermost
- *    cortos_port_irq_restore() or cortos_port_preempt_enable(), or ISR return.
+ *    cyros_port_irq_restore() or cyros_port_preempt_enable(), or ISR return.
  *
  * Why two operations
  * ------------------
@@ -312,9 +312,9 @@ void cortos_port_start_first(cortos_port_context_t* first);
  *
  * Summary
  * -------
- *  cortos_port_thread_yield()      strong guarantee, thread context only,
+ *  cyros_port_thread_yield()      strong guarantee, thread context only,
  *                                  baseline priority only, synchronous.
- *  cortos_port_pend_reschedule()   weak guarantee, callable from any context,
+ *  cyros_port_pend_reschedule()   weak guarantee, callable from any context,
  *                                  may be deferred.
  * ========================================================================= */
 
@@ -346,7 +346,7 @@ void cortos_port_start_first(cortos_port_context_t* first);
  *    baseline priority it is serviced immediately.
  *  - Linux/boost.context: resume the scheduler fiber.
  */
-void cortos_port_thread_yield(void);
+void cyros_port_thread_yield(void);
 
 /**
  * @brief Request a reschedule on the calling core (deferred-safe).
@@ -361,16 +361,16 @@ void cortos_port_thread_yield(void);
  * Behaviour by context:
  *  - Baseline priority: the next safe point is "now", so the reschedule
  *    resolves before this call returns. This is observationally identical to
- *    cortos_port_thread_yield() - but see the caller obligation below.
+ *    cyros_port_thread_yield() - but see the caller obligation below.
  *  - Kernel-masked, or ISR context: the request is recorded and the actual
  *    reschedule is deferred to the next safe point - the outermost
- *    cortos_port_irq_restore() or cortos_port_preempt_enable(), or ISR return.
+ *    cyros_port_irq_restore() or cyros_port_preempt_enable(), or ISR return.
  *
  * Caller obligation: callers MUST NOT assume that a context switch has
  * occurred, or that any post-switch state is valid, after this call returns.
  * This holds even in the baseline-priority case: the weak guarantee IS the
  * contract, independent of how a particular context happens to satisfy it. A
- * caller that needs the round-trip must use cortos_port_thread_yield().
+ * caller that needs the round-trip must use cyros_port_thread_yield().
  *
  * Use when the caller wants to flag that a reschedule may now be warranted but
  * is not itself blocking - e.g. after making a higher-priority thread ready,
@@ -386,7 +386,7 @@ void cortos_port_thread_yield(void);
  *    irq_restore / preempt_enable safe points (and simulated-ISR return)
  *    check and resolve.
  */
-void cortos_port_pend_reschedule(void);
+void cyros_port_pend_reschedule(void);
 
 /**
  * @brief Thread exit handler
@@ -394,7 +394,7 @@ void cortos_port_pend_reschedule(void);
  * Called when a thread's entry function returns.
  * Should never return.
  */
-void cortos_port_thread_exit(void);// __attribute__((noreturn));
+void cyros_port_thread_exit(void);// __attribute__((noreturn));
 
 /* ============================================================================
  * SMP & Multi-Core Support
@@ -410,7 +410,7 @@ void cortos_port_thread_exit(void);// __attribute__((noreturn));
  * For single-core systems, always returns 0.
  * For SMP systems, returns which core is executing this code.
  */
-uint32_t cortos_port_get_core_id(void);
+uint32_t cyros_port_get_core_id(void);
 
 /**
  * @brief Start (or release) all secondary cores and run entry on every core.
@@ -421,18 +421,18 @@ uint32_t cortos_port_get_core_id(void);
  *  - On embedded: typically never returns because entry will start the first thread.
  *  - On simulation: may return if port_start_first returns (cooperative).
  */
-void cortos_port_start_cores(size_t cores_to_use, cortos_port_core_entry_t entry);
+void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry);
 
 /**
  * @brief Send an IPI to another core to trigger a reschedule
  * @param core_id Target core ID
  *
  * Causes the target core to perform a reschedule at its next safe point. This
- * is the cross-core analogue of cortos_port_pend_reschedule(): it carries the
+ * is the cross-core analogue of cyros_port_pend_reschedule(): it carries the
  * same weak guarantee and the receiving core resolves it exactly as a locally
  * pended reschedule would be.
  */
-void cortos_port_send_reschedule_ipi(uint32_t core_id);
+void cyros_port_send_reschedule_ipi(uint32_t core_id);
 
 /* ============================================================================
  * Thread-Local Storage
@@ -442,13 +442,13 @@ void cortos_port_send_reschedule_ipi(uint32_t core_id);
  * @brief Set the TLS pointer for the current thread
  * @param tls_base Pointer to the thread's TLS block
  */
-void cortos_port_set_tls_pointer(void* tls_base);
+void cyros_port_set_tls_pointer(void* tls_base);
 
 /**
  * @brief Get the current TLS pointer
  * @return Current thread's TLS base pointer
  */
-void* cortos_port_get_tls_pointer(void);
+void* cyros_port_get_tls_pointer(void);
 
 
 
@@ -473,12 +473,12 @@ void* cortos_port_get_tls_pointer(void);
  *
  * If tick_hz == 0:
  *   Configure tickless one-shot mode.
- *   The driver will call cortos_port_time_arm()/disarm() to schedule deadlines.
+ *   The driver will call cyros_port_time_arm()/disarm() to schedule deadlines.
  *   The port must deliver the registered ISR handler when time_now() >= armed deadline.
  *
  * Called by the selected time driver during start().
  */
-void cortos_port_time_setup(uint32_t tick_hz);
+void cyros_port_time_setup(uint32_t tick_hz);
 
 /**
  * @brief Monotonic time source
@@ -486,7 +486,7 @@ void cortos_port_time_setup(uint32_t tick_hz);
  *
  * Must be monotonic 64-bit in "port ticks" (opaque unit for whole system).
  */
-uint64_t cortos_port_time_now(void);
+uint64_t cyros_port_time_now(void);
 
 /**
  * @brief Free-running counter frequency in Hz (ticks per second).
@@ -497,7 +497,7 @@ uint64_t cortos_port_time_now(void);
  *  - Timer running at 1 MHz: 1'000'000
  *  - Linux steady_clock ns ticks: 1'000'000'000
  */
-uint64_t cortos_port_time_freq_hz(void);
+uint64_t cyros_port_time_freq_hz(void);
 
 /**
  * @brief Reset any internal global time tracking state.
@@ -509,24 +509,24 @@ uint64_t cortos_port_time_freq_hz(void);
  * Intended primarily for simulation and unit testing to provide
  * deterministic startup conditions.
  */
-void cortos_port_time_reset(uint64_t time);
+void cyros_port_time_reset(uint64_t time);
 
 /**
  * @brief Register an ISR handler for timer interrupts
  * @param handler ISR callback function
  * @param arg Argument to pass to handler
  */
-void cortos_port_time_register_isr_handler(cortos_port_isr_handler_t handler, void* arg);
+void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t handler, void* arg);
 
 /**
  * @brief Enable timer interrupts
  */
-void cortos_port_time_irq_enable(void);
+void cyros_port_time_irq_enable(void);
 
 /**
  * @brief Disable timer interrupts
  */
-void cortos_port_time_irq_disable(void);
+void cyros_port_time_irq_disable(void);
 
 /**
  * @brief Arm a one-shot interrupt for the given absolute deadline.
@@ -537,12 +537,12 @@ void cortos_port_time_irq_disable(void);
  *
  * Must be safe to call with interrupts disabled.
  */
-void cortos_port_time_arm(uint64_t deadline);
+void cyros_port_time_arm(uint64_t deadline);
 
 /**
  * @brief Disable any pending one-shot.
  */
-void cortos_port_time_disarm(void);
+void cyros_port_time_disarm(void);
 
 /**
  * @brief Notify the time core that there is pending time work.
@@ -551,7 +551,7 @@ void cortos_port_time_disarm(void);
  * If unimplemented on a platform, it may be an empty function.
  * Used for SMP policy where non-time cores enqueue requests for the time core.
  */
-void cortos_port_send_time_ipi(uint32_t core_id);
+void cyros_port_send_time_ipi(uint32_t core_id);
 
 /* ============================================================================
  * CPU Hints & Idle
@@ -560,7 +560,7 @@ void cortos_port_send_time_ipi(uint32_t core_id);
 /**
  * @brief CPU yield hint for busy-wait loops
  */
-void cortos_port_cpu_relax(void);
+void cyros_port_cpu_relax(void);
 
 /**
  * @brief Platform-specific idle behavior
@@ -568,7 +568,7 @@ void cortos_port_cpu_relax(void);
  * Called by the kernel's idle thread when no other threads are ready.
  * Can implement power-saving features or cooperative yielding.
  */
-void cortos_port_idle(void);
+void cyros_port_idle(void);
 
 /* ============================================================================
  * Debug & Diagnostics
@@ -578,35 +578,35 @@ void cortos_port_idle(void);
  * @brief Internal Kernel asserts
  * The Kernel has been setup incorrectly, or has hit an internal system error
  */
-void cortos_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional) __attribute__((noreturn));
+void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional) __attribute__((noreturn));
 
-#if CORTOS_PORT_ENVIRONMENT == 2
- #define CORTOS_PORT_CAPTURE_FILE (__FILE__)
- #define CORTOS_PORT_CAPTURE_LINE (__LINE__)
+#if CYROS_PORT_ENVIRONMENT == 2
+ #define CYROS_PORT_CAPTURE_FILE (__FILE__)
+ #define CYROS_PORT_CAPTURE_LINE (__LINE__)
 #else
- #define CORTOS_PORT_CAPTURE_FILE ""
- #define CORTOS_PORT_CAPTURE_LINE 0
+ #define CYROS_PORT_CAPTURE_FILE ""
+ #define CYROS_PORT_CAPTURE_LINE 0
 #endif
 
-#define CORTOS_ASSERT2(condition, aux1, aux2) __builtin_expect(!!(condition), 1) ? (void)0 : cortos_port_system_error((uintptr_t)(aux1), (uintptr_t)(aux2), CORTOS_PORT_CAPTURE_FILE, CORTOS_PORT_CAPTURE_LINE)
-#define CORTOS_ASSERT1(condition, aux1)       CORTOS_ASSERT2(condition, aux1, 0)
-#define CORTOS_ASSERT(condition)              CORTOS_ASSERT2(condition, 0, 0)
-#define CORTOS_ASSERT_OP(lhs, op, rhs)        CORTOS_ASSERT2((lhs) op (rhs), lhs, rhs)
-#define CORTOS_ASSERT_NULL(pointer)           CORTOS_ASSERT2(!(pointer), pointer, 0);
+#define CYROS_ASSERT2(condition, aux1, aux2) __builtin_expect(!!(condition), 1) ? (void)0 : cyros_port_system_error((uintptr_t)(aux1), (uintptr_t)(aux2), CYROS_PORT_CAPTURE_FILE, CYROS_PORT_CAPTURE_LINE)
+#define CYROS_ASSERT1(condition, aux1)       CYROS_ASSERT2(condition, aux1, 0)
+#define CYROS_ASSERT(condition)              CYROS_ASSERT2(condition, 0, 0)
+#define CYROS_ASSERT_OP(lhs, op, rhs)        CYROS_ASSERT2((lhs) op (rhs), lhs, rhs)
+#define CYROS_ASSERT_NULL(pointer)           CYROS_ASSERT2(!(pointer), pointer, 0);
 
 /**
  * @brief Trigger a breakpoint (for debugging)
  */
-void cortos_port_breakpoint(void);
+void cyros_port_breakpoint(void);
 
 /**
  * @brief Get the current stack pointer value
  * @return Current stack pointer
  */
-void* cortos_port_get_stack_pointer(void);
+void* cyros_port_get_stack_pointer(void);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* CORTOS_PORT_H */
+#endif /* CYROS_PORT_H */

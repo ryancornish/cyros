@@ -1,13 +1,13 @@
-#ifndef CORTOS_WAITABLE_HPP
-#define CORTOS_WAITABLE_HPP
+#ifndef CYROS_WAITABLE_HPP
+#define CYROS_WAITABLE_HPP
 
-#include <cortos/kernel/function.hpp>
-#include <cortos/kernel/thread.hpp>
-#include <cortos/kernel/spinlock.hpp>
+#include <cyros/kernel/function.hpp>
+#include <cyros/kernel/thread.hpp>
+#include <cyros/kernel/spinlock.hpp>
 
 #include <type_traits>
 
-namespace cortos
+namespace cyros
 {
 
 /**
@@ -20,7 +20,7 @@ namespace cortos
  * Threads do NOT call methods on waitable directly. Instead, use the free
  * functions kernel::wait_for() and kernel::wait_for_any().
  *
- * Example (Timer in libcortos):
+ * Example (Timer in libcyros):
  *   class Timer : public waitable
  *   {
  *      time_point wakeup_time;
@@ -189,6 +189,6 @@ private:
    wait_node* pick_best() noexcept;
 };
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_WAITABLE_HPP
+#endif // CYROS_WAITABLE_HPP

@@ -5,5 +5,5 @@ sources = [
 ]
 
 public_headers = [
-  "public_headers/port_traits.h -> cortos/port/port_traits.h",
+  "public_headers/port_traits.h -> cyros/port/port_traits.h",
 ]

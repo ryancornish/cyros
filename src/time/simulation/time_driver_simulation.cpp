@@ -1,7 +1,7 @@
-#include <cortos/time/time.hpp>
-#include <cortos/time/simulation.hpp>
+#include <cyros/time/time.hpp>
+#include <cyros/time/simulation.hpp>
 
-#include <cortos/port/port.h>
+#include <cyros/port/port.h>
 
 #include <algorithm>
 #include <atomic>
@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-namespace cortos::time::sim
+namespace cyros::time::sim
 {
    /**
     * @brief Scheduled callback event
@@ -82,7 +82,7 @@ namespace cortos::time::sim
 
       while (ds->running.load(std::memory_order_acquire)) {
          std::this_thread::sleep_for(1ms);
-         cortos::time::on_timer_isr();
+         cyros::time::on_timer_isr();
       }
    }
 
@@ -99,29 +99,29 @@ namespace cortos::time::sim
 
       return (static_cast<uint64_t>(ns) * ds->tick_frequency_hz) / 1'000'000'000ULL;
    }
-} // namespace cortos::time::sim
+} // namespace cyros::time::sim
 
 
-namespace cortos::time
+namespace cyros::time
 {
 
 void initialise(uint32_t frequency_hz)
 {
-   CORTOS_ASSERT(sim::ds == nullptr);
+   CYROS_ASSERT(sim::ds == nullptr);
    sim::ds = new sim::driver_state;
    sim::ds->tick_frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
    delete sim::ds;
    sim::ds = nullptr;
 }
 
 [[nodiscard]] time_point now() noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    if (sim::ds->mode == simulation::mode::virtual_time) {
       return time_point{sim::ds->virtual_now.load(std::memory_order_relaxed)};
@@ -132,7 +132,7 @@ void finalise()
 
 [[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    if (!cb) {
       return {};
@@ -159,7 +159,7 @@ void finalise()
 
 bool cancel(handle h) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    if (h.id == 0) {
       return false;
@@ -179,7 +179,7 @@ bool cancel(handle h) noexcept
 
 [[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    uint64_t const ticks = ((static_cast<uint64_t>(ms) * sim::ds->tick_frequency_hz) + 999) / 1000;
 
@@ -188,7 +188,7 @@ bool cancel(handle h) noexcept
 
 [[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    uint64_t const ticks = ((static_cast<uint64_t>(us) * sim::ds->tick_frequency_hz) + 999'999) / 1'000'000;
 
@@ -197,7 +197,7 @@ bool cancel(handle h) noexcept
 
 void start() noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    sim::ds->started.store(true, std::memory_order_release);
 
@@ -214,7 +214,7 @@ void start() noexcept
 
 void stop() noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    if (sim::ds->mode == simulation::mode::real_time) {
       bool was_running = sim::ds->running.exchange(false, std::memory_order_acq_rel);
@@ -230,35 +230,35 @@ void stop() noexcept
 
 void on_timer_isr() noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
 
    sim::fire_due_callbacks(now().value);
 }
 
-} // namespace cortos::time
+} // namespace cyros::time
 
 
-namespace cortos::time::simulation
+namespace cyros::time::simulation
 {
 
 void set_mode(mode m) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
-   CORTOS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
+   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
 
    sim::ds->mode = m;
 }
 
 [[nodiscard]] mode get_mode() noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds != nullptr);
    return sim::ds->mode;
 }
 
 void reset(time_point tp) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
-   CORTOS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
+   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
 
    {
       std::lock_guard lock(sim::ds->mutex);
@@ -273,8 +273,8 @@ void reset(time_point tp) noexcept
 
 void advance_to(time_point tp) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
-   CORTOS_ASSERT(sim::ds->mode == mode::virtual_time);
+   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds->mode == mode::virtual_time);
 
    uint64_t cur = sim::ds->virtual_now.load(std::memory_order_relaxed);
    uint64_t target = tp.value;
@@ -283,16 +283,16 @@ void advance_to(time_point tp) noexcept
 
 
    sim::ds->virtual_now.store(target, std::memory_order_release);
-   cortos::time::on_timer_isr();
+   cyros::time::on_timer_isr();
 }
 
 void advance_by(duration d) noexcept
 {
-   CORTOS_ASSERT(sim::ds != nullptr);
-   CORTOS_ASSERT(sim::ds->mode == mode::virtual_time);
+   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(sim::ds->mode == mode::virtual_time);
 
    uint64_t current = sim::ds->virtual_now.load(std::memory_order_relaxed);
    advance_to(time_point{current + d.value});
 }
 
-} // namespace cortos::time::simulation
+} // namespace cyros::time::simulation

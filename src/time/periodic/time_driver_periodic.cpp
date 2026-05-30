@@ -1,11 +1,11 @@
-#include <cortos/time/time.hpp>
-#include <cortos/config/config.hpp>
-#include <cortos/port/port.h>
+#include <cyros/time/time.hpp>
+#include <cyros/config/config.hpp>
+#include <cyros/port/port.h>
 
 #include <array>
 #include <cstdint>
 
-namespace cortos::time::periodic
+namespace cyros::time::periodic
 {
    /**
     * @brief Maximum number of simultaneously scheduled callbacks
@@ -32,8 +32,8 @@ namespace cortos::time::periodic
    {
       uint32_t state;
 
-      irq_guard() noexcept : state(cortos_port_irq_save()) {}
-      ~irq_guard() { cortos_port_irq_restore(state); }
+      irq_guard() noexcept : state(cyros_port_irq_save()) {}
+      ~irq_guard() { cyros_port_irq_restore(state); }
 
       irq_guard(irq_guard const&) = delete;
       irq_guard& operator=(irq_guard const&) = delete;
@@ -69,35 +69,35 @@ namespace cortos::time::periodic
 
    static void isr_trampoline(void*) noexcept
    {
-      cortos::time::on_timer_isr();
+      cyros::time::on_timer_isr();
    }
 
    static inline uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
    {
       return (a + b - 1) / b;
    }
-} // namespace cortos::time::periodic
+} // namespace cyros::time::periodic
 
 
-namespace cortos::time
+namespace cyros::time
 {
 
 void initialise(uint32_t frequency_hz)
 {
-   CORTOS_ASSERT(!periodic::ds.initialised);
+   CYROS_ASSERT(!periodic::ds.initialised);
    periodic::ds.initialised = true;
    periodic::ds.tick_frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CORTOS_ASSERT(periodic::ds.initialised);
+   CYROS_ASSERT(periodic::ds.initialised);
    periodic::ds = periodic::driver_state{};
 }
 
 [[nodiscard]] time_point now() noexcept
 {
-   return time_point{cortos_port_time_now()};
+   return time_point{cyros_port_time_now()};
 }
 
 [[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept
@@ -154,14 +154,14 @@ bool cancel(handle h) noexcept
 
 [[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
-   const uint64_t f = cortos_port_time_freq_hz();
+   const uint64_t f = cyros_port_time_freq_hz();
    const uint64_t ticks = periodic::ceil_div_u64(static_cast<uint64_t>(ms) * f, 1000ULL);
    return duration{ticks};
 }
 
 [[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
-   const uint64_t f = cortos_port_time_freq_hz();
+   const uint64_t f = cyros_port_time_freq_hz();
    const uint64_t ticks = periodic::ceil_div_u64(static_cast<uint64_t>(us) * f, 1'000'000ULL);
    return duration{ticks};
 }
@@ -172,11 +172,11 @@ void start() noexcept
       return;
    }
 
-   CORTOS_ASSERT(periodic::ds.tick_frequency_hz > 0);
+   CYROS_ASSERT(periodic::ds.tick_frequency_hz > 0);
 
-   cortos_port_time_register_isr_handler(&periodic::isr_trampoline, nullptr);
-   cortos_port_time_setup(periodic::ds.tick_frequency_hz);
-   cortos_port_time_irq_enable();
+   cyros_port_time_register_isr_handler(&periodic::isr_trampoline, nullptr);
+   cyros_port_time_setup(periodic::ds.tick_frequency_hz);
+   cyros_port_time_irq_enable();
 
    periodic::ds.started = true;
 }
@@ -187,14 +187,14 @@ void stop() noexcept
       return;
    }
 
-   cortos_port_time_irq_disable();
+   cyros_port_time_irq_disable();
    periodic::ds.started = false;
 }
 
 void on_timer_isr() noexcept
 {
-   const uint64_t now_ticks = cortos_port_time_now();
+   const uint64_t now_ticks = cyros_port_time_now();
    periodic::fire_due_isr(now_ticks);
 }
 
-} // namespace cortos::time
+} // namespace cyros::time

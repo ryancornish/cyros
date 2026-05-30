@@ -3,8 +3,8 @@
  * @brief Unit tests for the simulation time driver (src/time/simulation).
  *
  * The simulation driver implements the free-function API declared in
- * <cortos/time/time.hpp>, plus the virtual_time/real_time control surface declared
- * in <cortos/time/simulation.hpp>. A test binary links exactly ONE time
+ * <cyros/time/time.hpp>, plus the virtual_time/real_time control surface declared
+ * in <cyros/time/simulation.hpp>. A test binary links exactly ONE time
  * driver, selected via test.toml [components].time_driver = "simulation".
  *
  * Model
@@ -44,9 +44,9 @@
  * With those markers, "100%" means 100% of the deterministically tested paths.
  */
 
-#include <cortos/time/time.hpp>
-#include <cortos/time/simulation.hpp>
-#include <cortos/port/port.h>
+#include <cyros/time/time.hpp>
+#include <cyros/time/simulation.hpp>
+#include <cyros/port/port.h>
 
 #include <gtest/gtest.h>
 
@@ -56,7 +56,7 @@
 #include <thread>
 #include <vector>
 
-using namespace cortos;
+using namespace cyros;
 
 namespace
 {
@@ -79,18 +79,18 @@ class SimulationDriverTest : public ::testing::Test
 protected:
    void SetUp() override
    {
-      cortos::time::initialise(1'000 /* Hz */);
+      cyros::time::initialise(1'000 /* Hz */);
       // Default mode is virtual_time; make it explicit and deterministic.
-      cortos::time::simulation::set_mode(time::simulation::mode::virtual_time);
-      cortos::time::simulation::reset(time::time_point{0});
+      cyros::time::simulation::set_mode(time::simulation::mode::virtual_time);
+      cyros::time::simulation::reset(time::time_point{0});
    }
 
    void TearDown() override
    {
       // stop() is safe whether or not start() ran. In virtual_time mode it is a
       // near no-op; pairing it keeps real_time-leaning tests tidy too.
-      cortos::time::stop();
-      cortos::time::finalise();
+      cyros::time::stop();
+      cyros::time::finalise();
    }
 };
 
@@ -101,24 +101,24 @@ protected:
 // initialise() allocated state; reset() in SetUp left virtual time at 0.
 TEST_F(SimulationDriverTest, InitialTimeIsZero)
 {
-   EXPECT_EQ(cortos::time::now().value, 0u);
+   EXPECT_EQ(cyros::time::now().value, 0u);
 }
 
 // start() in virtual_time mode sets `started` but spawns no thread; the
 // `mode == real_time` branch is not taken.
 TEST_F(SimulationDriverTest, StartInVirtualModeDoesNotSpawnThread)
 {
-   cortos::time::start();
+   cyros::time::start();
    // now() must still work and reflect virtual time.
-   EXPECT_EQ(cortos::time::now().value, 0u);
+   EXPECT_EQ(cyros::time::now().value, 0u);
 }
 
 // stop() in virtual_time mode takes the non-real_time path and is a no-op.
 TEST_F(SimulationDriverTest, StopInVirtualModeIsHarmless)
 {
-   cortos::time::start();
-   cortos::time::stop();
-   cortos::time::stop();  // again -- still harmless in virtual_time mode
+   cyros::time::start();
+   cyros::time::stop();
+   cyros::time::stop();  // again -- still harmless in virtual_time mode
    SUCCEED();
 }
 
@@ -126,15 +126,15 @@ TEST_F(SimulationDriverTest, StopInVirtualModeIsHarmless)
 // because it lives in driver_state, which reset() (not stop()) clears.
 TEST_F(SimulationDriverTest, StopThenRestart)
 {
-   cortos::time::start();
-   cortos::time::simulation::advance_to(time::time_point{100});
-   EXPECT_EQ(cortos::time::now().value, 100u);
+   cyros::time::start();
+   cyros::time::simulation::advance_to(time::time_point{100});
+   EXPECT_EQ(cyros::time::now().value, 100u);
 
-   cortos::time::stop();
+   cyros::time::stop();
 
-   cortos::time::start();
-   cortos::time::simulation::advance_to(time::time_point{200});
-   EXPECT_EQ(cortos::time::now().value, 200u);
+   cyros::time::start();
+   cyros::time::simulation::advance_to(time::time_point{200});
+   EXPECT_EQ(cyros::time::now().value, 200u);
 }
 
 /* ============================================================================
@@ -144,7 +144,7 @@ TEST_F(SimulationDriverTest, StopThenRestart)
 // get_mode() reports the default virtual_time mode set in SetUp().
 TEST_F(SimulationDriverTest, DefaultModeIsVirtual)
 {
-   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::mode::virtual_time);
+   EXPECT_EQ(cyros::time::simulation::get_mode(), time::simulation::mode::virtual_time);
 }
 
 // set_mode() round-trips both enumerators. (Switching to real_time here is
@@ -152,11 +152,11 @@ TEST_F(SimulationDriverTest, DefaultModeIsVirtual)
 // holds. We switch straight back without ever starting in real_time.)
 TEST_F(SimulationDriverTest, SetModeRoundTrips)
 {
-   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
-   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::mode::real_time);
+   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
+   EXPECT_EQ(cyros::time::simulation::get_mode(), time::simulation::mode::real_time);
 
-   cortos::time::simulation::set_mode(time::simulation::mode::virtual_time);
-   EXPECT_EQ(cortos::time::simulation::get_mode(), time::simulation::mode::virtual_time);
+   cyros::time::simulation::set_mode(time::simulation::mode::virtual_time);
+   EXPECT_EQ(cyros::time::simulation::get_mode(), time::simulation::mode::virtual_time);
 }
 
 /* ============================================================================
@@ -166,8 +166,8 @@ TEST_F(SimulationDriverTest, SetModeRoundTrips)
 // reset() to a non-zero time point sets virtual time and clears events.
 TEST_F(SimulationDriverTest, ResetToNonZerotimeTimePoint)
 {
-   cortos::time::simulation::reset(time::time_point{500});
-   EXPECT_EQ(cortos::time::now().value, 500u);
+   cyros::time::simulation::reset(time::time_point{500});
+   EXPECT_EQ(cyros::time::now().value, 500u);
 }
 
 // reset() clears any pending events: a callback scheduled before reset() must
@@ -175,12 +175,12 @@ TEST_F(SimulationDriverTest, ResetToNonZerotimeTimePoint)
 TEST_F(SimulationDriverTest, ResetClearsPendingEvents)
 {
    std::atomic<int> count{0};
-   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h = cyros::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
-   cortos::time::simulation::reset(time::time_point{0});
+   cyros::time::simulation::reset(time::time_point{0});
 
-   cortos::time::simulation::advance_to(time::time_point{200});
+   cyros::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(count.load(), 0);
 }
 
@@ -191,22 +191,22 @@ TEST_F(SimulationDriverTest, ResetClearsPendingEvents)
 // Null callback: the `!cb` branch returns an invalid handle.
 TEST_F(SimulationDriverTest, ScheduleNullCallbackReturnsInvalidHandle)
 {
-   EXPECT_EQ(cortos::time::schedule_at(time::time_point{100}, nullptr, nullptr).id, 0u);
+   EXPECT_EQ(cyros::time::schedule_at(time::time_point{100}, nullptr, nullptr).id, 0u);
 }
 
 // Valid callback: returns a non-zero handle.
 TEST_F(SimulationDriverTest, ScheduleValidCallbackReturnsValidHandle)
 {
    std::atomic<int> count{0};
-   EXPECT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
+   EXPECT_NE(cyros::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 }
 
 // Distinct handles are issued for successive schedule_at() calls.
 TEST_F(SimulationDriverTest, SuccessiveHandlesAreDistinct)
 {
    std::atomic<int> count{0};
-   time::handle h1 = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
-   time::handle h2 = cortos::time::schedule_at(time::time_point{200}, counting_callback, &count);
+   time::handle h1 = cyros::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h2 = cyros::time::schedule_at(time::time_point{200}, counting_callback, &count);
    EXPECT_NE(h1.id, 0u);
    EXPECT_NE(h2.id, 0u);
    EXPECT_NE(h1.id, h2.id);
@@ -221,9 +221,9 @@ TEST_F(SimulationDriverTest, SuccessiveHandlesAreDistinct)
 TEST_F(SimulationDriverTest, CallbackFiresAtExactDeadline)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::time_point{100});
+   cyros::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -231,9 +231,9 @@ TEST_F(SimulationDriverTest, CallbackFiresAtExactDeadline)
 TEST_F(SimulationDriverTest, CallbackFiresWhenCrossed)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{50}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{50}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::time_point{150});
+   cyros::time::simulation::advance_to(time::time_point{150});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -241,12 +241,12 @@ TEST_F(SimulationDriverTest, CallbackFiresWhenCrossed)
 TEST_F(SimulationDriverTest, CallbackDoesNotFireBeforeDeadline)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::time_point{99});
+   cyros::time::simulation::advance_to(time::time_point{99});
    EXPECT_EQ(count.load(), 0);
 
-   cortos::time::simulation::advance_to(time::time_point{100});
+   cyros::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -255,12 +255,12 @@ TEST_F(SimulationDriverTest, CallbackDoesNotFireBeforeDeadline)
 TEST_F(SimulationDriverTest, CallbackFiresOnlyOnce)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_to(time::time_point{150});
+   cyros::time::simulation::advance_to(time::time_point{150});
    EXPECT_EQ(count.load(), 1);
 
-   cortos::time::simulation::advance_to(time::time_point{300});
+   cyros::time::simulation::advance_to(time::time_point{300});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -268,13 +268,13 @@ TEST_F(SimulationDriverTest, CallbackFiresOnlyOnce)
 // the next advance, even a zero-length one (advance_to current time).
 TEST_F(SimulationDriverTest, CallbackInPastFiresOnNextAdvance)
 {
-   cortos::time::simulation::advance_to(time::time_point{100});
+   cyros::time::simulation::advance_to(time::time_point{100});
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{50}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{50}, counting_callback, &count).id, 0u);
 
    // advance_to current time: target is clamped to now, ISR still pumps.
-   cortos::time::simulation::advance_to(time::time_point{100});
+   cyros::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -282,28 +282,28 @@ TEST_F(SimulationDriverTest, CallbackInPastFiresOnNextAdvance)
 // not go backwards, and a future callback does not fire.
 TEST_F(SimulationDriverTest, AdvanceToEarlierTimeIsClampedMonotonic)
 {
-   cortos::time::simulation::advance_to(time::time_point{200});
-   EXPECT_EQ(cortos::time::now().value, 200u);
+   cyros::time::simulation::advance_to(time::time_point{200});
+   EXPECT_EQ(cyros::time::now().value, 200u);
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{250}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{250}, counting_callback, &count).id, 0u);
 
    // Ask to go backwards: clamp keeps now at 200, callback at 250 stays pending.
-   cortos::time::simulation::advance_to(time::time_point{100});
-   EXPECT_EQ(cortos::time::now().value, 200u);
+   cyros::time::simulation::advance_to(time::time_point{100});
+   EXPECT_EQ(cyros::time::now().value, 200u);
    EXPECT_EQ(count.load(), 0);
 }
 
 // advance_by() advances relative to the current virtual time.
 TEST_F(SimulationDriverTest, AdvanceByMovesRelativeToNow)
 {
-   cortos::time::simulation::advance_to(time::time_point{100});
+   cyros::time::simulation::advance_to(time::time_point{100});
 
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{150}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{150}, counting_callback, &count).id, 0u);
 
-   cortos::time::simulation::advance_by(time::duration{50});  // 100 -> 150
-   EXPECT_EQ(cortos::time::now().value, 150u);
+   cyros::time::simulation::advance_by(time::duration{50});  // 100 -> 150
+   EXPECT_EQ(cyros::time::now().value, 150u);
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -311,20 +311,20 @@ TEST_F(SimulationDriverTest, AdvanceByMovesRelativeToNow)
 TEST_F(SimulationDriverTest, MultipleCallbacksFireInDeadlineOrder)
 {
    std::atomic<int> a{0}, b{0}, c{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &a).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{200}, counting_callback, &b).id, 0u);
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{300}, counting_callback, &c).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{100}, counting_callback, &a).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{200}, counting_callback, &b).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{300}, counting_callback, &c).id, 0u);
 
-   cortos::time::simulation::advance_to(time::time_point{150});
+   cyros::time::simulation::advance_to(time::time_point{150});
    EXPECT_EQ(a.load(), 1);
    EXPECT_EQ(b.load(), 0);
    EXPECT_EQ(c.load(), 0);
 
-   cortos::time::simulation::advance_to(time::time_point{250});
+   cyros::time::simulation::advance_to(time::time_point{250});
    EXPECT_EQ(b.load(), 1);
    EXPECT_EQ(c.load(), 0);
 
-   cortos::time::simulation::advance_to(time::time_point{350});
+   cyros::time::simulation::advance_to(time::time_point{350});
    EXPECT_EQ(c.load(), 1);
 }
 
@@ -334,23 +334,23 @@ TEST_F(SimulationDriverTest, CallbacksAtSameDeadlineAllFire)
    std::atomic<int> count{0};
    for (int i = 0; i < 5; ++i)
    {
-      ASSERT_NE(cortos::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
+      ASSERT_NE(cyros::time::schedule_at(time::time_point{100}, counting_callback, &count).id, 0u);
    }
 
-   cortos::time::simulation::advance_to(time::time_point{100});
+   cyros::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(count.load(), 5);
 }
 
 // An advance with no callbacks pending: fire_due_callbacks finds nothing due.
 TEST_F(SimulationDriverTest, AdvanceWithNothingPendingFiresNothing)
 {
-   cortos::time::simulation::advance_to(time::time_point{500});
+   cyros::time::simulation::advance_to(time::time_point{500});
    SUCCEED();
 
    // And with an occupied-but-not-due event present.
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{10'000}, counting_callback, &count).id, 0u);
-   cortos::time::simulation::advance_to(time::time_point{600});
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{10'000}, counting_callback, &count).id, 0u);
+   cyros::time::simulation::advance_to(time::time_point{600});
    EXPECT_EQ(count.load(), 0);
 }
 
@@ -369,7 +369,7 @@ TEST_F(SimulationDriverTest, CallbackCanScheduleAnotherCallback)
       c->count.fetch_add(1, std::memory_order_relaxed);
 
       // Schedule a follow-up that only increments the counter.
-      time::handle h = cortos::time::schedule_at(
+      time::handle h = cyros::time::schedule_at(
          time::time_point{200},
          [](void* a) noexcept
          {
@@ -379,13 +379,13 @@ TEST_F(SimulationDriverTest, CallbackCanScheduleAnotherCallback)
       (void)h;  // nodiscard
    };
 
-   time::handle h = cortos::time::schedule_at(time::time_point{100}, rescheduling_cb, &ctx);
+   time::handle h = cyros::time::schedule_at(time::time_point{100}, rescheduling_cb, &ctx);
    ASSERT_NE(h.id, 0u);
 
-   cortos::time::simulation::advance_to(time::time_point{100});
+   cyros::time::simulation::advance_to(time::time_point{100});
    EXPECT_EQ(ctx.count.load(), 1);
 
-   cortos::time::simulation::advance_to(time::time_point{200});
+   cyros::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(ctx.count.load(), 2);
 }
 
@@ -396,13 +396,13 @@ TEST_F(SimulationDriverTest, CallbackCanScheduleAnotherCallback)
 // cancel() of an invalid (id == 0) handle: the `h.id == 0` branch -> false.
 TEST_F(SimulationDriverTest, CancelInvalidHandleReturnsFalse)
 {
-   EXPECT_FALSE(cortos::time::cancel(time::handle{0}));
+   EXPECT_FALSE(cyros::time::cancel(time::handle{0}));
 }
 
 // cancel() of an unknown non-zero id: loop finds no match -> false.
 TEST_F(SimulationDriverTest, CancelUnknownHandleReturnsFalse)
 {
-   EXPECT_FALSE(cortos::time::cancel(time::handle{999999}));
+   EXPECT_FALSE(cyros::time::cancel(time::handle{999999}));
 }
 
 // cancel() before firing: matching, non-cancelled event found -> true; the
@@ -410,12 +410,12 @@ TEST_F(SimulationDriverTest, CancelUnknownHandleReturnsFalse)
 TEST_F(SimulationDriverTest, CancelBeforeFiringPreventsCallback)
 {
    std::atomic<int> count{0};
-   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h = cyros::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
-   EXPECT_TRUE(cortos::time::cancel(h));
+   EXPECT_TRUE(cyros::time::cancel(h));
 
-   cortos::time::simulation::advance_to(time::time_point{200});
+   cyros::time::simulation::advance_to(time::time_point{200});
    EXPECT_EQ(count.load(), 0);
 }
 
@@ -424,13 +424,13 @@ TEST_F(SimulationDriverTest, CancelBeforeFiringPreventsCallback)
 TEST_F(SimulationDriverTest, CancelAfterFiringReturnsFalse)
 {
    std::atomic<int> count{0};
-   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h = cyros::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
-   cortos::time::simulation::advance_to(time::time_point{150});
+   cyros::time::simulation::advance_to(time::time_point{150});
    ASSERT_EQ(count.load(), 1);
 
-   EXPECT_FALSE(cortos::time::cancel(h));
+   EXPECT_FALSE(cyros::time::cancel(h));
 }
 
 // Cancelling the same handle twice: the second call finds the event already
@@ -438,27 +438,27 @@ TEST_F(SimulationDriverTest, CancelAfterFiringReturnsFalse)
 TEST_F(SimulationDriverTest, CancelTwiceReturnsFalseSecondTime)
 {
    std::atomic<int> count{0};
-   time::handle h = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h = cyros::time::schedule_at(time::time_point{100}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
-   EXPECT_TRUE(cortos::time::cancel(h));
-   EXPECT_FALSE(cortos::time::cancel(h));
+   EXPECT_TRUE(cyros::time::cancel(h));
+   EXPECT_FALSE(cyros::time::cancel(h));
 }
 
 // Cancelling one of several leaves the others intact.
 TEST_F(SimulationDriverTest, CancelOneOfManyLeavesOthers)
 {
    std::atomic<int> count{0};
-   time::handle h1 = cortos::time::schedule_at(time::time_point{100}, counting_callback, &count);
-   time::handle h2 = cortos::time::schedule_at(time::time_point{200}, counting_callback, &count);
-   time::handle h3 = cortos::time::schedule_at(time::time_point{300}, counting_callback, &count);
+   time::handle h1 = cyros::time::schedule_at(time::time_point{100}, counting_callback, &count);
+   time::handle h2 = cyros::time::schedule_at(time::time_point{200}, counting_callback, &count);
+   time::handle h3 = cyros::time::schedule_at(time::time_point{300}, counting_callback, &count);
    ASSERT_NE(h1.id, 0u);
    ASSERT_NE(h2.id, 0u);
    ASSERT_NE(h3.id, 0u);
 
-   EXPECT_TRUE(cortos::time::cancel(h2));  // cancel the middle one
+   EXPECT_TRUE(cyros::time::cancel(h2));  // cancel the middle one
 
-   cortos::time::simulation::advance_to(time::time_point{400});
+   cyros::time::simulation::advance_to(time::time_point{400});
    EXPECT_EQ(count.load(), 2);  // h1 and h3 fired, h2 did not
 }
 
@@ -473,39 +473,39 @@ TEST_F(SimulationDriverTest, CancelOneOfManyLeavesOthers)
 // 10 ms at 1 kHz = 10 ticks exactly.
 TEST_F(SimulationDriverTest, FromMillisecondsExact)
 {
-   EXPECT_EQ(cortos::time::from_milliseconds(10).value, 10u);
+   EXPECT_EQ(cyros::time::from_milliseconds(10).value, 10u);
 }
 
 // 0 ms converts to 0 ticks.
 TEST_F(SimulationDriverTest, FromMillisecondsZero)
 {
-   EXPECT_EQ(cortos::time::from_milliseconds(0).value, 0u);
+   EXPECT_EQ(cyros::time::from_milliseconds(0).value, 0u);
 }
 
 // 5000 us = 5 ms = 5 ticks at 1 kHz, exact.
 TEST_F(SimulationDriverTest, FromMicrosecondsExact)
 {
-   EXPECT_EQ(cortos::time::from_microseconds(5000).value, 5u);
+   EXPECT_EQ(cyros::time::from_microseconds(5000).value, 5u);
 }
 
 // 1001 us at 1 kHz is 1.001 ticks; the conversion rounds UP to 2. This is the
 // case that exercises the round-up arm of the microsecond ceil division.
 TEST_F(SimulationDriverTest, FromMicrosecondsRoundsUp)
 {
-   EXPECT_EQ(cortos::time::from_microseconds(1001).value, 2u);
+   EXPECT_EQ(cyros::time::from_microseconds(1001).value, 2u);
 }
 
 // 1 us at 1 kHz is 0.001 ticks; rounding up yields 1 tick (a non-zero duration
 // never converts to zero -- it never undersleeps).
 TEST_F(SimulationDriverTest, FromMicrosecondsSubTickRoundsUpToOne)
 {
-   EXPECT_EQ(cortos::time::from_microseconds(1).value, 1u);
+   EXPECT_EQ(cyros::time::from_microseconds(1).value, 1u);
 }
 
 // 0 us converts to 0 ticks (the numerator-is-zero arm of the ceil division).
 TEST_F(SimulationDriverTest, FromMicrosecondsZero)
 {
-   EXPECT_EQ(cortos::time::from_microseconds(0).value, 0u);
+   EXPECT_EQ(cyros::time::from_microseconds(0).value, 0u);
 }
 
 /* ============================================================================
@@ -518,10 +518,10 @@ TEST_F(SimulationDriverTest, FromMicrosecondsZero)
 TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
 {
    std::atomic<int> count{0};
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{0}, counting_callback, &count).id, 0u);
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{0}, counting_callback, &count).id, 0u);
 
    // Deadline 0 with virtual time already at 0: a direct ISR fires it.
-   cortos::time::on_timer_isr();
+   cyros::time::on_timer_isr();
    EXPECT_EQ(count.load(), 1);
 }
 
@@ -541,65 +541,65 @@ TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
 // real_time mode: now() advances on its own as wall-clock time passes.
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeTimeProgresses)
 {
-   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
-   cortos::time::start();
+   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
+   cyros::time::start();
 
-   const time::time_point t1 = cortos::time::now();
+   const time::time_point t1 = cyros::time::now();
    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-   const time::time_point t2 = cortos::time::now();
+   const time::time_point t2 = cyros::time::now();
 
    EXPECT_GT(t2.value, t1.value);
 
-   cortos::time::stop();
+   cyros::time::stop();
 }
 
 // real_time mode: a scheduled callback fires on its own once wall-clock time
 // reaches the deadline (the background thread pumps the ISR).
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCallbackFiresAutonomously)
 {
-   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
-   cortos::time::start();
+   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
+   cyros::time::start();
 
    std::atomic<int> count{0};
    // 1 kHz: 10 ticks ~= 10 ms. Sleep well past it.
-   const uint64_t deadline = cortos::time::now().value + 10;
-   ASSERT_NE(cortos::time::schedule_at(time::time_point{deadline}, counting_callback, &count).id, 0u);
+   const uint64_t deadline = cyros::time::now().value + 10;
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{deadline}, counting_callback, &count).id, 0u);
 
    std::this_thread::sleep_for(std::chrono::milliseconds(200));
    EXPECT_GE(count.load(), 1);
 
-   cortos::time::stop();
+   cyros::time::stop();
 }
 
 // real_time mode: cancelling before the deadline prevents the autonomous fire.
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCancelBeforeAutonomousFire)
 {
-   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
-   cortos::time::start();
+   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
+   cyros::time::start();
 
    std::atomic<int> count{0};
-   const uint64_t deadline = cortos::time::now().value + 100;  // ~100 ms out
-   time::handle h = cortos::time::schedule_at(time::time_point{deadline}, counting_callback, &count);
+   const uint64_t deadline = cyros::time::now().value + 100;  // ~100 ms out
+   time::handle h = cyros::time::schedule_at(time::time_point{deadline}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 
-   EXPECT_TRUE(cortos::time::cancel(h));
+   EXPECT_TRUE(cyros::time::cancel(h));
 
    std::this_thread::sleep_for(std::chrono::milliseconds(250));
    EXPECT_EQ(count.load(), 0);
 
-   cortos::time::stop();
+   cyros::time::stop();
 }
 
 // real_time mode: start() is idempotent -- a second start() while the thread is
 // already running hits the `compare_exchange_strong` false branch.
 TEST_F(SimulationDriverTest, DISABLED_RealTimeModeStartIsIdempotent)
 {
-   cortos::time::simulation::set_mode(time::simulation::mode::real_time);
-   cortos::time::start();
-   cortos::time::start();  // already running -> early return
+   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
+   cyros::time::start();
+   cyros::time::start();  // already running -> early return
 
-   cortos::time::stop();
-   cortos::time::stop();   // already stopped -> early return
+   cyros::time::stop();
+   cyros::time::stop();   // already stopped -> early return
    SUCCEED();
 }
 

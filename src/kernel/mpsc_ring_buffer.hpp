@@ -68,10 +68,10 @@
  * Producers use CAS on head to claim slots, then write data and publish
  * by updating the cell sequence. Consumer reads tail exclusively.
  */
-#ifndef CORTOS_MPSC_RING_BUFFER_HPP
-#define CORTOS_MPSC_RING_BUFFER_HPP
+#ifndef CYROS_MPSC_RING_BUFFER_HPP
+#define CYROS_MPSC_RING_BUFFER_HPP
 
-#include <cortos/port/port.h>
+#include <cyros/port/port.h>
 
 #include <array>
 #include <atomic>
@@ -79,7 +79,7 @@
 #include <cstdint>
 #include <utility>
 
-namespace cortos
+namespace cyros
 {
 
 template<typename T, std::size_t N>
@@ -305,14 +305,14 @@ private:
    constexpr explicit mpsc_ring_buffer(std::index_sequence<Is...>) noexcept : cells{ cell{Is}... } {}
 
    // Memory layout optimized to reduce false sharing:
-   // Each atomic is on its own cache line (CORTOS_PORT_CACHE_LINE bytes)
+   // Each atomic is on its own cache line (CYROS_PORT_CACHE_LINE bytes)
    // to prevent producers from invalidating consumer's cache and vice versa
 
-   alignas(CORTOS_PORT_CACHE_LINE) std::atomic<std::size_t> head{0};  ///< Producer claim counter (many writers)
-   alignas(CORTOS_PORT_CACHE_LINE) std::atomic<std::size_t> tail{0};  ///< Consumer pop counter (single writer)
-   alignas(CORTOS_PORT_CACHE_LINE) std::array<cell, N> cells{};       ///< Ring buffer cells
+   alignas(CYROS_PORT_CACHE_LINE) std::atomic<std::size_t> head{0};  ///< Producer claim counter (many writers)
+   alignas(CYROS_PORT_CACHE_LINE) std::atomic<std::size_t> tail{0};  ///< Consumer pop counter (single writer)
+   alignas(CYROS_PORT_CACHE_LINE) std::array<cell, N> cells{};       ///< Ring buffer cells
 };
 
-}  // namespace cortos
+}  // namespace cyros
 
-#endif // CORTOS_MPSC_RING_BUFFER_HPP
+#endif // CYROS_MPSC_RING_BUFFER_HPP

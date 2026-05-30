@@ -1,9 +1,9 @@
-#ifndef CORTOS_THREADING_SUBSYSTEM_HPP
-#define CORTOS_THREADING_SUBSYSTEM_HPP
+#ifndef CYROS_THREADING_SUBSYSTEM_HPP
+#define CYROS_THREADING_SUBSYSTEM_HPP
 
-#include <cortos/kernel/waitable.hpp>
-#include <cortos/config/config.hpp>
-#include <cortos/port/port.h>
+#include <cyros/kernel/waitable.hpp>
+#include <cyros/config/config.hpp>
+#include <cyros/port/port.h>
 
 #include "align.hpp"
 #include "waitable_utilities.hpp"
@@ -12,7 +12,7 @@
 #include <bitset>
 #include <limits>
 
-namespace cortos
+namespace cyros
 {
 
 void thread_launcher(void* tcb_ptr);
@@ -30,7 +30,7 @@ public:
    void terminate()
    {
       bool expected = false;
-      CORTOS_ASSERT(terminated.compare_exchange_strong(expected, true, std::memory_order_release));
+      CYROS_ASSERT(terminated.compare_exchange_strong(expected, true, std::memory_order_release));
 
       // terminate() is invoked on the teardown path of the thread launcher.
       // Invoking a reschedule is forbidden during this period as it as we might
@@ -66,9 +66,9 @@ struct thread_control_block
    thread_termination termination;
 
    // Opaque, in-place port context storage
-   alignas(CORTOS_PORT_CONTEXT_ALIGN) std::array<std::byte, CORTOS_PORT_CONTEXT_SIZE> context_storage{};
-   [[nodiscard]] constexpr auto*       context()       noexcept { return reinterpret_cast<cortos_port_context_t*      >(context_storage.data()); }
-   [[nodiscard]] constexpr auto const* context() const noexcept { return reinterpret_cast<cortos_port_context_t const*>(context_storage.data()); }
+   alignas(CYROS_PORT_CONTEXT_ALIGN) std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> context_storage{};
+   [[nodiscard]] constexpr auto*       context()       noexcept { return reinterpret_cast<cyros_port_context_t*      >(context_storage.data()); }
+   [[nodiscard]] constexpr auto const* context() const noexcept { return reinterpret_cast<cyros_port_context_t const*>(context_storage.data()); }
 
    [[nodiscard]] constexpr bool is_enqueued() const noexcept
    {
@@ -218,6 +218,6 @@ public:
    void remove_thread(thread_control_block& tcb) noexcept;
 };
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_THREADING_SUBSYSTEM_HPP
+#endif // CYROS_THREADING_SUBSYSTEM_HPP

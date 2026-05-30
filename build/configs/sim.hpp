@@ -1,14 +1,14 @@
 /**
  * @file config.hpp
- * @brief CoRTOS Configuration header
+ * @brief Cyros Configuration header
  */
 
-#ifndef CORTOS_CONFIG_HPP
-#define CORTOS_CONFIG_HPP
+#ifndef CYROS_CONFIG_HPP
+#define CYROS_CONFIG_HPP
 
 #include <cstdint>
 
-namespace cortos::config
+namespace cyros::config
 {
 
 /**
@@ -31,6 +31,6 @@ inline constexpr std::uint32_t time_core_id = 0;
  */
 inline constexpr std::size_t max_priorities = 31;
 
-}  // namespace cortos::config
+}  // namespace cyros::config
 
 #endif

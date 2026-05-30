@@ -1,12 +1,12 @@
-#ifndef CORTOS_THREAD_HPP
-#define CORTOS_THREAD_HPP
+#ifndef CYROS_THREAD_HPP
+#define CYROS_THREAD_HPP
 
-#include <cortos/kernel/function.hpp>
+#include <cyros/kernel/function.hpp>
 
 #include <cstdint>
 #include <span>
 
-namespace cortos
+namespace cyros
 {
 
 /**
@@ -34,7 +34,7 @@ inline constexpr core_affinity any_core = core_affinity{0xFFFFFFFF};
 
 
 /**
- * @brief Joinable CoRTOS thread handle.
+ * @brief Joinable Cyros thread handle.
  *
  * Owns a running kernel thread. The thread's TCB is constructed inside the user-provided
  * stack buffer, so both the @c thread object and the stack buffer must outlive the thread.
@@ -133,6 +133,6 @@ void yield();
 
 }  // namespace this_thread
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_THREAD_HPP
+#endif // CYROS_THREAD_HPP

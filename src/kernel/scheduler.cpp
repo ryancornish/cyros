@@ -1,6 +1,6 @@
 #include "scheduler.hpp"
 
-namespace cortos
+namespace cyros
 {
 
 void scheduler::pin_thread(thread_control_block& tcb)
@@ -25,24 +25,24 @@ void scheduler::init_idle_thread()
 // Core-local operations (only called on owning core)
 void scheduler::start() noexcept
 {
-   CORTOS_ASSERT(idle_thread != nullptr); // init_idle_thread() must run before start()
+   CYROS_ASSERT(idle_thread != nullptr); // init_idle_thread() must run before start()
 
    auto* first = ready_matrix.pop_best_thread();
    if (first == nullptr) {
       first = idle_thread;
    }
-   CORTOS_ASSERT(first != nullptr);
-   CORTOS_ASSERT_OP(first->state, ==, thread_control_block::thread_state::ready);
+   CYROS_ASSERT(first != nullptr);
+   CYROS_ASSERT_OP(first->state, ==, thread_control_block::thread_state::ready);
    first->state = thread_control_block::thread_state::running;
    current_thread = first;
 
-   //cortos_port_set_thread_pointer(current_thread);
-   cortos_port_start_first(current_thread->context());
+   //cyros_port_set_thread_pointer(current_thread);
+   cyros_port_start_first(current_thread->context());
 }
 
 void scheduler::set_thread_ready(thread_control_block& tcb) noexcept
 {
-   CORTOS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+   CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
 
    tcb.state = thread_control_block::thread_state::ready;
 
@@ -75,7 +75,7 @@ bool scheduler::post_to_inbox(cross_core_request request) noexcept
 
    bool expected = false;
    if (inbox_poke_pending.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      cortos_port_send_reschedule_ipi(core_id);
+      cyros_port_send_reschedule_ipi(core_id);
    }
    return true;
 }
@@ -95,9 +95,9 @@ bool scheduler::post_to_inbox(cross_core_request request) noexcept
 */
 void scheduler::reschedule() noexcept
 {
-   CORTOS_ASSERT(current_thread);
-   CORTOS_ASSERT(!current_thread->is_enqueued());
-   CORTOS_ASSERT(current_thread->state != thread_control_block::thread_state::ready);
+   CYROS_ASSERT(current_thread);
+   CYROS_ASSERT(!current_thread->is_enqueued());
+   CYROS_ASSERT(current_thread->state != thread_control_block::thread_state::ready);
 
    drain_inbox();
 
@@ -121,7 +121,7 @@ void scheduler::reschedule() noexcept
 
    current_thread = next_thread;
    next_thread->state = thread_control_block::thread_state::running;
-   cortos_port_switch(previous_thread->context(), next_thread->context());
+   cyros_port_switch(previous_thread->context(), next_thread->context());
 }
 
 void scheduler::prepare_block_current_thread(std::span<waitable* const> waitables)
@@ -141,12 +141,12 @@ void scheduler::notify_block_current_thread(std::span<waitable* const> waitables
 
 void scheduler::reset()
 {
-   CORTOS_ASSERT_OP(inbox.approx_size(), ==, 0); // Cannot reset whilst inbox is not empty
-   CORTOS_ASSERT(ready_matrix.empty()); // Cannot reset whilst threads still in the queue
+   CYROS_ASSERT_OP(inbox.approx_size(), ==, 0); // Cannot reset whilst inbox is not empty
+   CYROS_ASSERT(ready_matrix.empty()); // Cannot reset whilst threads still in the queue
 
    pinned_thread_counter.store(0, std::memory_order_relaxed);
    inbox_poke_pending.store(false, std::memory_order_relaxed);
    current_thread = nullptr;
 }
 
-}  // namespace cortos
+}  // namespace cyros

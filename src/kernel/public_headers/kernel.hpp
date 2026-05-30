@@ -1,23 +1,23 @@
 /**
  * @file kernel.hpp
- * @brief CoRTOS Kernel API
+ * @brief Cyros Kernel API
  *
  * This is the main kernel header. It contains all kernel primitives and APIs.
  */
 
-#ifndef CORTOS_KERNEL_HPP
-#define CORTOS_KERNEL_HPP
+#ifndef CYROS_KERNEL_HPP
+#define CYROS_KERNEL_HPP
 
-#include <cortos/kernel/function.hpp>
-#include <cortos/kernel/spinlock.hpp>
-#include <cortos/kernel/thread.hpp>
-#include <cortos/kernel/waitable.hpp>
+#include <cyros/kernel/function.hpp>
+#include <cyros/kernel/spinlock.hpp>
+#include <cyros/kernel/thread.hpp>
+#include <cyros/kernel/waitable.hpp>
 
 #include <cstdint>
 #include <span>
 
 
-namespace cortos::kernel
+namespace cyros::kernel
 {
 
 /**
@@ -119,6 +119,6 @@ inline waitable::result wait_for(waitable& waitable)
    return wait_for_any(waitable);
 }
 
-} // namespace cortos::kernel
+} // namespace cyros::kernel
 
-#endif // CORTOS_KERNEL_HPP
+#endif // CYROS_KERNEL_HPP

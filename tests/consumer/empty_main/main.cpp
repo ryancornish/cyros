@@ -1,7 +1,7 @@
-#include <cortos/kernel/kernel.hpp>
-#include <cortos/port/port.h>
-#include <cortos/port/port_traits.h>
-#include <cortos/time/time.hpp>
+#include <cyros/kernel/kernel.hpp>
+#include <cyros/port/port.h>
+#include <cyros/port/port_traits.h>
+#include <cyros/time/time.hpp>
 
 int main()
 {

@@ -8,7 +8,7 @@ fi
 
 rm -rf ./out/
 
-cortos-builder build -p build_tree/profile.toml
+cyros-builder build -p build_tree/profile.toml
 
 mkdir ./out/bin/
 
@@ -16,7 +16,7 @@ g++-15 main.cpp \
    -std=gnu++26 -O0 -g3 \
    -Iout/gcc-basic/include/ \
    -Lout/gcc-basic/lib/ \
-   -lcortos \
+   -lcyros \
    -lboost_context \
    -o out/bin/main
 

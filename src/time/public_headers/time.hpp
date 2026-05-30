@@ -1,10 +1,10 @@
-#ifndef CORTOS_TIME_HPP
-#define CORTOS_TIME_HPP
+#ifndef CYROS_TIME_HPP
+#define CYROS_TIME_HPP
 
 #include <cstdint>
 #include <limits>
 
-namespace cortos::time
+namespace cyros::time
 {
 
 /* ============================================================================
@@ -191,6 +191,6 @@ void stop() noexcept;
  */
 void on_timer_isr() noexcept;
 
-} // namespace cortos::time
+} // namespace cyros::time
 
-#endif // CORTOS_TIME_HPP
+#endif // CYROS_TIME_HPP

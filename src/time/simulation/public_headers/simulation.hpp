@@ -1,9 +1,9 @@
-#ifndef CORTOS_TIME_SIMULATION_HPP
-#define CORTOS_TIME_SIMULATION_HPP
+#ifndef CYROS_TIME_SIMULATION_HPP
+#define CYROS_TIME_SIMULATION_HPP
 
-#include <cortos/time/time.hpp>
+#include <cyros/time/time.hpp>
 
-namespace cortos::time::simulation
+namespace cyros::time::simulation
 {
 
 enum class mode
@@ -46,6 +46,6 @@ void advance_to(time_point tp) noexcept;
  */
 void advance_by(duration d) noexcept;
 
-} // namespace cortos::time::simulation
+} // namespace cyros::time::simulation
 
 #endif

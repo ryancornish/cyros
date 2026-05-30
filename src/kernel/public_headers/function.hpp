@@ -1,11 +1,11 @@
-#ifndef CORTOS_FUNCTION_HPP
-#define CORTOS_FUNCTION_HPP
+#ifndef CYROS_FUNCTION_HPP
+#define CYROS_FUNCTION_HPP
 
 #include <array>
 #include <cstddef>
 #include <new>
 
-namespace cortos
+namespace cyros
 {
 
 /* ============================================================================
@@ -259,6 +259,6 @@ function<Ret(Args...), InlineSize, Policy>::virtual_table_impl<F, Heap>::table{
    .destroy = &virtual_table_impl::destroy
 };
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_FUNCTION_HPP
+#endif // CYROS_FUNCTION_HPP

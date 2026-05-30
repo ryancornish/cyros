@@ -16,4 +16,4 @@ config_header = "empty_main.hpp"
 enable = []
 
 [output]
-archive = "libcortos.a"
+archive = "libcyros.a"

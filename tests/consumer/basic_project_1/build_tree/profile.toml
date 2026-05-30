@@ -16,4 +16,4 @@ config_header = "basic_project_1.hpp"
 enable = []
 
 [output]
-archive = "libcortos.a"
+archive = "libcyros.a"

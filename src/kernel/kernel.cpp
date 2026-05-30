@@ -1,9 +1,9 @@
 // todo split up the implementation!
 
-#include <cortos/kernel/kernel.hpp>
-#include <cortos/port/port.h>
-#include <cortos/port/port_traits.h>
-#include <cortos/config/config.hpp>
+#include <cyros/kernel/kernel.hpp>
+#include <cyros/port/port.h>
+#include <cyros/port/port_traits.h>
+#include <cyros/config/config.hpp>
 
 #include "scheduler.hpp"
 #include "threading_subsystem.hpp"
@@ -18,12 +18,12 @@
 
 // invariants list:
 // only core x mutates scheduler[x].ready_matrix, current_thread, blocked lists, etc.
-// cross-core ops must go through scheduler::post_to_inbox() + cortos_port_send_reschedule_ipi(core).
+// cross-core ops must go through scheduler::post_to_inbox() + cyros_port_send_reschedule_ipi(core).
 // spinlocks disable preemption for the duration of the lock (via the port's
 // preemption control); they do not mask interrupts.
 
 
-namespace cortos
+namespace cyros
 {
 
 static void reschedule_this_core();
@@ -69,7 +69,7 @@ public:
 
    [[nodiscard]] scheduler& scheduler_for_this_core() noexcept
    {
-      return scheduler_for_core(cortos_port_get_core_id());
+      return scheduler_for_core(cyros_port_get_core_id());
    }
 
    [[nodiscard]] scheduler& scheduler_for_time_core() noexcept
@@ -84,9 +84,9 @@ public:
 
    void initialise() noexcept
    {
-      CORTOS_ASSERT(!initialised); // cannot invoke kernel::initialise twice (without finalising down in between)
+      CYROS_ASSERT(!initialised); // cannot invoke kernel::initialise twice (without finalising down in between)
 
-      cortos_port_init(reschedule_this_core);
+      cyros_port_init(reschedule_this_core);
 
       for (auto& scheduler : schedulers) {
          scheduler.init_idle_thread();
@@ -96,17 +96,17 @@ public:
 
    void start() noexcept
    {
-      CORTOS_ASSERT(initialised); // kernel::initialise() must be called first
-      CORTOS_ASSERT(active_threads > 0); // starting the kernel with no registered threads is not allowed
+      CYROS_ASSERT(initialised); // kernel::initialise() must be called first
+      CYROS_ASSERT(active_threads > 0); // starting the kernel with no registered threads is not allowed
 
       running.store(true, std::memory_order_release);
 
-      cortos_port_start_cores(config::cores, core_entry);
+      cyros_port_start_cores(config::cores, core_entry);
    }
 
    void finalise() noexcept
    {
-      CORTOS_ASSERT(initialised.load(std::memory_order_relaxed)); // in theory there shouldn't be anything to reset yet... so why was this invoked? smells buggy
+      CYROS_ASSERT(initialised.load(std::memory_order_relaxed)); // in theory there shouldn't be anything to reset yet... so why was this invoked? smells buggy
 
       running.store(false, std::memory_order_relaxed);
       thread_id_generator.store(1, std::memory_order_relaxed);
@@ -135,7 +135,7 @@ public:
             found = true;
          }
       }
-      CORTOS_ASSERT(found); // thread affinity mask allows no cores
+      CYROS_ASSERT(found); // thread affinity mask allows no cores
 
       schedulers.at(best_core).pin_thread(tcb);
    }
@@ -152,13 +152,13 @@ public:
       if (set_thread_ready(tcb) == schedule_hint::warranted) {
          // Weak request: the registering thread is not itself blocking, it is
          // only flagging that a higher-priority thread became ready.
-         cortos_port_pend_reschedule();
+         cyros_port_pend_reschedule();
       }
    }
 
    void unregister_thread() noexcept
    {
-      CORTOS_ASSERT(active_threads.load(std::memory_order_relaxed) != 0);
+      CYROS_ASSERT(active_threads.load(std::memory_order_relaxed) != 0);
       active_threads.fetch_sub(1, std::memory_order_seq_cst);
    }
 
@@ -176,7 +176,7 @@ public:
    */
    schedule_hint set_thread_ready(thread_control_block& tcb) noexcept
    {
-      CORTOS_ASSERT_OP(tcb.state, !=, thread_control_block::thread_state::terminated);
+      CYROS_ASSERT_OP(tcb.state, !=, thread_control_block::thread_state::terminated);
 
       auto& scheduler = scheduler_for_core(tcb.pinned_core);
 
@@ -186,7 +186,7 @@ public:
          return schedule_hint::unwarranted;
       }
 
-      auto this_core = cortos_port_get_core_id();
+      auto this_core = cyros_port_get_core_id();
       if (this_core == tcb.pinned_core) {
          scheduler.set_thread_ready(tcb);
 
@@ -198,7 +198,7 @@ public:
             .type = cross_core_request::set_thread_ready,
             .tcb = &tcb
          });
-         CORTOS_ASSERT(posted);
+         CYROS_ASSERT(posted);
       }
       return schedule_hint::unwarranted;
    }
@@ -229,7 +229,7 @@ void thread_launcher(void* tcb_ptr)
 {
    auto* tcb = static_cast<thread_control_block*>(tcb_ptr);
 
-   cortos_port_set_tls_pointer(tcb); // for now point tls to the tcb, but in future, tls sits just after tcb
+   cyros_port_set_tls_pointer(tcb); // for now point tls to the tcb, but in future, tls sits just after tcb
 
    tcb->entry();
 
@@ -241,26 +241,26 @@ void thread_launcher(void* tcb_ptr)
    if (tcb->id == scheduler::idle_thread_id) return; // idle threads are not apart of the same bookkeeping
 
    kernel_instance.unregister_thread();
-   cortos_port_thread_exit();
+   cyros_port_thread_exit();
 }
 
 void idle_task()
 {
    while (kernel_instance.is_running()) {
-      cortos_port_idle();
+      cyros_port_idle();
       // Weak request: idle never blocks, it only asks the scheduler to
       // re-check whether any thread has become ready.
-      cortos_port_pend_reschedule();
+      cyros_port_pend_reschedule();
    }
 }
 
 schedule_hint wait_node::wake_thread(bool acquired) const noexcept
 {
-   CORTOS_ASSERT(tcb != nullptr);
-   CORTOS_ASSERT(active_group != nullptr);
-   CORTOS_ASSERT(active_waitable != nullptr);
-   CORTOS_ASSERT(index != invalid_index);
-   CORTOS_ASSERT_OP(tcb->state, ==, thread_control_block::thread_state::blocked);
+   CYROS_ASSERT(tcb != nullptr);
+   CYROS_ASSERT(active_group != nullptr);
+   CYROS_ASSERT(active_waitable != nullptr);
+   CYROS_ASSERT(index != invalid_index);
+   CYROS_ASSERT_OP(tcb->state, ==, thread_control_block::thread_state::blocked);
 
    if (!active_group->try_win(static_cast<int>(index), acquired)) {
       return schedule_hint::unwarranted; // lost
@@ -292,7 +292,7 @@ thread::thread(entry_fn&& entry, std::span<std::byte> stack, priority priority, 
 thread::~thread()
 {
    if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty
-   CORTOS_ASSERT(tcb->state == thread_control_block::thread_state::terminated);
+   CYROS_ASSERT(tcb->state == thread_control_block::thread_state::terminated);
 }
 
 thread::thread(thread&& other) noexcept : tcb(other.tcb)
@@ -309,7 +309,7 @@ thread& thread::operator=(thread&& other) noexcept
 
 void thread::join() noexcept
 {
-   CORTOS_ASSERT(tcb != nullptr);
+   CYROS_ASSERT(tcb != nullptr);
 
    kernel::wait_until([&]{
       return tcb->termination.has_terminated();
@@ -322,10 +322,10 @@ void spinlock::lock()
    // A spinlock disables preemption (so the holder cannot be switched out
    // mid-section) but does NOT mask interrupts. Preemption control is owned
    // by the port - see port.h "Preemption Control".
-   cortos_port_preempt_disable();
+   cyros_port_preempt_disable();
    while (flag.test_and_set(std::memory_order_acquire)) {
       // busy-wait with cpu yield hint
-      cortos_port_cpu_relax();
+      cyros_port_cpu_relax();
    }
 }
 
@@ -334,7 +334,7 @@ void spinlock::unlock()
    flag.clear(std::memory_order_release);
    // Re-enabling preemption is a contract safe point: if a reschedule was
    // pended while the lock was held, the port resolves it here.
-   cortos_port_preempt_enable();
+   cyros_port_preempt_enable();
 }
 
 namespace kernel
@@ -367,8 +367,8 @@ std::uint32_t active_threads() noexcept
 
 waitable::result wait_for_any(std::span<waitable* const> waitables)
 {
-   CORTOS_ASSERT(!waitables.empty());
-   CORTOS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
+   CYROS_ASSERT(!waitables.empty());
+   CYROS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
 
    auto& scheduler = kernel_instance.scheduler_for_this_core();
    {
@@ -385,9 +385,9 @@ waitable::result wait_for_any(std::span<waitable* const> waitables)
 
 waitable::result wait_until(waitable::predicate predicate, std::span<waitable* const> waitables)
 {
-   CORTOS_ASSERT(!waitables.empty());
-   CORTOS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
-   for (auto* w : waitables) CORTOS_ASSERT(w != nullptr);
+   CYROS_ASSERT(!waitables.empty());
+   CYROS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
+   for (auto* w : waitables) CYROS_ASSERT(w != nullptr);
 
    waitable::result result{.index = -1, .acquired = false};
 
@@ -429,7 +429,7 @@ namespace this_thread
 
 [[nodiscard]] std::uint32_t core_id() noexcept
 {
-   return cortos_port_get_core_id();
+   return cyros_port_get_core_id();
 }
 
 [[noreturn]] void thread_exit()
@@ -442,9 +442,9 @@ void yield()
 {
    // Strong request: an explicit yield deliberately gives up the CPU and
    // relies on the reschedule round-trip having completed on return.
-   cortos_port_thread_yield();
+   cyros_port_thread_yield();
 }
 
 }  // namespace this_thread
 
-}  // namespace cortos
+}  // namespace cyros

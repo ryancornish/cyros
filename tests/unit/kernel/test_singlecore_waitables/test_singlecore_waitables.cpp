@@ -1,6 +1,6 @@
-#include <cortos/kernel/kernel.hpp>
-#include <cortos/config/config.hpp>
-#include <cortos/port/port_traits.h>
+#include <cyros/kernel/kernel.hpp>
+#include <cyros/config/config.hpp>
+#include <cyros/port/port_traits.h>
 
 #include "gtest/gtest.h"
 
@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <limits>
 
-using namespace cortos;
+using namespace cyros;
 
 static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
@@ -82,8 +82,8 @@ protected:
 TEST_F(SingleCoreWaitables_Test,
        GivenOneWaiterOnSingleWaitable_WhenSignalled_ThenWaitReturnsIndex0AndAcquiredTrue)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
    // GIVEN:
 
@@ -130,8 +130,8 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenOneWaiterOnSingleWaitable_WhenSignalledWithAcquiredFalse_ThenWaitReturnsAcquiredFalse)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
    // GIVEN:
 
@@ -173,8 +173,8 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenWaitForAnyOnTwoWaitables_WhenSecondIsSignalled_ThenWinnerIndexIs1AndLoserIsRemoved)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
    // GIVEN:
 
@@ -225,9 +225,9 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenTwoWaitersDifferentPriority_WhenSignalOneTwice_ThenHighestPriorityWakesFirst)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> hi_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> lo_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> hi_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> lo_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
    // GIVEN:
 
@@ -308,10 +308,10 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenThreeWaiters_WhenSignalAll_ThenAllThreadsWakeAndHooksFireForEach)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> a_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> b_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> c_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> a_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> b_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> c_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
 
    // GIVEN:
@@ -346,8 +346,8 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenWaiter_WhenItBlocks_ThenWaiterSnapshotMatchesThreadIdentityAndPriority)
 {
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
    // GIVEN:
 

@@ -1,5 +1,5 @@
 /**
- * @file cortos/port_traits.h
+ * @file cyros/port_traits.h
  * @brief Port-specific compile-time traits.
  *
  * Each port must provide exactly one `port_traits.h` defining the constants
@@ -11,63 +11,63 @@
  * must statically verify that its actual types and behaviour match them.
  */
 
-#ifndef CORTOS_PORT_TRAITS_H
-#define CORTOS_PORT_TRAITS_H
+#ifndef CYROS_PORT_TRAITS_H
+#define CYROS_PORT_TRAITS_H
 
 /**
- * @def CORTOS_PORT_CONTEXT_SIZE
+ * @def CYROS_PORT_CONTEXT_SIZE
  * @brief Size of `port_context_t` in bytes.
  */
-#define CORTOS_PORT_CONTEXT_SIZE  40
+#define CYROS_PORT_CONTEXT_SIZE  40
 
 /**
- * @def CORTOS_PORT_CONTEXT_ALIGN
+ * @def CYROS_PORT_CONTEXT_ALIGN
  * @brief Alignment requirement of `port_context_t` in bytes.
  *
  * Must be a power of two.
  */
-#define CORTOS_PORT_CONTEXT_ALIGN 8
+#define CYROS_PORT_CONTEXT_ALIGN 8
 
 /**
- * @def CORTOS_PORT_STACK_ALIGN
+ * @def CYROS_PORT_STACK_ALIGN
  * @brief Required alignment of all thread stacks in bytes.
  *
  * Must be a power of two.
  */
-#define CORTOS_PORT_STACK_ALIGN 16
+#define CYROS_PORT_STACK_ALIGN 16
 
 /**
- * @def CORTOS_PORT_CACHE_LINE
+ * @def CYROS_PORT_CACHE_LINE
  * @brief Cache line size in bytes.
  *
  * Used for false-sharing avoidance.
  */
-#define CORTOS_PORT_CACHE_LINE 64
+#define CYROS_PORT_CACHE_LINE 64
 
 /**
- * @def CORTOS_PORT_CORE_COUNT
+ * @def CYROS_PORT_CORE_COUNT
  * @brief Number of cores supported by this port.
  */
-#define CORTOS_PORT_CORE_COUNT 4
+#define CYROS_PORT_CORE_COUNT 4
 
 /**
- * @def CORTOS_PORT_SCHEDULING_TYPE
+ * @def CYROS_PORT_SCHEDULING_TYPE
  * @brief Scheduling model implemented by this port.
  *
  * Must be one of:
  *  - `SchedulerFlavour::Preemptive`  (1)
  *  - `SchedulerFlavour::Cooperative` (2)
  */
-#define CORTOS_PORT_SCHEDULING_TYPE  2 /* cooperative */
+#define CYROS_PORT_SCHEDULING_TYPE  2 /* cooperative */
 
 /**
- * @def CORTOS_PORT_ENVIRONMENT
+ * @def CYROS_PORT_ENVIRONMENT
  * @brief Execution environment for this port.
  *
  * Must be one of:
  *  - `Environment::BareMetal`      (1)
  *  - `Environment::BareSimulation` (2)
  */
-#define CORTOS_PORT_ENVIRONMENT  2 /* simulation */
+#define CYROS_PORT_ENVIRONMENT  2 /* simulation */
 
-#endif /* CORTOS_PORT_TRAITS_H */
+#endif /* CYROS_PORT_TRAITS_H */

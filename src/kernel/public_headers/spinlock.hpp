@@ -1,9 +1,9 @@
-#ifndef CORTOS_SPINLOCK_HPP
-#define CORTOS_SPINLOCK_HPP
+#ifndef CYROS_SPINLOCK_HPP
+#define CYROS_SPINLOCK_HPP
 
 #include <atomic>
 
-namespace cortos
+namespace cyros
 {
 
 /**
@@ -101,6 +101,6 @@ private:
    spinlock& lock;
 };
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_SPINLOCK_HPP
+#endif // CYROS_SPINLOCK_HPP

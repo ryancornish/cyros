@@ -1,13 +1,13 @@
-#ifndef CORTOS_WAIT_SUBSYSTEM_HPP
-#define CORTOS_WAIT_SUBSYSTEM_HPP
+#ifndef CYROS_WAIT_SUBSYSTEM_HPP
+#define CYROS_WAIT_SUBSYSTEM_HPP
 
-#include <cortos/kernel/waitable.hpp>
-#include <cortos/config/config.hpp>
-#include <cortos/port/port.h>
+#include <cyros/kernel/waitable.hpp>
+#include <cyros/config/config.hpp>
+#include <cyros/port/port.h>
 
 #include <limits>
 
-namespace cortos
+namespace cyros
 {
 
 struct thread_control_block;
@@ -134,7 +134,7 @@ public:
     */
    wait_node* alloc(wait_group& g, waitable& w, uint8_t index) noexcept
    {
-      CORTOS_ASSERT(index != wait_node::invalid_index);
+      CYROS_ASSERT(index != wait_node::invalid_index);
 
       if (free_mask == 0) return nullptr;
 
@@ -145,7 +145,7 @@ public:
 
       // Node should be inactive if the mask said it was free.
       // If not, we have a bug in free()/mask management.
-      CORTOS_ASSERT(!node.active);
+      CYROS_ASSERT(!node.active);
 
       node.reset();
       node.active   = true;
@@ -164,12 +164,12 @@ public:
    {
       std::ptrdiff_t index = &node - nodes.data();
 
-      CORTOS_ASSERT1(0 <= index && static_cast<std::size_t>(index) < N, index); // Node not from this pool
+      CYROS_ASSERT1(0 <= index && static_cast<std::size_t>(index) < N, index); // Node not from this pool
 
       auto& n = nodes[static_cast<std::size_t>(index)];
-      CORTOS_ASSERT(n.active); // If error: You are freeing an inactive node.
+      CYROS_ASSERT(n.active); // If error: You are freeing an inactive node.
 
-      CORTOS_ASSERT_OP(n.slot, ==, static_cast<uint8_t>(index));
+      CYROS_ASSERT_OP(n.slot, ==, static_cast<uint8_t>(index));
       n.reset();
       free_mask |= (1u << static_cast<uint32_t>(index));
    }
@@ -237,6 +237,6 @@ struct wait_group
    }
 };
 
-} // namespace cortos
+} // namespace cyros
 
-#endif // CORTOS_WAIT_SUBSYSTEM_HPP
+#endif // CYROS_WAIT_SUBSYSTEM_HPP

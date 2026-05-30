@@ -1,32 +1,32 @@
-#include <cortos/kernel/kernel.hpp>
-#include <cortos/port/port.h>
-#include <cortos/port/port_traits.h>
-#include <cortos/time/time.hpp>
+#include <cyros/kernel/kernel.hpp>
+#include <cyros/port/port.h>
+#include <cyros/port/port_traits.h>
+#include <cyros/time/time.hpp>
 
 #include <print>
 #include <cstddef>
 #include <array>
 
-alignas(CORTOS_PORT_STACK_ALIGN) static std::array<std::byte, 4096> user_stack;
+alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 4096> user_stack;
 
 int main()
 {
-   cortos::kernel::initialise();
+   cyros::kernel::initialise();
 
-   std::println("CoRTOS initialised.");
+   std::println("Cyros initialised.");
 
-   cortos::thread user_thread(
+   cyros::thread user_thread(
       [](){
          std::println("User thread executed.");
       },
       user_stack,
-      cortos::thread::priority(0),
-      cortos::any_core
+      cyros::thread::priority(0),
+      cyros::any_core
    );
 
-   cortos::kernel::start();
+   cyros::kernel::start();
 
-   std::println("CoRTOS Finished.");
+   std::println("Cyros Finished.");
 
-   cortos::kernel::finalise();
+   cyros::kernel::finalise();
 }

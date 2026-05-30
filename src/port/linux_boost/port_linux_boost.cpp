@@ -6,18 +6,18 @@
  * It simulates embedded behavior (stack-based context switching) while
  * running on Linux for development and testing.
  *
- * SMP support: Each pthread represents a "core". Use cortos_port_get_core_id()
+ * SMP support: Each pthread represents a "core". Use cyros_port_get_core_id()
  * to determine which simulated core is running.
  *
  * Reschedule model
  * ----------------
  * This port implements the two-operation reschedule contract from port.h:
  *
- *   cortos_port_thread_yield()    - strong guarantee, synchronous. Resumes the
+ *   cyros_port_thread_yield()    - strong guarantee, synchronous. Resumes the
  *                                   scheduler fiber immediately. Caller must be
  *                                   in thread context at baseline priority.
  *
- *   cortos_port_pend_reschedule() - weak guarantee, deferred-safe. If invoked
+ *   cyros_port_pend_reschedule() - weak guarantee, deferred-safe. If invoked
  *                                   at baseline priority it resolves now (same
  *                                   fiber resume). If invoked while the core is
  *                                   kernel-masked it sets a per-core
@@ -35,13 +35,13 @@
  * --------------------------
  * The flag is drained at whichever safe point is reached last - that is,
  * whenever a counter returns to zero and the OTHER counter is already zero:
- *   - cortos_port_irq_restore()  reaching interrupt depth 0, and
- *   - cortos_port_preempt_enable() reaching preempt depth 0.
+ *   - cyros_port_irq_restore()  reaching interrupt depth 0, and
+ *   - cyros_port_preempt_enable() reaching preempt depth 0.
  * Both paths funnel through resolve_pending_reschedule_if_baseline(), which
  * only acts when the full baseline condition holds.
  */
 
-#include <cortos/port/port.h>
+#include <cyros/port/port.h>
 
 #include <boost/context/fiber.hpp>
 #include <boost/context/preallocated.hpp>
@@ -64,24 +64,24 @@
  * Port Context Structure
  * ========================================================================= */
 
-struct cortos_port_context
+struct cyros_port_context
 {
    boost::context::fiber thread;  // Thread fiber (owned by scheduler when idle)
    void*                 stack_top;
    size_t                stack_size;
-   cortos_port_entry_t   entry;
+   cyros_port_entry_t   entry;
    void*                 arg;
 };
 
 // Verify that port_traits.h constants are correct
-static_assert(sizeof(cortos_port_context) == CORTOS_PORT_CONTEXT_SIZE,
-              "CORTOS_PORT_CONTEXT_SIZE mismatch - adjust in port_traits.h");
-static_assert(alignof(cortos_port_context) == CORTOS_PORT_CONTEXT_ALIGN,
-              "CORTOS_PORT_CONTEXT_ALIGN mismatch - adjust in port_traits.h");
-static_assert((CORTOS_PORT_STACK_ALIGN & (CORTOS_PORT_STACK_ALIGN - 1)) == 0,
-              "CORTOS_PORT_STACK_ALIGN must be a power of two");
-static_assert(CORTOS_PORT_SCHEDULING_TYPE == 2);
-static_assert(CORTOS_PORT_ENVIRONMENT == 2);
+static_assert(sizeof(cyros_port_context) == CYROS_PORT_CONTEXT_SIZE,
+              "CYROS_PORT_CONTEXT_SIZE mismatch - adjust in port_traits.h");
+static_assert(alignof(cyros_port_context) == CYROS_PORT_CONTEXT_ALIGN,
+              "CYROS_PORT_CONTEXT_ALIGN mismatch - adjust in port_traits.h");
+static_assert((CYROS_PORT_STACK_ALIGN & (CYROS_PORT_STACK_ALIGN - 1)) == 0,
+              "CYROS_PORT_STACK_ALIGN must be a power of two");
+static_assert(CYROS_PORT_SCHEDULING_TYPE == 2);
+static_assert(CYROS_PORT_ENVIRONMENT == 2);
 
 /* ============================================================================
  * Port MultiCore Structure
@@ -98,7 +98,7 @@ struct cpu_core
 {
    pthread_t pthread{}; // @note This is null/unused for core0
    uint32_t  core_id{}; // Index from 0... num cores
-   cortos_port_core_entry_t entry{};
+   cyros_port_core_entry_t entry{};
    boost::context::fiber scheduler_fiber;
 
    /**
@@ -128,7 +128,7 @@ public:
    using const_iterator = const cpu_core*;
 
    constexpr cpu_core_array() = default;
-   explicit cpu_core_array(size_t count, cortos_port_core_entry_t core_entry)
+   explicit cpu_core_array(size_t count, cyros_port_core_entry_t core_entry)
       : cores(std::make_unique<cpu_core[]>(count)), count(count)
    {
       for (uint32_t i = 0; i < count; ++i) {
@@ -161,7 +161,7 @@ private:
  * Global & Thread-Local State
  *
  * For SMP simulation, each OS-thread has its own state tracking using
- * thread_local. This is NOT stored in cortos_port_context to prevent
+ * thread_local. This is NOT stored in cyros_port_context to prevent
  * migration issues.
  * ========================================================================= */
 
@@ -170,7 +170,7 @@ struct global_state
 {
    std::atomic<bool>        shutdown_requested{false};
    std::atomic<uint32_t>    active_contexts{0};
-   cortos_port_reschedule_t reschedule_handler{nullptr};
+   cyros_port_reschedule_t reschedule_handler{nullptr};
    cpu_core_array cores;
 
    /// @brief Have any cores been started?
@@ -191,7 +191,7 @@ struct current_core_state
    cpu_core* core{nullptr};
 
    // Non-null when we are currently executing inside a thread fiber.
-   cortos_port_context* current_context{nullptr};
+   cyros_port_context* current_context{nullptr};
 
    // The "caller" fiber for the currently running thread on *this OS-thread*.
    boost::context::fiber thread_caller;
@@ -207,7 +207,7 @@ struct current_core_state
    // scheduler from switching while non-zero; interrupts still flow.
    uint32_t preempt_disable_depth{0};
 
-   // Set by cortos_port_pend_reschedule() when it cannot resolve immediately
+   // Set by cyros_port_pend_reschedule() when it cannot resolve immediately
    // (i.e. the core is kernel-masked). Drained at the next safe point: either
    // irq_restore() reaching interrupt depth 0, or preempt_enable() reaching
    // preempt depth 0 - whichever leaves BOTH counters at zero.
@@ -219,7 +219,7 @@ static thread_local constinit current_core_state current_core;
  * Platform Initialization
  * ========================================================================= */
 
-extern "C" void cortos_port_init(cortos_port_reschedule_t reschedule_handler)
+extern "C" void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
 {
    global.reschedule_handler = reschedule_handler;
 }
@@ -260,24 +260,24 @@ static void resolve_pending_reschedule_if_baseline()
  * non-zero, (simulated) interrupts cannot be delivered.
  * ========================================================================= */
 
-extern "C" void cortos_port_disable_interrupts(void)
+extern "C" void cyros_port_disable_interrupts(void)
 {
    current_core.interrupt_disable_depth++;
 }
 
-extern "C" void cortos_port_enable_interrupts(void)
+extern "C" void cyros_port_enable_interrupts(void)
 {
    if (current_core.interrupt_disable_depth > 0) {
       current_core.interrupt_disable_depth--;
    }
 }
 
-extern "C" bool cortos_port_interrupts_enabled(void)
+extern "C" bool cyros_port_interrupts_enabled(void)
 {
    return current_core.interrupt_disable_depth == 0;
 }
 
-extern "C" uint32_t cortos_port_irq_save(void)
+extern "C" uint32_t cyros_port_irq_save(void)
 {
    // Return previous enabled-state as 1/0 (simple)
    uint32_t prev_enabled = (current_core.interrupt_disable_depth == 0) ? 1u : 0u;
@@ -285,7 +285,7 @@ extern "C" uint32_t cortos_port_irq_save(void)
    return prev_enabled;
 }
 
-extern "C" void cortos_port_irq_restore(uint32_t state)
+extern "C" void cyros_port_irq_restore(uint32_t state)
 {
    (void)state;
    // Unwind one nesting level
@@ -307,14 +307,14 @@ extern "C" void cortos_port_irq_restore(uint32_t state)
  * unaffected.
  * ========================================================================= */
 
-extern "C" void cortos_port_preempt_disable(void)
+extern "C" void cyros_port_preempt_disable(void)
 {
    current_core.preempt_disable_depth++;
 }
 
-extern "C" void cortos_port_preempt_enable(void)
+extern "C" void cyros_port_preempt_enable(void)
 {
-   CORTOS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
+   CYROS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
    current_core.preempt_disable_depth--;
 
    // Preempt depth reaching 0 is one of the contract's safe points: if a
@@ -335,16 +335,16 @@ struct preallocated_stack_noop
    void deallocate(boost::context::stack_context&) noexcept {}
 };
 
-extern "C" void cortos_port_context_init(cortos_port_context_t* context,
+extern "C" void cyros_port_context_init(cyros_port_context_t* context,
                                          void* stack_base,
                                          size_t stack_size,
-                                         cortos_port_entry_t entry,
+                                         cyros_port_entry_t entry,
                                          void* arg)
 {
    global.active_contexts.fetch_add(1, std::memory_order_seq_cst);
 
-   // Construct cortos_port_context_t in place
-   ::new (context) cortos_port_context{
+   // Construct cyros_port_context_t in place
+   ::new (context) cyros_port_context{
       .thread     = {},
       .stack_top  = static_cast<uint8_t*>(stack_base) + stack_size,
       .stack_size = stack_size,
@@ -388,27 +388,27 @@ extern "C" void cortos_port_context_init(cortos_port_context_t* context,
    );
 }
 
-extern "C" void cortos_port_context_destroy(cortos_port_context_t* context)
+extern "C" void cyros_port_context_destroy(cyros_port_context_t* context)
 {
    // Verify fiber has completed
-   CORTOS_ASSERT(!context->thread); // Bug: destroying a live thread
+   CYROS_ASSERT(!context->thread); // Bug: destroying a live thread
 
-   context->~cortos_port_context();
+   context->~cyros_port_context();
 }
 
-extern "C" void cortos_port_switch(cortos_port_context_t* /*from*/, cortos_port_context_t* to)
+extern "C" void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_context_t* to)
 {
-   CORTOS_ASSERT(to->thread); // No context to switch to
+   CYROS_ASSERT(to->thread); // No context to switch to
 
    current_core.current_context = to;
    to->thread = std::move(to->thread).resume();
    current_core.current_context = nullptr;
 }
 
-extern "C" void cortos_port_start_first(cortos_port_context_t* first)
+extern "C" void cyros_port_start_first(cyros_port_context_t* first)
 {
    // Nothing special to be done on the first switch
-   cortos_port_switch(nullptr, first);
+   cyros_port_switch(nullptr, first);
 }
 
 /* ============================================================================
@@ -428,23 +428,23 @@ extern "C" void cortos_port_start_first(cortos_port_context_t* first)
  */
 static void switch_to_scheduler_fiber()
 {
-   CORTOS_ASSERT(current_core.current_context); // not inside a thread fiber
-   CORTOS_ASSERT(current_core.thread_caller);   // no scheduler fiber to resume
+   CYROS_ASSERT(current_core.current_context); // not inside a thread fiber
+   CYROS_ASSERT(current_core.thread_caller);   // no scheduler fiber to resume
    current_core.thread_caller = std::move(current_core.thread_caller).resume();
 }
 
-extern "C" void cortos_port_thread_yield(void)
+extern "C" void cyros_port_thread_yield(void)
 {
    // Strong-guarantee, synchronous. Contract precondition: thread context at
    // baseline priority. Assert it - this port can observe all conditions.
-   CORTOS_ASSERT(current_core.current_context);            // must be a thread
-   CORTOS_ASSERT(current_core.interrupt_disable_depth == 0); // interrupts unmasked
-   CORTOS_ASSERT(current_core.preempt_disable_depth   == 0); // preemption enabled
+   CYROS_ASSERT(current_core.current_context);            // must be a thread
+   CYROS_ASSERT(current_core.interrupt_disable_depth == 0); // interrupts unmasked
+   CYROS_ASSERT(current_core.preempt_disable_depth   == 0); // preemption enabled
 
    switch_to_scheduler_fiber();
 }
 
-extern "C" void cortos_port_pend_reschedule(void)
+extern "C" void cyros_port_pend_reschedule(void)
 {
    // Weak-guarantee, deferred-safe. Callable from any context.
 
@@ -468,9 +468,9 @@ extern "C" void cortos_port_pend_reschedule(void)
    }
 }
 
-extern "C" void cortos_port_thread_exit(void)
+extern "C" void cyros_port_thread_exit(void)
 {
-   CORTOS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
+   CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
    global.active_contexts.fetch_sub(1, std::memory_order_seq_cst);
 }
 
@@ -501,7 +501,7 @@ void cpu_core::start_scheduler()
          bool expected = false;
          if (global.shutdown_requested.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             for (auto& c : global.cores) {
-               cortos_port_send_reschedule_ipi(c.core_id);
+               cyros_port_send_reschedule_ipi(c.core_id);
             }
          }
 
@@ -513,10 +513,10 @@ void cpu_core::start_scheduler()
    scheduler_fiber = std::move(scheduler_fiber).resume();
 }
 
-void cortos_port_start_cores(size_t cores_to_use, cortos_port_core_entry_t entry)
+void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
 {
-   CORTOS_ASSERT(cores_to_use > 0); // Invoking with 0 cores_to_use is invalid
-   CORTOS_ASSERT(cores_to_use <= CORTOS_PORT_CORE_COUNT);
+   CYROS_ASSERT(cores_to_use > 0); // Invoking with 0 cores_to_use is invalid
+   CYROS_ASSERT(cores_to_use <= CYROS_PORT_CORE_COUNT);
 
    global.cores = cpu_core_array(cores_to_use, entry);
 
@@ -557,18 +557,18 @@ void cortos_port_start_cores(size_t cores_to_use, cortos_port_core_entry_t entry
    global.reset();
 }
 
-extern "C" uint32_t cortos_port_get_core_id(void)
+extern "C" uint32_t cyros_port_get_core_id(void)
 {
    // If no cores have been explicitly launched yet, then we must be on core0
    if (!global.cores_launched()) return 0;
 
-   CORTOS_ASSERT(current_core.core != nullptr);
+   CYROS_ASSERT(current_core.core != nullptr);
    return current_core.core->core_id;
 }
 
-extern "C" void cortos_port_send_reschedule_ipi(uint32_t core_id)
+extern "C" void cyros_port_send_reschedule_ipi(uint32_t core_id)
 {
-   CORTOS_ASSERT_OP(core_id, <, global.cores.size());
+   CYROS_ASSERT_OP(core_id, <, global.cores.size());
 
    auto& core_poke = global.cores[core_id].core_poke;
 
@@ -584,7 +584,7 @@ extern "C" void cortos_port_send_reschedule_ipi(uint32_t core_id)
       // Targeting our own core from within a thread fiber: an IPI is a weak,
       // deferred-safe request - route through pend_reschedule(), not a forced
       // synchronous yield.
-      cortos_port_pend_reschedule();
+      cyros_port_pend_reschedule();
    }
 }
 
@@ -592,12 +592,12 @@ extern "C" void cortos_port_send_reschedule_ipi(uint32_t core_id)
  * Thread-Local Storage
  * ========================================================================= */
 
-extern "C" void cortos_port_set_tls_pointer(void* tls_base)
+extern "C" void cyros_port_set_tls_pointer(void* tls_base)
 {
    current_core.tls_pointer = tls_base;
 }
 
-extern "C" void* cortos_port_get_tls_pointer(void)
+extern "C" void* cyros_port_get_tls_pointer(void)
 {
    return current_core.tls_pointer;
 }
@@ -619,42 +619,42 @@ struct time_state
    std::atomic<uint64_t>            now{0};
    std::atomic<uint64_t> armed_deadline{UINT64_MAX};
 
-   std::atomic<cortos_port_isr_handler_t> isr{nullptr};
+   std::atomic<cyros_port_isr_handler_t> isr{nullptr};
    std::atomic<void*>                 isr_arg{nullptr};
 };
 static constinit time_state time_instance;
 
-extern "C" void cortos_port_time_setup(uint32_t tick_hz)
+extern "C" void cyros_port_time_setup(uint32_t tick_hz)
 {
    (void)tick_hz;
 }
 
-extern "C" uint64_t cortos_port_time_now(void)
+extern "C" uint64_t cyros_port_time_now(void)
 {
    return time_instance.now.load(std::memory_order_relaxed);
 }
 
-extern "C" uint64_t cortos_port_time_freq_hz(void)
+extern "C" uint64_t cyros_port_time_freq_hz(void)
 {
    return 1'000'000ull; // 1 tick = 1 us (recommend)
 }
 
-extern "C" void cortos_port_time_reset(uint64_t t)
+extern "C" void cyros_port_time_reset(uint64_t t)
 {
    time_instance.now.store(t, std::memory_order_release);
    time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
 }
 
-extern "C" void cortos_port_time_register_isr_handler(cortos_port_isr_handler_t h, void* arg)
+extern "C" void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t h, void* arg)
 {
    time_instance.isr_arg.store(arg, std::memory_order_relaxed);
    time_instance.isr.store(h, std::memory_order_release);
 }
 
-extern "C" void cortos_port_time_irq_enable(void)  { time_instance.irq_enabled.store(true,  std::memory_order_release); }
-extern "C" void cortos_port_time_irq_disable(void) { time_instance.irq_enabled.store(false, std::memory_order_release); }
+extern "C" void cyros_port_time_irq_enable(void)  { time_instance.irq_enabled.store(true,  std::memory_order_release); }
+extern "C" void cyros_port_time_irq_disable(void) { time_instance.irq_enabled.store(false, std::memory_order_release); }
 
-extern "C" void cortos_port_time_arm(uint64_t deadline)
+extern "C" void cyros_port_time_arm(uint64_t deadline)
 {
    // Keep earliest
    uint64_t cur = time_instance.armed_deadline.load(std::memory_order_relaxed);
@@ -665,18 +665,18 @@ extern "C" void cortos_port_time_arm(uint64_t deadline)
    {}
 }
 
-extern "C" void cortos_port_time_disarm(void)
+extern "C" void cyros_port_time_disarm(void)
 {
    time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
 }
 
 // Linux-only helper for tests
-extern "C" void cortos_port_time_advance(uint64_t delta)
+extern "C" void cyros_port_time_advance(uint64_t delta)
 {
    time_instance.now.fetch_add(delta, std::memory_order_release);
 }
 
-extern "C" void cortos_port_send_time_ipi(uint32_t /*core_id*/)
+extern "C" void cyros_port_send_time_ipi(uint32_t /*core_id*/)
 {
    // SMP simulation TODO: poke target core thread.
 }
@@ -685,7 +685,7 @@ extern "C" void cortos_port_send_time_ipi(uint32_t /*core_id*/)
  * CPU Hints & Idle
  * ========================================================================= */
 
-extern "C" void cortos_port_cpu_relax(void)
+extern "C" void cyros_port_cpu_relax(void)
 {
    // CPU yield hint for busy-wait loops
 #if defined(__x86_64__) || defined(__i386__)
@@ -695,9 +695,9 @@ extern "C" void cortos_port_cpu_relax(void)
 #endif
 }
 
-extern "C" void cortos_port_idle(void)
+extern "C" void cyros_port_idle(void)
 {
-   std::printf("(CORE %d) cortos_port_idle()\n", current_core.core->core_id);
+   std::printf("(CORE %d) cyros_port_idle()\n", current_core.core->core_id);
    auto& core_poke = global.cores[current_core.core->core_id].core_poke;
 
    // Fast path: don't sleep if already pending.
@@ -749,7 +749,7 @@ static void print_formatted_context(char const* file, int target_line, int range
    }
 }
 
-extern "C" void cortos_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
+extern "C" void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
 {
    std::printf("KERNEL PANIC at %s:%d\n", file_optional, line_optional);
    print_formatted_context(file_optional, line_optional);
@@ -757,7 +757,7 @@ extern "C" void cortos_port_system_error(uintptr_t auxilary1, uintptr_t auxilary
    std::terminate();
 }
 
-extern "C" void cortos_port_breakpoint(void)
+extern "C" void cyros_port_breakpoint(void)
 {
 #if defined(__x86_64__) || defined(__i386__)
    __asm__ __volatile__("int3");
@@ -768,7 +768,7 @@ extern "C" void cortos_port_breakpoint(void)
 #endif
 }
 
-extern "C" void* cortos_port_get_stack_pointer(void)
+extern "C" void* cyros_port_get_stack_pointer(void)
 {
    void* sp;
 #if defined(__x86_64__)
