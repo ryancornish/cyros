@@ -1,42 +1,85 @@
 #ifndef CYROS_WAITABLE_HPP
 #define CYROS_WAITABLE_HPP
 
-#include <cyros/kernel/function.hpp>
 #include <cyros/kernel/thread.hpp>
+#include <cyros/kernel/function.hpp>
 #include <cyros/kernel/spinlock.hpp>
 
-#include <type_traits>
+#include <cstddef>
+#include <cstdint>
+#include <span>
 
 namespace cyros
 {
 
-/**
- * @brief Base class for objects that can block threads
+/* ============================================================================
+ * waitable - kernel base class for blockable objects
  *
- * waitable is inherited by synchronization primitives (Mutex, Semaphore, etc.)
- * and time-aware objects (Timer). It provides hooks for custom behavior when
- * threads block/wake on the object.
+ * Inherit from waitable to make your object parkable. The base class owns
+ * a private wait_queue and exposes:
+ *   - block()             : stateless park; wake on any signal (caller accepts
+ *                           the possibility of missed events - see below)
+ *   - block_until(pred)   : park until a caller-supplied predicate holds
+ *   - wake_one/wake_all   : protected; for derived classes to signal waiters
+ *   - is_satisfied(self)  : virtual; overridden by derived primitives so
+ *                           block_on_any can poll them
  *
- * Threads do NOT call methods on waitable directly. Instead, use the free
- * functions kernel::wait_for() and kernel::wait_for_any().
+ * Block-on-any is provided as a free function (block_on_any) that is a
+ * friend of waitable.
  *
- * Example (Timer in libcyros):
- *   class Timer : public waitable
- *   {
- *      time_point wakeup_time;
- *      // TimeDriver calls wake_one() when time expires
- *   };
+ * Composition vs inheritance
+ * --------------------------
+ * Inherit waitable when your object IS something threads block ON
+ * (mutex, semaphore, thread-termination, event, timer-source). Use plain
+ * composition - an waitable member - when your object merely USES blocking
+ * internally without being a wait target itself.
  *
- *   Timer timer;
- *   Mutex mutex;
- *   auto result = kernel::wait_for_any({&mutex, &timer});
- *   // Woken by whichever fired first
- */
+ * The lost-wakeup problem and the two-phase block
+ * -----------------------------------------------
+ * A thread cannot simply "check, then park": between the check and the park,
+ * another context may signal the condition, and the wakeup is lost. waitable
+ * solves this with a two-phase block performed internally by block_until():
+ *
+ *   1. arm   : record intent to block, under the queue lock. Any signal
+ *              AFTER this point is guaranteed to reach the caller.
+ *   2. check : evaluate the predicate. If true, abandon the block.
+ *   3. park  : commit to blocking. A signal that arrived since arming is
+ *              honoured, not lost. Loops on spurious wakeup.
+ *
+ * The raw three-phase primitives are NOT exposed.
+ *
+ * Spurious wakeups
+ * ----------------
+ * A woken thread is NOT guaranteed that its condition holds: the resource may
+ * have been consumed by a higher-priority waiter, or by a fresh caller racing
+ * in, before the woken thread runs. block_until() and block_on_any() handle
+ * this by re-checking and re-blocking transparently. This is intrinsic to all
+ * blocking primitives (cf. the mandatory while-loop around pthread_cond_wait)
+ * and is not a Cyros-specific cost.
+ *
+ * Barging
+ * -------
+ * waitable is BARGE-PERMITTING by design: a wake does not reserve the
+ * resource for the woken thread, so a fresh thread may acquire it between
+ * the wake and the woken thread running. This is cheap, high-throughput, and
+ * sufficient for many primitives (counting semaphore, event, join). If your
+ * primitive requires strict, barge-free, priority-fair handoff (typically a
+ * mutex that must avoid priority inversion), build it on handoff_queue
+ * instead, which packages that harder guarantee. Choose waitable for speed
+ * and simplicity; choose handoff_queue when fairness is a correctness
+ * requirement.
+ *
+ * Concurrency & ISR safety
+ * ------------------------
+ * wake_one() and wake_all() are safe to call from ISR context. A wake from
+ * an ISR (or any context that cannot synchronously switch) defers its
+ * reschedule via the weak reschedule contract - see reschedule_policy. List
+ * mutation is protected by a per-queue lock; the queue is safe under SMP
+ * and against concurrent block()/wake() on different cores.
+ * ========================================================================= */
 class waitable
 {
 public:
-   using predicate = function<bool(), 64, heap_policy::no_heap>;
-
    /**
     * @brief Caller's instruction for whether signalling should trigger a
     *        reschedule on the *local* core.
@@ -48,145 +91,101 @@ public:
       always,    ///< Always trigger a local reschedule
    };
 
-   /**
-   * @brief Result of a wait operation
-   *
-   * Returned from `wait_for()` and `wait_for_any()` to indicate which `waitable`
-   * triggered the wake-up and whether the thread acquired a resource.
-   */
-   struct result
-   {
-      int  index{-1};       ///< Index of waitable that triggered (-1 if none)
-      bool acquired{false}; ///< True if resource was acquired (e.g., mutex locked)
-   };
-   static_assert(std::is_trivially_copyable_v<waitable::result>, "waitable::result must be trivially copyable");
+   virtual ~waitable();
 
-   /**
-   * @brief Snapshot of a thread waiting on a waitable
-   *
-   * waiter is a lightweight, read-only snapshot of a thread at the moment it
-   * blocks on or is removed from a waitable. It contains no ownership or control
-   * semantics and is safe to copy and store.
-   */
-   struct waiter
-   {
-      thread::id       id;                  ///< Unique thread identifier
-      thread::priority base_priority;       ///< Thread's base (static) priority
-      thread::priority effective_priority;  ///< Thread's effective priority at snapshot time
-      std::uint32_t    pinned_core;         ///< Core the thread is pinned to
-      core_affinity     affinity;            ///< Core affinity mask
-
-      /**
-      * @brief Compare priority against another waiter
-      * @return true if this waiter has higher scheduling priority than rhs
-      */
-      [[nodiscard]] constexpr bool higher_priority_than(waiter const& rhs) const noexcept
-      {
-         return effective_priority.val < rhs.effective_priority.val;
-      }
-   };
-   static_assert(std::is_trivially_copyable_v<waitable::waiter>, "waitable::waiter must be trivially copyable");
-
-   virtual ~waitable() = default;
-
-   waitable(waitable const&)            = delete;
-   waitable& operator=(waitable const&) = delete;
-   waitable(waitable&&)            = delete;
+   waitable(waitable&&) = delete;
+   waitable(waitable const&) = delete;
    waitable& operator=(waitable&&) = delete;
-
-   /**
-    * @brief Check if any threads are waiting
-    * @return true if wait queue is empty, false if threads are waiting
-    */
-   [[nodiscard]] bool empty() const noexcept;
-
-   /**
-    * @brief Signal one waiting thread (highest priority)
-    * @param acquired True if signalled thread acquired the resource (e.g., mutex lock)
-    * @param policy Whether/when to trigger a local reschedule (default:
-    *               reschedule_policy::automatic, correct for normal callers).
-    *
-    * Moves the highest-priority waiting thread to the ready queue.
-    * If no threads are waiting, this is a no-op.
-    *
-    * The 'acquired' parameter is returned in waitable::result:
-    * - Mutex::unlock() -> wake_one(true)  // Woken thread now owns mutex
-    * - Semaphore::post() -> wake_one(false) // Woken thread is just notified
-    * - Timer::expire() -> wake_one(false)   // Woken thread didn't acquire anything
-    *
-    * Called by the owning primitive (e.g., Mutex::unlock(), Timer expiry).
-    */
-   void signal_one(bool acquired = true, reschedule_policy policy = reschedule_policy::automatic) noexcept;
-
-   /**
-    * @brief Signal all waiting threads
-    * @param acquired True if signalled threads acquired the resource
-    * @param policy Whether/when to trigger a local reschedule (default:
-    *               reschedule_policy::automatic, correct for normal callers).
-    *
-    * Moves all waiting threads to the ready queue.
-    * If no threads are waiting, this is a no-op.
-    */
-   void signal_all(bool acquired = true, reschedule_policy policy = reschedule_policy::automatic) noexcept;
+   waitable& operator=(waitable const&) = delete;
 
 protected:
-   // Abstract Base Class
-   waitable() = default;
+   waitable() noexcept = default;
 
    /**
-    * @brief Called when a thread blocks on this waitable
-    * @param waiter Details of the blocking thread
+    * @brief Override in derived primitives so block_on_any can poll them.
     *
-    * Override to implement custom behavior (e.g., priority inheritance).
-    * Called before thread is added to wait queue.
-    * @note no-op when not overridden
+    * Called under the waitable's queue lock during block_on_any prepare /
+    * recheck. Must not block. Side-effects ARE permitted if and only if they
+    * are atomic with returning true (e.g. "take the lock if free, return
+    * true; else return false unchanged"); see mutex::is_satisfied for the
+    * canonical example.
+    *
+    * The default implementation returns false. A pure notification waitable
+    * (no associated state) MAY leave the default and rely on callers using
+    * block(); such an waitable cannot participate meaningfully in
+    * block_on_any.
+    *
+    * @param caller The thread evaluating the predicate (always the currently
+    *               running thread on this core).
     */
-   virtual void on_thread_blocked(waiter waiter) { (void)waiter; }
+   virtual bool is_satisfied(thread_control_block& caller) noexcept = 0;
 
    /**
-    * @brief Called when a thread is removed from wait queue
-    * @param waiter Details of the thread being removed (woken or cancelled)
+    * @brief Wake the single highest-priority parked thread, if any.
     *
-    * Override to implement cleanup (e.g., clear inherited priority).
-    * Called after thread is removed from wait queue.
-    * @note no-op when not overridden
+    * No-op if no waiters. Safe from ISR context. Use this for primitives
+    * where at most one waiter can proceed per signal (mutex unlock,
+    * semaphore release of one permit).
     */
-   virtual void on_thread_removed(waiter waiter) { (void)waiter; }
+   void wake_one(reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
-   using waiter_visitor = function<void(waiter const&), 64, heap_policy::no_heap>;
    /**
-    * @brief Visit each thread currently waiting on this waitable
+    * @brief Wake ALL parked threads.
     *
-    * Calls @p visitor once per waiter with a snapshot taken during traversal.
-    * @warning The visitor must not block.
-    *
-    * Example:
-    * @code
-    * priority max_priority = priority{0};
-    * for_each_waiter([&](waiter w) {
-    *    if (w.effective_priority > max_priority) {
-    *       max_priority = w.effective_priority;
-    *    }
-    * });
+    * Use only when the signalled condition can genuinely satisfy every
+    * waiter (manual-reset event, barrier release, broadcast of thread
+    * termination to all joiners). Using wake_all where wake_one suffices is
+    * the classic thundering-herd mistake. Safe from ISR context.
     */
-   void for_each_waiter(waiter_visitor visitor) const;
+   void wake_all(reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
 private:
-   friend struct thread_control_block;
-   friend class  waitable_group_lock;
+   /**
+    * @brief Per-thread parking record (one per TCB, reused).
+    *
+    * Lives in the TCB, threaded into one or more waitable::wait_queue
+    * instances when the thread is parked.
+    */
+   struct wait_node
+   {
+      thread_control_block* owner{nullptr};
+      wait_node*            next {nullptr};
 
-   struct wait_node* head{nullptr};
-   struct wait_node* tail{nullptr};
+      // For block_on_any: which waitable does this slot in the call's source
+      // array correspond to. Unused (and zero) in single-wait blocks.
+      uint8_t source_index{0};
+   };
+   friend class wait_node_vector;
 
-   mutable spinlock wait_lock;
+   /**
+    * @brief Private intrusive priority-ordered list of parked threads.
+    *
+    * Nested inside waitable specifically so derived primitives cannot grab
+    * a reference to one. There is no public API that returns or accepts a
+    * wait_queue&. All access goes through waitable's own methods (or the
+    * friend free function block_on_any).
+    */
+   class wait_queue
+   {
+   public:
+      // Three-phase primitives - internal only. See class doc for protocol.
+      void arm   (wait_node& n) noexcept;
+      void disarm(wait_node& n) noexcept;
 
-   void add(wait_node& wait_node) noexcept;
-   void remove(wait_node& wait_node) noexcept;
+      void wake_one(reschedule_policy) noexcept;
+      void wake_all(reschedule_policy) noexcept;
 
-   // Select best waiter but do NOT unlink it.
-   // Caller must hold wait_lock.
-   // FIFO among equals: scan from head, pick first with highest priority.
-   wait_node* pick_best() noexcept;
+      [[nodiscard]] bool empty() const noexcept;
+
+   private:
+      spinlock   lock;
+      wait_node* head{nullptr}; // priority-ordered, best at head
+   };
+   friend class waitable_arm_guard;
+
+   wait_queue queue;
+
+   friend std::size_t this_thread::wait_on_any(std::span<waitable_ref> waitables) noexcept;
 };
 
 } // namespace cyros

@@ -1,27 +1,37 @@
-#ifndef CYROS_WAITABLE_UTILITIES_HPP
-#define CYROS_WAITABLE_UTILITIES_HPP
+#ifndef CYROS_WAITABLE_UTILITIES_VECTOR_HPP
+#define CYROS_WAITABLE_UTILITIES_VECTOR_HPP
 
-#include <cyros/kernel/waitable.hpp>
 #include <cyros/config/config.hpp>
+#include <cyros/kernel/waitable.hpp>
 #include <cyros/port/port.h>
 
 #include <array>
-#include <algorithm>
 
 namespace cyros
 {
 
-template<std::size_t Max>
-class waitable_ref_vector
+class wait_node_vector
 {
 private:
-   std::array<waitable*, Max> store{};
+   using wait_node = waitable::wait_node;
+
+   std::array<wait_node, config::max_wait_nodes> store{};
    std::size_t count = 0;
 
 public:
-   constexpr waitable_ref_vector() = default;
-   using iterator = waitable**;
-   using const_iterator = waitable* const*;
+   constexpr wait_node_vector() = default;
+   constexpr wait_node_vector(std::size_t node_count, thread_control_block* tcb)
+   {
+      for (std::size_t i = 0; i < node_count; ++i) {
+         push({
+            .owner = tcb,
+            .source_index = static_cast<uint8_t>(i),
+         });
+      }
+   }
+
+   using iterator = wait_node*;
+   using const_iterator = wait_node const*;
 
    iterator begin()
    {
@@ -58,23 +68,22 @@ public:
      return store.size();
    }
 
-   waitable* const& operator[](std::size_t index) const noexcept
+   wait_node const& operator[](std::size_t index) const noexcept
    {
       CYROS_ASSERT(index < count);
       return store[index];
    }
 
-   void push(waitable* waitable)
+   wait_node& operator[](std::size_t index) noexcept
    {
-      CYROS_ASSERT(count < store.size());
-      store[count++] = waitable;
+      CYROS_ASSERT(index < count);
+      return store[index];
    }
 
-   void push_range(std::span<waitable* const> waitables)
+   void push(wait_node node)
    {
-      CYROS_ASSERT(count + waitables.size() <= store.size());
-      std::ranges::copy(waitables, store.data() + count);
-      count += waitables.size();
+      CYROS_ASSERT(count < store.size());
+      store[count++] = node;
    }
 
    void pop()
@@ -83,54 +92,40 @@ public:
       --count;
    }
 
-   void sort_by_address()
-   {
-      if (count < 2) return;
-      std::ranges::sort(begin(), end());
-   }
-
    void clear() noexcept
    {
       count = 0;
    }
 };
 
-
-class waitable_group_lock
+class waitable_arm_guard
 {
-private:
-   waitable_ref_vector<config::max_wait_nodes> group;
-
+   std::span<waitable_ref> waitables;
+   wait_node_vector& nodes;
 public:
-   waitable_group_lock(waitable_group_lock const&) = delete;
-   waitable_group_lock(waitable_group_lock&&) = delete;
-   waitable_group_lock& operator=(waitable_group_lock const&) = delete;
-   waitable_group_lock& operator=(waitable_group_lock&&) = delete;
-
-   explicit waitable_group_lock(std::span<waitable* const> waitables)
+   waitable_arm_guard(std::span<waitable_ref> waitables, wait_node_vector& nodes)
+      : waitables(waitables), nodes(nodes)
    {
-      group.push_range(waitables);
-      group.sort_by_address();
-      // Enforce uniqueness
-      for (std::size_t i = 1; i < group.size(); ++i) {
-         CYROS_ASSERT(group[i] != group[i - 1]);
-      }
-
-      // Lock in order
-      for (auto& waitable : group) {
-         waitable->wait_lock.lock();
+      for (std::size_t i = 0; i < waitables.size(); ++i) {
+         auto& waitable = waitables[i].get();
+         waitable.queue.arm(nodes[i]);
       }
    }
 
-   ~waitable_group_lock()
+   ~waitable_arm_guard()
    {
-      auto n = group.size();
-      while (n--) {
-         group[n]->wait_lock.unlock();
+      for (std::size_t i = 0; i < waitables.size(); ++i) {
+         auto& waitable = waitables[i].get();
+         waitable.queue.disarm(nodes[i]);
       }
    }
+
+   waitable_arm_guard(waitable_arm_guard&&) = delete;
+   waitable_arm_guard(waitable_arm_guard const&) = delete;
+   waitable_arm_guard& operator=(waitable_arm_guard&&) = delete;
+   waitable_arm_guard& operator=(waitable_arm_guard const&) = delete;
 };
 
 } // namespace cyros
 
-#endif // CYROS_WAITABLE_UTILITIES_HPP
+#endif // CYROS_WAITABLE_UTILITIES_VECTOR_HPP

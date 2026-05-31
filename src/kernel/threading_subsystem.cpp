@@ -1,4 +1,5 @@
 #include "threading_subsystem.hpp"
+#include "align.hpp"
 
 namespace cyros
 {
@@ -7,83 +8,6 @@ thread_control_block::thread_control_block(uint32_t id, thread::priority priorit
    : id(id), base_priority(priority), effective_priority(priority), affinity(affinity), stack(stack), entry(std::move(entry))
 {
    cyros_port_context_init(context(), stack.data(), stack.size(), thread_launcher, this);
-}
-
-void thread_control_block::prepare_block(std::span<waitable* const> waitables)
-{
-   CYROS_ASSERT(state == thread_state::running);
-   CYROS_ASSERT(!waitables.empty());
-   CYROS_ASSERT(waitables.size() <= config::max_wait_nodes);
-
-   wait_operation.begin(waitables.size());
-
-   // Allocate and enqueue nodes
-   for (std::size_t i = 0; auto* waitable : waitables) {
-      CYROS_ASSERT(waitable != nullptr);
-
-      wait_node* wait_node = wait_nodes.alloc(wait_operation, *waitable, i++);
-      CYROS_ASSERT(wait_node != nullptr);
-
-      waitable->add(*wait_node);
-   }
-
-   state = thread_state::blocked;
-}
-
-void thread_control_block::notify_block(std::span<waitable* const> waitables) const
-{
-   // Snapshot once: all blocks are given the same snapshot. This disregards
-   // all side-effects on_thread_blocked invocations have on the effective priority.
-   auto const waiter = create_waiter();
-
-   for (auto* waitable : waitables) {
-      waitable->on_thread_blocked(waiter);
-   }
-}
-
-waitable::result thread_control_block::commence_block()
-{
-   cyros_port_thread_yield();
-
-   // When we resume, winner info is in wait_operation
-   return waitable::result{
-      .index    = wait_operation.winner_index,
-      .acquired = wait_operation.acquired,
-   };
-}
-
-void thread_control_block::teardown_wait_group(wait_group& group) noexcept
-{
-   // Snapshot once: all removals in this teardown relate to the same waiter (this thread).
-   auto const waiter = create_waiter();
-   waitable_ref_vector<config::max_wait_nodes> waitables;
-
-   // First pass: collect involved waitables
-   wait_nodes.for_each_active([&](wait_node& node) {
-      if (node.active_group != &group) return;
-      if (node.active_waitable) {
-         waitables.push(node.active_waitable);
-      }
-   }, &group);
-
-   {
-      waitable_group_lock lock_group(waitables);
-
-      // Second pass: unlink and free under lock
-      wait_nodes.for_each_active([&](wait_node& node) {
-         if (node.active_group != &group) return;
-
-         if (node.active_waitable) {
-            node.active_waitable->remove(node);
-         }
-         wait_nodes.free(node);
-      }, &group);
-   }
-
-   // Third pass: hooks after unlock
-   for (auto* waitable : waitables) {
-      waitable->on_thread_removed(waiter);
-   }
 }
 
 

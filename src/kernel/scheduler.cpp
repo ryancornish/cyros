@@ -81,23 +81,28 @@ bool scheduler::post_to_inbox(cross_core_request request) noexcept
 }
 
 /**
-* @brief Selects the next runnable thread for this core and performs a context switch.
-*
-* Invariants / contract:
-* - Called only by the owning core of this scheduler (no cross-core mutation).
-* - @c current_thread is non-null and is the thread currently executing on this core.
-* - On entry, @c current_thread->state is NEVER Ready:
-*     - Running    => treated as preempted/rotated and re-enqueued as Ready (except idle).
-*     - Blocked    => must already be removed from ready structures - not re-enqueued.
-*     - Terminated => must not be re-enqueued.
-* - The currently running thread is not present in the ready matrix on entry.
-* - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
-*/
+ * @brief Selects the next runnable thread for this core and performs a context switch.
+ *
+ * Invariants / contract:
+ * - Called only by the owning core of this scheduler (no cross-core mutation).
+ * - @c current_thread is non-null and is the thread currently executing on this core.
+ * - The currently running thread is not present in the ready matrix on entry.
+ * - On entry, @c current_thread->state is one of:
+ *     - Running    => running normally - treated as preempted/rotated and re-enqueued
+ *                     (except idle).
+ *     - Ready      => "armed-then-woken before yield" - the thread armed itself on
+ *                     a wait_queue but was woken by a concurrent signaller before
+ *                     it reached this point. Indistinguishable from Running for
+ *                     scheduling purposes: rotate and re-enqueue.
+ *     - Blocked    => parking on a wait_queue - must already be removed from ready
+ *                     structures. Not re-enqueued.
+ *     - Terminated => must not be re-enqueued.
+ * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
+ */
 void scheduler::reschedule() noexcept
 {
    CYROS_ASSERT(current_thread);
    CYROS_ASSERT(!current_thread->is_enqueued());
-   CYROS_ASSERT(current_thread->state != thread_control_block::thread_state::ready);
 
    drain_inbox();
 
@@ -105,15 +110,13 @@ void scheduler::reschedule() noexcept
 
    switch (previous_thread->state) {
       case thread_control_block::thread_state::running:
+      case thread_control_block::thread_state::ready:
          set_thread_ready(*previous_thread);
          break;
 
       case thread_control_block::thread_state::blocked:
       case thread_control_block::thread_state::terminated:
          break;
-
-      case thread_control_block::thread_state::ready:
-         __builtin_unreachable();
    }
 
    auto* next_thread = ready_matrix.pop_best_thread();
@@ -122,21 +125,6 @@ void scheduler::reschedule() noexcept
    current_thread = next_thread;
    next_thread->state = thread_control_block::thread_state::running;
    cyros_port_switch(previous_thread->context(), next_thread->context());
-}
-
-void scheduler::prepare_block_current_thread(std::span<waitable* const> waitables)
-{
-   current_thread->prepare_block(waitables);
-}
-
-waitable::result scheduler::commence_block_current_thread()
-{
-   return current_thread->commence_block();
-}
-
-void scheduler::notify_block_current_thread(std::span<waitable* const> waitables) const
-{
-   current_thread->notify_block(waitables);
 }
 
 void scheduler::reset()

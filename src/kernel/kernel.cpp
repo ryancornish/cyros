@@ -7,14 +7,12 @@
 
 #include "scheduler.hpp"
 #include "threading_subsystem.hpp"
-#include "wait_subsystem.hpp"
 #include "waitable_utilities.hpp"
 
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <ranges>
 
 // invariants list:
 // only core x mutates scheduler[x].ready_matrix, current_thread, blocked lists, etc.
@@ -254,23 +252,10 @@ void idle_task()
    }
 }
 
-schedule_hint wait_node::wake_thread(bool acquired) const noexcept
+schedule_hint wake_thread(thread_control_block& tcb)
 {
-   CYROS_ASSERT(tcb != nullptr);
-   CYROS_ASSERT(active_group != nullptr);
-   CYROS_ASSERT(active_waitable != nullptr);
-   CYROS_ASSERT(index != invalid_index);
-   CYROS_ASSERT_OP(tcb->state, ==, thread_control_block::thread_state::blocked);
-
-   if (!active_group->try_win(static_cast<int>(index), acquired)) {
-      return schedule_hint::unwarranted; // lost
-   }
-
-   // winner: remove all nodes in this group (including this one)
-   tcb->teardown_wait_group(*active_group);
-
-   // thread is ready to be enqueued on its pinned core
-   return kernel_instance.set_thread_ready(*tcb);
+   CYROS_ASSERT(tcb.state == thread_control_block::thread_state::blocked);
+   return kernel_instance.set_thread_ready(tcb);
 }
 
 /**** public ****/
@@ -311,9 +296,7 @@ void thread::join() noexcept
 {
    CYROS_ASSERT(tcb != nullptr);
 
-   kernel::wait_until([&]{
-      return tcb->termination.has_terminated();
-   }, tcb->termination);
+   this_thread::wait_on(tcb->termination);
 }
 
 
@@ -365,53 +348,6 @@ std::uint32_t active_threads() noexcept
    return kernel_instance.get_active_threads();
 }
 
-waitable::result wait_for_any(std::span<waitable* const> waitables)
-{
-   CYROS_ASSERT(!waitables.empty());
-   CYROS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
-
-   auto& scheduler = kernel_instance.scheduler_for_this_core();
-   {
-      waitable_group_lock lock_group(waitables);
-
-      scheduler.prepare_block_current_thread(waitables);
-   }
-   scheduler.notify_block_current_thread(waitables);
-
-   auto result = scheduler.commence_block_current_thread();
-
-   return result;
-}
-
-waitable::result wait_until(waitable::predicate predicate, std::span<waitable* const> waitables)
-{
-   CYROS_ASSERT(!waitables.empty());
-   CYROS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
-   for (auto* w : waitables) CYROS_ASSERT(w != nullptr);
-
-   waitable::result result{.index = -1, .acquired = false};
-
-   // fast-path: avoid locks
-   if (predicate()) {
-      return result;
-   }
-
-   auto& scheduler = kernel_instance.scheduler_for_this_core();
-
-   while (true) {
-      {
-         waitable_group_lock lock_group(waitables);
-
-         if (predicate()) return result;
-
-         scheduler.prepare_block_current_thread(waitables);
-      }
-      scheduler.notify_block_current_thread(waitables);
-
-      result = scheduler.commence_block_current_thread();
-   }
-}
-
 } // namespace kernel
 
 namespace this_thread
@@ -443,6 +379,34 @@ void yield()
    // Strong request: an explicit yield deliberately gives up the CPU and
    // relies on the reschedule round-trip having completed on return.
    cyros_port_thread_yield();
+}
+
+[[nodiscard]] std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept
+{
+   CYROS_ASSERT(!waitables.empty());
+   CYROS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
+
+   auto& scheduler = kernel_instance.scheduler_for_this_core();
+
+   auto* tcb = scheduler.current_thread_reference();
+
+   wait_node_vector nodes(waitables.size(), tcb);
+
+   while (true) {
+      waitable_arm_guard arm_guard(waitables, nodes);
+
+      // Check each source. Lowest-index wins on ties (e.g. resource before
+      // timeout).
+      for (std::size_t i = 0; waitable& waitable : waitables) {
+         if (waitable.is_satisfied(*tcb)) {
+            return i;
+         }
+         ++i;
+      }
+
+      // Nothing satisfied, block until woken
+      cyros_port_thread_yield();
+   }
 }
 
 }  // namespace this_thread

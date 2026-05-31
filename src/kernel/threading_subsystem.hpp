@@ -5,10 +5,6 @@
 #include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
 
-#include "align.hpp"
-#include "waitable_utilities.hpp"
-#include "wait_subsystem.hpp"
-
 #include <bitset>
 #include <limits>
 
@@ -21,12 +17,13 @@ class thread_termination : public waitable
 {
    std::atomic<bool> terminated{false};
 
-public:
-   [[nodiscard]] bool has_terminated()
+   bool is_satisfied(thread_control_block& caller) noexcept override
    {
+      (void)caller;
       return terminated.load(std::memory_order_acquire);
    }
 
+public:
    void terminate()
    {
       bool expected = false;
@@ -35,7 +32,7 @@ public:
       // terminate() is invoked on the teardown path of the thread launcher.
       // Invoking a reschedule is forbidden during this period as it as we might
       // otherwise switch away and never return to continue the teardown.
-      signal_all(false, reschedule_policy::never);
+      wake_all(reschedule_policy::never);
    }
 };
 
@@ -59,9 +56,6 @@ struct thread_control_block
    std::span<std::byte> stack;
    thread::entry_fn entry;
 
-   wait_group wait_operation{};
-   wait_node_pool wait_nodes{this};
-
    // Thread-joining waitable
    thread_termination termination;
 
@@ -84,26 +78,7 @@ struct thread_control_block
       return effective_priority < priority_level;
    }
 
-   [[nodiscard]] waitable::waiter create_waiter() const noexcept
-   {
-      return {
-         .id                 = id,
-         .base_priority      = base_priority,
-         .effective_priority = effective_priority,
-         .pinned_core        = pinned_core,
-         .affinity           = affinity,
-      };
-   }
-
    thread_control_block(uint32_t id, thread::priority priority, core_affinity affinity, std::span<std::byte> stack, thread::entry_fn&& entry);
-
-   void prepare_block(std::span<waitable* const> waitables);
-
-   void notify_block(std::span<waitable* const> waitables) const;
-
-   waitable::result commence_block();
-
-   void teardown_wait_group(wait_group& group) noexcept;
 };
 
 

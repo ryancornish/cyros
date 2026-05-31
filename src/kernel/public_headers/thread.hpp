@@ -4,10 +4,13 @@
 #include <cyros/kernel/function.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <span>
 
 namespace cyros
 {
+
+using waitable_ref = std::reference_wrapper<class waitable>;
 
 /**
  * @brief Core affinity mask
@@ -130,6 +133,24 @@ namespace this_thread
 [[noreturn]] void thread_exit();
 
 void yield();
+
+[[nodiscard]] std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept;
+
+template<typename... Waitables>
+[[nodiscard]] std::size_t wait_on_any(Waitables&... waitables)
+{
+   static_assert(sizeof...(Waitables) > 0);
+   static_assert((std::is_base_of_v<waitable, std::remove_cv_t<Waitables>> && ...));
+   std::array<waitable_ref, sizeof...(Waitables)> inline_array{ std::ref(waitables)... };
+   return wait_on_any(std::span<waitable_ref>{inline_array});
+}
+
+inline void wait_on(waitable& w)
+{
+   // single-source call always returns 0
+   (void)wait_on_any(w);
+}
+
 
 }  // namespace this_thread
 

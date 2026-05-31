@@ -13,6 +13,19 @@
 namespace cyros
 {
 
+/**
+ * @brief TODO
+ */
+enum class schedule_hint
+{
+   unwarranted, ///< TODO
+   warranted,   ///< TODO
+};
+
+// Implemented by the kernel
+schedule_hint wake_thread(thread_control_block& tcb);
+
+// Implemented by the kernel
 void idle_task();
 
 struct cross_core_request
@@ -63,6 +76,11 @@ public:
       return current_thread ? current_thread->effective_priority : 0;
    }
 
+   [[nodiscard]] constexpr thread_control_block* current_thread_reference() const noexcept
+   {
+      return current_thread;
+   }
+
    [[nodiscard]] uint32_t pinned_thread_count() const noexcept
    {
       return pinned_thread_counter.load(std::memory_order_relaxed);
@@ -96,12 +114,6 @@ public:
    * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
    */
    void reschedule() noexcept;
-
-   void prepare_block_current_thread(std::span<waitable* const> waitables);
-
-   waitable::result commence_block_current_thread();
-
-   void notify_block_current_thread(std::span<waitable* const> waitables) const;
 
    void reset();
 };
