@@ -4,8 +4,9 @@ kind = "core"
 sources = [
   "kernel.cpp",
   "scheduler.cpp",
+  "threading_subsystem.cpp",
   "waitable.cpp",
-  "threading_subsystem.cpp"
+  "spinlock.cpp",
 ]
 
 sources_excluded_from_archive = [

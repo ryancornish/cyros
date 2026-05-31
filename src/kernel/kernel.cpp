@@ -24,8 +24,11 @@
 namespace cyros
 {
 
-static void reschedule_this_core();
-static void core_entry();
+namespace
+{
+
+void reschedule_this_core();
+void core_entry();
 
 class kernel_state
 {
@@ -50,7 +53,7 @@ public:
    kernel_state& operator=(kernel_state&&) = delete;
    kernel_state& operator=(kernel_state const&) = delete;
 
-   [[nodiscard]] bool  is_running() const noexcept
+   [[nodiscard]] bool is_running() const noexcept
    {
       return running.load(std::memory_order_acquire);
    }
@@ -148,7 +151,7 @@ public:
       }
 
       if (set_thread_ready(tcb) == schedule_hint::warranted) {
-         // Weak request: the registering thread is not itself blocking, it is
+         // Weak request: Registering the thread is not itself blocking, it is
          // only flagging that a higher-priority thread became ready.
          cyros_port_pend_reschedule();
       }
@@ -157,6 +160,7 @@ public:
    void unregister_thread() noexcept
    {
       CYROS_ASSERT(active_threads.load(std::memory_order_relaxed) != 0);
+
       active_threads.fetch_sub(1, std::memory_order_seq_cst);
    }
 
@@ -201,7 +205,7 @@ public:
       return schedule_hint::unwarranted;
    }
 };
-static constinit kernel_state kernel_instance;
+constinit kernel_state kernel_instance;
 
 // use this to examine how much memory the co_rtos kernel uses.
 [[maybe_unused]] constexpr auto static_sizeof_kernel = sizeof(kernel_instance);
@@ -209,19 +213,21 @@ static constinit kernel_state kernel_instance;
 /**** kernel-global dependants ****/
 
 // registered as isr handler for preemptive scheduling
-static void reschedule_this_core()
+void reschedule_this_core()
 {
    auto& scheduler = kernel_instance.scheduler_for_this_core();
 
    scheduler.reschedule();
 }
 
-static void core_entry()
+void core_entry()
 {
    auto& scheduler = kernel_instance.scheduler_for_this_core();
 
    scheduler.start();
 }
+
+} // namespace
 
 void thread_launcher(void* tcb_ptr)
 {
@@ -274,67 +280,6 @@ thread::thread(entry_fn&& entry, std::span<std::byte> stack, priority priority, 
    kernel_instance.register_thread(*tcb);
 }
 
-thread::~thread()
-{
-   if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty
-   CYROS_ASSERT(tcb->state == thread_control_block::thread_state::terminated);
-}
-
-thread::thread(thread&& other) noexcept : tcb(other.tcb)
-{
-   other.tcb = nullptr;
-   tcb->public_thread_handle = this;
-}
-
-thread& thread::operator=(thread&& other) noexcept
-{
-   tcb = other.tcb;
-   other.tcb = nullptr;
-   tcb->public_thread_handle = this;
-   return *this;
-}
-
-[[nodiscard]] thread::id thread::get_id() const noexcept
-{
-   CYROS_ASSERT(tcb != nullptr);
-
-   return tcb->id;
-}
-
-[[nodiscard]] thread::priority thread::get_priority() const noexcept
-{
-   CYROS_ASSERT(tcb != nullptr);
-
-   return tcb->effective_priority;
-}
-
-void thread::join() noexcept
-{
-   CYROS_ASSERT(tcb != nullptr);
-
-   this_thread::wait_on(tcb->termination);
-}
-
-
-void spinlock::lock()
-{
-   // A spinlock disables preemption (so the holder cannot be switched out
-   // mid-section) but does NOT mask interrupts. Preemption control is owned
-   // by the port - see port.h "Preemption Control".
-   cyros_port_preempt_disable();
-   while (flag.test_and_set(std::memory_order_acquire)) {
-      // busy-wait with cpu yield hint
-      cyros_port_cpu_relax();
-   }
-}
-
-void spinlock::unlock()
-{
-   flag.clear(std::memory_order_release);
-   // Re-enabling preemption is a contract safe point: if a reschedule was
-   // pended while the lock was held, the port resolves it here.
-   cyros_port_preempt_enable();
-}
 
 namespace kernel
 {

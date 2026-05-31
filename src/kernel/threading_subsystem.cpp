@@ -4,6 +4,50 @@
 namespace cyros
 {
 
+thread::~thread()
+{
+   if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty
+
+   CYROS_ASSERT(tcb->state == thread_control_block::thread_state::terminated);
+   tcb->public_thread_handle = nullptr;
+}
+
+thread::thread(thread&& other) noexcept : tcb(other.tcb)
+{
+   other.tcb = nullptr;
+   tcb->public_thread_handle = this;
+}
+
+thread& thread::operator=(thread&& other) noexcept
+{
+   tcb = other.tcb;
+   other.tcb = nullptr;
+   tcb->public_thread_handle = this;
+   return *this;
+}
+
+[[nodiscard]] thread::id thread::get_id() const noexcept
+{
+   CYROS_ASSERT(tcb != nullptr);
+
+   return tcb->id;
+}
+
+[[nodiscard]] thread::priority thread::get_priority() const noexcept
+{
+   CYROS_ASSERT(tcb != nullptr);
+
+   return tcb->effective_priority;
+}
+
+void thread::join() noexcept
+{
+   CYROS_ASSERT(tcb != nullptr);
+
+   this_thread::wait_on(tcb->termination);
+}
+
+
 thread_control_block::thread_control_block(uint32_t id,
                                            thread::priority priority,
                                            core_affinity affinity,
