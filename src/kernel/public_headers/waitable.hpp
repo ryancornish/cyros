@@ -118,7 +118,7 @@ protected:
     * @param caller The thread evaluating the predicate (always the currently
     *               running thread on this core).
     */
-   virtual bool is_satisfied(thread_control_block& caller) noexcept = 0;
+   virtual bool is_satisfied(thread& caller) noexcept = 0;
 
    /**
     * @brief Wake the single highest-priority parked thread, if any.

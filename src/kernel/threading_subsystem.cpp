@@ -4,8 +4,19 @@
 namespace cyros
 {
 
-thread_control_block::thread_control_block(uint32_t id, thread::priority priority, core_affinity affinity, std::span<std::byte> stack, thread::entry_fn&& entry)
-   : id(id), base_priority(priority), effective_priority(priority), affinity(affinity), stack(stack), entry(std::move(entry))
+thread_control_block::thread_control_block(uint32_t id,
+                                           thread::priority priority,
+                                           core_affinity affinity,
+                                           std::span<std::byte> stack,
+                                           thread::entry_fn&& entry,
+                                           thread* public_thread_handle)
+   : id(id),
+     base_priority(priority),
+     effective_priority(priority),
+     public_thread_handle(public_thread_handle),
+     affinity(affinity),
+     stack(stack),
+     entry(std::move(entry))
 {
    cyros_port_context_init(context(), stack.data(), stack.size(), thread_launcher, this);
 }

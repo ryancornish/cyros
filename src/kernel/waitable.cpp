@@ -140,18 +140,18 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
       }
    }
 
-   schedule_hint aggregate = schedule_hint::unwarranted;
+   schedule_hint aggregate_hint = schedule_hint::unwarranted;
    for (wait_node* n = batch; n != nullptr; ) {
       wait_node* next = n->next;
       n->next = nullptr;
-      schedule_hint h = wake_thread(*n->owner);
-      if (h == schedule_hint::warranted) {
-         aggregate = schedule_hint::warranted;
+      schedule_hint hint = wake_thread(*n->owner);
+      if (hint == schedule_hint::warranted) {
+         aggregate_hint = schedule_hint::warranted;
       }
       n = next;
    }
 
-   apply_reschedule_policy(policy, aggregate);
+   apply_reschedule_policy(policy, aggregate_hint);
 }
 
 /* ============================================================================
@@ -162,11 +162,6 @@ waitable::~waitable()
 {
    // It is a programming error to destroy an waitable with parked waiters.
    CYROS_ASSERT(queue.empty());
-}
-
-bool waitable::is_satisfied(thread_control_block& /*caller*/) noexcept
-{
-   return false;
 }
 
 void waitable::wake_one(reschedule_policy policy) noexcept

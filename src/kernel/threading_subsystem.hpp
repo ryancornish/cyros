@@ -13,11 +13,12 @@ namespace cyros
 
 void thread_launcher(void* tcb_ptr);
 
-class thread_termination : public waitable
+class thread_termination final : public waitable
 {
    std::atomic<bool> terminated{false};
 
-   bool is_satisfied(thread_control_block& caller) noexcept override
+protected:
+   bool is_satisfied(thread& caller) noexcept override
    {
       (void)caller;
       return terminated.load(std::memory_order_acquire);
@@ -45,9 +46,11 @@ struct thread_control_block
    thread_control_block* next{nullptr};
    thread_control_block* prev{nullptr};
 
+
    uint32_t id;
    uint8_t base_priority;
    uint8_t effective_priority; // Can change dynamically
+   thread* public_thread_handle;
 
    // Core pinning
    std::uint32_t pinned_core{0};
@@ -78,7 +81,12 @@ struct thread_control_block
       return effective_priority < priority_level;
    }
 
-   thread_control_block(uint32_t id, thread::priority priority, core_affinity affinity, std::span<std::byte> stack, thread::entry_fn&& entry);
+   thread_control_block(uint32_t id,
+                        thread::priority priority,
+                        core_affinity affinity,
+                        std::span<std::byte> stack,
+                        thread::entry_fn&& entry,
+                        thread* public_thread_handle);
 };
 
 

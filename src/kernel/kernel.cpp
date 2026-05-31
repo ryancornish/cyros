@@ -254,7 +254,6 @@ void idle_task()
 
 schedule_hint wake_thread(thread_control_block& tcb)
 {
-   CYROS_ASSERT(tcb.state == thread_control_block::thread_state::blocked);
    return kernel_instance.set_thread_ready(tcb);
 }
 
@@ -268,7 +267,8 @@ thread::thread(entry_fn&& entry, std::span<std::byte> stack, priority priority, 
       priority,
       affinity,
       slayout.user_stack,
-      std::move(entry)
+      std::move(entry),
+      this
    );
 
    kernel_instance.register_thread(*tcb);
@@ -283,13 +283,29 @@ thread::~thread()
 thread::thread(thread&& other) noexcept : tcb(other.tcb)
 {
    other.tcb = nullptr;
+   tcb->public_thread_handle = this;
 }
 
 thread& thread::operator=(thread&& other) noexcept
 {
    tcb = other.tcb;
    other.tcb = nullptr;
+   tcb->public_thread_handle = this;
    return *this;
+}
+
+[[nodiscard]] thread::id thread::get_id() const noexcept
+{
+   CYROS_ASSERT(tcb != nullptr);
+
+   return tcb->id;
+}
+
+[[nodiscard]] thread::priority thread::get_priority() const noexcept
+{
+   CYROS_ASSERT(tcb != nullptr);
+
+   return tcb->effective_priority;
 }
 
 void thread::join() noexcept
@@ -398,7 +414,7 @@ void yield()
       // Check each source. Lowest-index wins on ties (e.g. resource before
       // timeout).
       for (std::size_t i = 0; waitable& waitable : waitables) {
-         if (waitable.is_satisfied(*tcb)) {
+         if (waitable.is_satisfied(*tcb->public_thread_handle)) {
             return i;
          }
          ++i;

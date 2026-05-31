@@ -17,7 +17,8 @@ void scheduler::init_idle_thread()
       config::max_priorities-1,
       core_affinity::from_id(core_id),
       slayout.user_stack,
-      idle_task
+      idle_task,
+      nullptr
    );
    idle_thread->pinned_core = core_id;
 }

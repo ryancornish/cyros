@@ -1,4 +1,5 @@
 #include <cyros/kernel/kernel.hpp>
+#include <cyros/kernel/waitable.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
 
@@ -8,7 +9,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 
 using namespace cyros;
 
@@ -17,84 +17,68 @@ static_assert(config::cores == 1, "Test suite is designed for single core config
 int main(int argc, char** argv)
 {
    ::testing::InitGoogleTest(&argc, argv);
-
-   int result = RUN_ALL_TESTS();
-
-   return result;
+   return RUN_ALL_TESTS();
 }
 
 class SingleCoreWaitables_Test : public ::testing::Test
 {
-   void SetUp() override
-   {
-      kernel::initialise();
-   }
-
-   void TearDown() override
-   {
-      kernel::finalise();
-   }
+   void SetUp() override    { kernel::initialise(); }
+   void TearDown() override { kernel::finalise(); }
 };
 
 /**
- * @brief Test waitable that records hook activity and snapshots.
+ * @brief Test waitable with an externally-driven condition.
  *
- * This is intentionally simple: it uses the built-in waitable queueing and
- * exposes signal methods directly.
+ * Backed by a plain atomic flag the test can flip. wake_one/wake_all are
+ * exposed via thin wrappers so tests can drive them directly. The flag-based
+ * model mirrors how real primitives work (e.g. thread_termination's flag).
  */
 class TestWaitable final : public waitable
 {
 public:
-   std::atomic<uint32_t> blocked_calls{0};
-   std::atomic<uint32_t> removed_calls{0};
+   std::atomic<bool> condition{false};
 
-   // Record the last waiter snapshot seen (best-effort diagnostics).
-   // Single-core tests => no heavy synchronization required beyond atomic.
-   std::atomic<thread::id>       last_id{0};
-   std::atomic<uint8_t>          last_base_prio{0xFF};
-   std::atomic<uint8_t>          last_eff_prio{0xFF};
-   std::atomic<uint32_t>         last_pinned_core{0xFFFFFFFF};
-
-   void fire_one(bool acquired = true) noexcept { signal_one(acquired); }
-   void fire_all(bool acquired = true) noexcept { signal_all(acquired); }
-
-protected:
-   void on_thread_blocked(waiter waiter) override
+   void set_and_wake_one() noexcept
    {
-      blocked_calls.fetch_add(1, std::memory_order_relaxed);
-      last_id.store(waiter.id, std::memory_order_relaxed);
-      last_base_prio.store(waiter.base_priority.val, std::memory_order_relaxed);
-      last_eff_prio.store(waiter.effective_priority.val, std::memory_order_relaxed);
-      last_pinned_core.store(waiter.pinned_core, std::memory_order_relaxed);
+      condition.store(true, std::memory_order_release);
+      wake_one();
    }
 
-   void on_thread_removed(waiter waiter) override
+   void set_and_wake_all() noexcept
    {
-      removed_calls.fetch_add(1, std::memory_order_relaxed);
-      // Also update the last snapshot so we know removal hooks saw something sane.
-      last_id.store(waiter.id, std::memory_order_relaxed);
-      last_base_prio.store(waiter.base_priority.val, std::memory_order_relaxed);
-      last_eff_prio.store(waiter.effective_priority.val, std::memory_order_relaxed);
-      last_pinned_core.store(waiter.pinned_core, std::memory_order_relaxed);
+      condition.store(true, std::memory_order_release);
+      wake_all();
+   }
+
+   // For tests that need to drive wakes without changing the condition (to
+   // exercise spurious-wake behaviour explicitly).
+   void wake_one_no_set() noexcept { wake_one(); }
+   void wake_all_no_set() noexcept { wake_all(); }
+
+protected:
+   bool is_satisfied(thread& caller) noexcept override
+   {
+      (void)caller;
+      return condition.load(std::memory_order_acquire);
    }
 };
 
+/* ============================================================================
+ * Single-waitable wait_on
+ * ========================================================================= */
+
 TEST_F(SingleCoreWaitables_Test,
-       GivenOneWaiterOnSingleWaitable_WhenSignalled_ThenWaitReturnsIndex0AndAcquiredTrue)
+       GivenOneWaiter_WhenConditionSetAndWakeOne_ThenWaiterReturns)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
-   // GIVEN:
-
    TestWaitable w;
-
-   waitable::result result{};
    bool waiter_completed = false;
 
    thread waiter(
       [&]{
-         result = kernel::wait_for(w);
+         this_thread::wait_on(w);
          waiter_completed = true;
       },
       waiter_stack,
@@ -104,45 +88,58 @@ TEST_F(SingleCoreWaitables_Test,
 
    thread signaler(
       [&]{
-         // At this point, waiter will have already run and blocked.
-         w.fire_one(true);
+         // Waiter has already blocked by the time we run (lower priority).
+         w.set_and_wake_one();
       },
       signaler_stack,
       thread::priority(1),
       core0
    );
 
-   // WHEN:
-
    kernel::start();
 
-   // THEN:
-
    ASSERT_TRUE(waiter_completed);
-   ASSERT_EQ(result.index, 0);
-   ASSERT_TRUE(result.acquired);
-
-   // Hook sanity: waiter should have blocked and later been removed.
-   ASSERT_EQ(w.blocked_calls.load(), 1U);
-   ASSERT_EQ(w.removed_calls.load(), 1U);
 }
 
 TEST_F(SingleCoreWaitables_Test,
-       GivenOneWaiterOnSingleWaitable_WhenSignalledWithAcquiredFalse_ThenWaitReturnsAcquiredFalse)
+       GivenConditionAlreadyTrue_WhenWaiterCallsWaitOn_ThenWaiterDoesNotBlock)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
-
-   // GIVEN:
 
    TestWaitable w;
+   w.condition.store(true, std::memory_order_release);
 
-   waitable::result result{};
    bool waiter_completed = false;
 
    thread waiter(
       [&]{
-         result = kernel::wait_for(w);
+         this_thread::wait_on(w);   // condition already true; should return immediately
+         waiter_completed = true;
+      },
+      waiter_stack,
+      thread::priority(0),
+      core0
+   );
+
+   kernel::start();
+
+   // No signaler thread; if wait_on did not respect the already-true condition,
+   // the kernel would hang in idle. Reaching here proves the early-return path.
+   ASSERT_TRUE(waiter_completed);
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenWaiter_WhenWokenButConditionStillFalse_ThenWaiterRebllocks)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+
+   TestWaitable w;
+   bool waiter_completed = false;
+
+   thread waiter(
+      [&]{
+         this_thread::wait_on(w);
          waiter_completed = true;
       },
       waiter_stack,
@@ -152,42 +149,40 @@ TEST_F(SingleCoreWaitables_Test,
 
    thread signaler(
       [&]{
-         w.fire_one(false);
+         // First wake: condition is still false. Waiter must re-block.
+         w.wake_one_no_set();
+
+         // Second wake: now set the condition. Waiter should observe and return.
+         w.set_and_wake_one();
       },
       signaler_stack,
       thread::priority(1),
       core0
    );
 
-   // WHEN:
-
    kernel::start();
 
-   // THEN:
-
    ASSERT_TRUE(waiter_completed);
-   ASSERT_EQ(result.index, 0);
-   ASSERT_FALSE(result.acquired);
 }
 
+/* ============================================================================
+ * wait_on_any over two waitables
+ * ========================================================================= */
+
 TEST_F(SingleCoreWaitables_Test,
-       GivenWaitForAnyOnTwoWaitables_WhenSecondIsSignalled_ThenWinnerIndexIs1AndLoserIsRemoved)
+       GivenTwoWaitables_WhenSecondIsSatisfied_ThenWinnerIndexIs1)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
-
-   // GIVEN:
 
    TestWaitable w0;
    TestWaitable w1;
 
-   waitable::result result{};
-   bool waiter_completed = false;
+   std::size_t winner = static_cast<std::size_t>(-1);
 
    thread waiter(
       [&]{
-         result = kernel::wait_for_any(w0, w1);
-         waiter_completed = true;
+         winner = this_thread::wait_on_any(w0, w1);
       },
       waiter_stack,
       thread::priority(0),
@@ -196,75 +191,76 @@ TEST_F(SingleCoreWaitables_Test,
 
    thread signaler(
       [&]{
-         w1.fire_one(true);
+         w1.set_and_wake_one();
       },
       signaler_stack,
       thread::priority(1),
       core0
    );
 
-   // WHEN:
-
    kernel::start();
 
-   // THEN:
-
-   ASSERT_TRUE(waiter_completed);
-   ASSERT_EQ(result.index, 1);
-   ASSERT_TRUE(result.acquired);
-
-   // Winner waitable should have seen blocked + removed.
-   ASSERT_EQ(w1.blocked_calls.load(), 1U);
-   ASSERT_EQ(w1.removed_calls.load(), 1U);
-
-   // Loser waitable should still have had its node removed during group teardown.
-   ASSERT_EQ(w0.blocked_calls.load(), 1U);
-   ASSERT_EQ(w0.removed_calls.load(), 1U);
+   ASSERT_EQ(winner, 1U);
 }
 
 TEST_F(SingleCoreWaitables_Test,
-       GivenTwoWaitersDifferentPriority_WhenSignalOneTwice_ThenHighestPriorityWakesFirst)
+       GivenTwoWaitablesBothSatisfied_WhenWaiterChecks_ThenLowestIndexWins)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+
+   TestWaitable w0;
+   TestWaitable w1;
+   w0.condition.store(true, std::memory_order_release);
+   w1.condition.store(true, std::memory_order_release);
+
+   std::size_t winner = static_cast<std::size_t>(-1);
+
+   thread waiter(
+      [&]{
+         // Both conditions are already true when wait_on_any is called.
+         // Tie-break by lowest index = 0.
+         winner = this_thread::wait_on_any(w0, w1);
+      },
+      waiter_stack,
+      thread::priority(0),
+      core0
+   );
+
+   kernel::start();
+
+   ASSERT_EQ(winner, 0U);
+}
+
+/* ============================================================================
+ * wake_one with multiple waiters: priority order
+ * ========================================================================= */
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenTwoWaitersDifferentPriority_WhenWakeOne_ThenHighestPriorityWakesFirst)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> hi_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> lo_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
-   // GIVEN:
-
    TestWaitable w;
-
-   std::atomic<int> wake_order{0}; // 0 none, 1 hi first, 2 lo second, etc.
-   std::atomic<int> step{0};
+   std::atomic<int> wake_sequence{0};
+   int hi_wake_position = 0;
+   int lo_wake_position = 0;
 
    thread hi(
       [&]{
-         auto r = kernel::wait_for(w);
-         (void)r;
-         // Record order: if we are first, set 1; if second, set 2.
-         int expected = 0;
-         if (wake_order.compare_exchange_strong(expected, 1)) {
-            // first woken
-         } else {
-            wake_order.store(2);
-         }
-         step.fetch_add(1);
+         this_thread::wait_on(w);
+         hi_wake_position = wake_sequence.fetch_add(1) + 1;
       },
       hi_stack,
-      thread::priority(0), // highest priority (numerically smallest)
+      thread::priority(0),   // highest priority (numerically smallest)
       core0
    );
 
    thread lo(
       [&]{
-         auto r = kernel::wait_for(w);
-         (void)r;
-         int expected = 0;
-         if (wake_order.compare_exchange_strong(expected, 1)) {
-            // first woken (should not happen)
-         } else {
-            wake_order.store(2);
-         }
-         step.fetch_add(1);
+         this_thread::wait_on(w);
+         lo_wake_position = wake_sequence.fetch_add(1) + 1;
       },
       lo_stack,
       thread::priority(3),
@@ -273,125 +269,152 @@ TEST_F(SingleCoreWaitables_Test,
 
    thread signaler(
       [&]{
-         // Wake one: should pick best priority (hi).
-         w.fire_one(true);
-
-         // Wake second.
-         w.fire_one(true);
+         // First wake should target the highest-priority waiter (hi).
+         w.set_and_wake_one();
+         // Second wake should target the remaining waiter (lo). The condition
+         // is already true from the first call; just wake_one again.
+         w.wake_one_no_set();
       },
       signaler_stack,
       thread::priority(10),
       core0
    );
 
-   // WHEN:
-
    kernel::start();
 
-   // THEN:
-
-   ASSERT_EQ(step.load(), 2);
-   ASSERT_EQ(wake_order.load(), 2); // both woke; but we still need to verify hi woke first
-
-   // Stronger check: because hi has higher priority, it should almost certainly
-   // run first after the first signal. If your port/scheduler is strictly priority-based,
-   // this should hold deterministically.
-   //
-   // We check that the first to run after wake was hi by verifying that when wake_order
-   // was first set to 1, it came from hi thread (implicitly ensured by priority order).
-   //
-   // If you want a fully deterministic ID-based check, see the next test which uses IDs.
-   ASSERT_EQ(w.blocked_calls.load(), 2U);
-   ASSERT_EQ(w.removed_calls.load(), 2U);
+   ASSERT_EQ(hi_wake_position, 1) << "high-priority waiter should wake first";
+   ASSERT_EQ(lo_wake_position, 2) << "low-priority waiter should wake second";
 }
 
+/* ============================================================================
+ * wake_all
+ * ========================================================================= */
+
 TEST_F(SingleCoreWaitables_Test,
-       GivenThreeWaiters_WhenSignalAll_ThenAllThreadsWakeAndHooksFireForEach)
+       GivenThreeWaiters_WhenWakeAll_ThenAllThreeReturn)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> a_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> b_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> c_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
-
-   // GIVEN:
-
    TestWaitable w;
    std::atomic<int> woke_count{0};
 
-   thread a([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, a_stack, thread::priority(2), core0);
-   thread b([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, b_stack, thread::priority(1), core0);
-   thread c([&]{ (void)kernel::wait_for(w); woke_count.fetch_add(1); }, c_stack, thread::priority(3), core0);
+   thread a([&]{ this_thread::wait_on(w); woke_count.fetch_add(1); }, a_stack, thread::priority(2), core0);
+   thread b([&]{ this_thread::wait_on(w); woke_count.fetch_add(1); }, b_stack, thread::priority(1), core0);
+   thread c([&]{ this_thread::wait_on(w); woke_count.fetch_add(1); }, c_stack, thread::priority(3), core0);
 
    thread signaler(
       [&]{
-         w.fire_all(true);
+         w.set_and_wake_all();
       },
       signaler_stack,
       thread::priority(7),
       core0
    );
 
-   // WHEN:
-
    kernel::start();
 
-   // THEN:
-
    ASSERT_EQ(woke_count.load(), 3);
-   ASSERT_EQ(w.blocked_calls.load(), 3U);
-   ASSERT_EQ(w.removed_calls.load(), 3U);
 }
 
+/* ============================================================================
+ * Spurious wake re-check loop on wait_on_any
+ * ========================================================================= */
+
 TEST_F(SingleCoreWaitables_Test,
-       GivenWaiter_WhenItBlocks_ThenWaiterSnapshotMatchesThreadIdentityAndPriority)
+       GivenWaitOnAnyWokenByOneSourceButConditionFalse_ThenWaiterReblocks)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
 
-   // GIVEN:
-
-   TestWaitable w;
-
-   thread::id waiter_id = 0;
-   waitable::result result{};
-   bool waiter_completed = false;
+   TestWaitable w0;
+   TestWaitable w1;
+   std::size_t winner = static_cast<std::size_t>(-1);
 
    thread waiter(
       [&]{
-         // Capture our ID inside the running thread
-         waiter_id = this_thread::id();
-
-         result = kernel::wait_for(w);
-         waiter_completed = true;
+         winner = this_thread::wait_on_any(w0, w1);
       },
       waiter_stack,
-      thread::priority(4),
+      thread::priority(0),
       core0
    );
 
    thread signaler(
       [&]{
-         // Validate snapshot produced in on_thread_blocked()
-         ASSERT_EQ(w.last_id.load(), waiter_id);
-         ASSERT_EQ(w.last_base_prio.load(), 4U);
-         ASSERT_EQ(w.last_eff_prio.load(), 4U);
-         ASSERT_EQ(w.last_pinned_core.load(), 0U);
-
-         w.fire_one(true);
+         // Spurious-style wake: poke w0's queue without setting any condition.
+         // The waiter must re-check, find nothing satisfied, and re-block.
+         w0.wake_one_no_set();
+         // Real wake: set w1, which is what the waiter should ultimately return on.
+         w1.set_and_wake_one();
       },
       signaler_stack,
-      thread::priority(5),
+      thread::priority(1),
       core0
    );
 
-   // WHEN:
+   kernel::start();
+
+   ASSERT_EQ(winner, 1U) << "spurious wake on w0 must not be reported as the winner";
+}
+
+/* ============================================================================
+ * Sanity: condition is read on the waiter's thread (caller TCB passed through)
+ * ========================================================================= */
+
+class IdentityCheckingWaitable final : public waitable
+{
+public:
+   std::atomic<thread::id> seen_caller_id{0};
+   std::atomic<bool>       go{false};
+
+   void release() noexcept
+   {
+      go.store(true, std::memory_order_release);
+      wake_one();
+   }
+
+protected:
+   bool is_satisfied(thread& caller) noexcept override
+   {
+      // Record the caller's id every time we're polled. The last write wins;
+      // for a single waiter that's exactly its id.
+      seen_caller_id.store(caller.get_id(), std::memory_order_relaxed);
+      return go.load(std::memory_order_acquire);
+   }
+};
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenWaiter_WhenIsSatisfiedIsCalled_ThenCallerArgIsTheWaitingThread)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+
+   IdentityCheckingWaitable w;
+   thread::id captured_waiter_id = 0;
+
+   thread waiter(
+      [&]{
+         captured_waiter_id = this_thread::id();
+         this_thread::wait_on(w);
+      },
+      waiter_stack,
+      thread::priority(0),
+      core0
+   );
+
+   thread signaler(
+      [&]{
+         w.release();
+      },
+      signaler_stack,
+      thread::priority(1),
+      core0
+   );
 
    kernel::start();
 
-   // THEN:
-
-   ASSERT_TRUE(waiter_completed);
-   ASSERT_EQ(result.index, 0);
-   ASSERT_TRUE(result.acquired);
+   ASSERT_EQ(w.seen_caller_id.load(), captured_waiter_id);
 }
