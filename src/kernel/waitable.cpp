@@ -86,7 +86,9 @@ void waitable::wait_queue::disarm(wait_node& node) noexcept
    // Unlink n if still present. A wake may have already removed it;
    // idempotent unlink makes that safe (no-op if not found).
    wait_node** slot = &head;
-   while (*slot && *slot != &node) slot = &(*slot)->next;
+   while (*slot && *slot != &node) {
+      slot = &(*slot)->next;
+   }
    if (*slot == &node) {
       *slot = node.next;
       node.next = nullptr;
@@ -100,9 +102,10 @@ void waitable::wait_queue::wake_one(reschedule_policy policy) noexcept
       spinlock_guard guard(lock);
 
       if (head == nullptr) return;
-      woken = head->owner;
-      head = head->next;
-      woken->next = nullptr;
+      wait_node* node = head;
+      woken = node->owner;
+      head = node->next;
+      node->next = nullptr;
    }
 
    schedule_hint hint = kernel_set_thread_ready(*woken);
