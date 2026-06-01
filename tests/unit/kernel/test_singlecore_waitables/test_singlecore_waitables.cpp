@@ -129,7 +129,7 @@ TEST_F(SingleCoreWaitables_Test,
 }
 
 TEST_F(SingleCoreWaitables_Test,
-       GivenWaiter_WhenWokenButConditionStillFalse_ThenWaiterRebllocks)
+       GivenWaiter_WhenWokenButConditionStillFalse_ThenWaiterReblocks)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};

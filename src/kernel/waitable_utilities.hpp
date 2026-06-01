@@ -25,6 +25,7 @@ public:
       for (std::size_t i = 0; i < node_count; ++i) {
          push({
             .owner = tcb,
+            .next = nullptr,
             .source_index = static_cast<uint8_t>(i),
          });
       }
@@ -84,17 +85,6 @@ public:
    {
       CYROS_ASSERT(count < store.size());
       store[count++] = node;
-   }
-
-   void pop()
-   {
-      CYROS_ASSERT(!empty());
-      --count;
-   }
-
-   void clear() noexcept
-   {
-      count = 0;
    }
 };
 

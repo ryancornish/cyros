@@ -37,6 +37,14 @@ public:
    }
 };
 
+// State transition ownership:
+//   ready       - any core may request; routed via wake_thread()
+//                 -> set_thread_ready() with cross-core posting.
+//   blocked     - only the thread itself requests (always local).
+//   running     - only the dispatching scheduler requests (always local).
+//   terminated  - only the thread itself requests (always local).
+// All state mutations occur on the TCB's pinned core.
+
 struct thread_control_block
 {
    enum class thread_state : uint8_t { ready, running, blocked, terminated };

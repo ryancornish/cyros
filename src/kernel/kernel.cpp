@@ -237,10 +237,9 @@ void thread_launcher(void* tcb_ptr)
 
    tcb->entry();
 
-   tcb->state = thread_control_block::thread_state::terminated;
+   auto& scheduler = kernel_instance.scheduler_for_this_core();
 
-   // signal joiners
-   tcb->termination.terminate();
+   scheduler.set_thread_terminated(*tcb);
 
    if (tcb->id == scheduler::idle_thread_id) return; // idle threads are not apart of the same bookkeeping
 
@@ -258,7 +257,7 @@ void idle_task()
    }
 }
 
-schedule_hint wake_thread(thread_control_block& tcb)
+schedule_hint kernel_set_thread_ready(thread_control_block& tcb)
 {
    return kernel_instance.set_thread_ready(tcb);
 }
@@ -348,18 +347,23 @@ void yield()
    CYROS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
 
    auto& scheduler = kernel_instance.scheduler_for_this_core();
-
    auto* tcb = scheduler.current_thread_reference();
-
    wait_node_vector nodes(waitables.size(), tcb);
 
    while (true) {
       waitable_arm_guard arm_guard(waitables, nodes);
 
+      // Commit to blocking BEFORE the predicate check. If a wake fires
+      // between arming and yielding, the wake's set_thread_ready request
+      // is queued in our inbox. The next yield drains it and transitions
+      // us back to ready.
+      scheduler.set_thread_blocked(*tcb);
+
       // Check each source. Lowest-index wins on ties (e.g. resource before
       // timeout).
       for (std::size_t i = 0; waitable& waitable : waitables) {
          if (waitable.is_satisfied(*tcb->public_thread_handle)) {
+            scheduler.set_thread_running(*tcb);
             return i;
          }
          ++i;

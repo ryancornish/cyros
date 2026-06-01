@@ -61,49 +61,35 @@ bool waitable::wait_queue::empty() const noexcept
    return head == nullptr;
 }
 
-void waitable::wait_queue::arm(wait_node& n) noexcept
+void waitable::wait_queue::arm(wait_node& node) noexcept
 {
    spinlock_guard guard(lock);
 
-   // Mark the thread blocked while we still hold the queue lock. A concurrent
-   // wake on this queue serialises on this lock; a wake that sees the node
-   // here is guaranteed to take the unlink-and-ready path correctly.
-   CYROS_ASSERT(n.owner != nullptr);
-   CYROS_ASSERT(n.next  == nullptr); // node must not already be on a list
+   CYROS_ASSERT(node.owner != nullptr);
+   CYROS_ASSERT(node.next  == nullptr); // node must not already be on a list
 
-   n.owner->state = thread_control_block::thread_state::blocked;
+   node.owner->state = thread_control_block::thread_state::blocked;
 
    // Priority-ordered insert (best at head).
    wait_node** slot = &head;
-   while (*slot && (*slot)->owner->effective_priority <= n.owner->effective_priority) {
+   while (*slot && (*slot)->owner->effective_priority <= node.owner->effective_priority) {
       slot = &(*slot)->next;
    }
-   n.next = *slot;
-   *slot  = &n;
+   node.next = *slot;
+   *slot  = &node;
 }
 
-void waitable::wait_queue::disarm(wait_node& n) noexcept
+void waitable::wait_queue::disarm(wait_node& node) noexcept
 {
    spinlock_guard guard(lock);
 
-   // Unlink n if still present. If a wake already removed it, the loop simply
-   // finds nothing and falls through - that is the expected path when disarm
-   // runs after a wake. Critically, block_on_any disarms ALL its nodes after
-   // a wake. Only the queue that woke the thread had the node, the others
-   // already let go of it. Idempotent unlink makes that safe.
+   // Unlink n if still present. A wake may have already removed it;
+   // idempotent unlink makes that safe (no-op if not found).
    wait_node** slot = &head;
-   while (*slot && *slot != &n) slot = &(*slot)->next;
-   if (*slot == &n) {
-      *slot = n.next;
-      n.next = nullptr;
-   }
-
-   // Restore running state under the lock if this disarm is being called
-   // because the caller decided NOT to park (predicate already true). If the
-   // node was already removed by a wake, state is already 'ready' and we must
-   // leave that alone - the scheduler will rotate via the ready path.
-   if (n.owner->state == thread_control_block::thread_state::blocked) {
-      n.owner->state = thread_control_block::thread_state::running;
+   while (*slot && *slot != &node) slot = &(*slot)->next;
+   if (*slot == &node) {
+      *slot = node.next;
+      node.next = nullptr;
    }
 }
 
@@ -112,19 +98,14 @@ void waitable::wait_queue::wake_one(reschedule_policy policy) noexcept
    thread_control_block* woken = nullptr;
    {
       spinlock_guard guard(lock);
+
       if (head == nullptr) return;
-
-      wait_node* n = head;
-      head = n->next;
-      n->next = nullptr;
-
-      // Mark ready under the lock so a racing arm/disarm sees a consistent
-      // state.
-      n->owner->state = thread_control_block::thread_state::ready;
-      woken = n->owner;
+      woken = head->owner;
+      head = head->next;
+      woken->next = nullptr;
    }
 
-   schedule_hint hint = wake_thread(*woken);
+   schedule_hint hint = kernel_set_thread_ready(*woken);
    apply_reschedule_policy(policy, hint);
 }
 
@@ -135,20 +116,17 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
       spinlock_guard guard(lock);
       batch = head;
       head = nullptr;
-      for (wait_node* n = batch; n != nullptr; n = n->next) {
-         n->owner->state = thread_control_block::thread_state::ready;
-      }
    }
 
    schedule_hint aggregate_hint = schedule_hint::unwarranted;
-   for (wait_node* n = batch; n != nullptr; ) {
-      wait_node* next = n->next;
-      n->next = nullptr;
-      schedule_hint hint = wake_thread(*n->owner);
+   for (wait_node* node = batch; node != nullptr; ) {
+      wait_node* next = node->next;
+      node->next = nullptr;
+      schedule_hint hint = kernel_set_thread_ready(*node->owner);
       if (hint == schedule_hint::warranted) {
          aggregate_hint = schedule_hint::warranted;
       }
-      n = next;
+      node = next;
    }
 
    apply_reschedule_policy(policy, aggregate_hint);

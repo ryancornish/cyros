@@ -34,8 +34,8 @@ void scheduler::start() noexcept
    }
    CYROS_ASSERT(first != nullptr);
    CYROS_ASSERT_OP(first->state, ==, thread_control_block::thread_state::ready);
-   first->state = thread_control_block::thread_state::running;
-   current_thread = first;
+
+   set_thread_running(*first);
 
    //cyros_port_set_thread_pointer(current_thread);
    cyros_port_start_first(current_thread->context());
@@ -52,6 +52,29 @@ void scheduler::set_thread_ready(thread_control_block& tcb) noexcept
    if (&tcb == idle_thread) return;
 
    ready_matrix.enqueue_thread(tcb);
+}
+
+void scheduler::set_thread_running(thread_control_block& tcb) noexcept
+{
+   CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+
+   tcb.state = thread_control_block::thread_state::running;
+   current_thread = &tcb;
+}
+
+void scheduler::set_thread_blocked(thread_control_block& tcb) noexcept
+{
+   CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+
+   tcb.state = thread_control_block::thread_state::blocked;
+}
+
+void scheduler::set_thread_terminated(thread_control_block& tcb) noexcept
+{
+   CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+
+   tcb.state = thread_control_block::thread_state::terminated;
+   tcb.termination.terminate(); // signal joiners
 }
 
 void scheduler::drain_inbox() noexcept
@@ -123,8 +146,7 @@ void scheduler::reschedule() noexcept
    auto* next_thread = ready_matrix.pop_best_thread();
    if (!next_thread) next_thread = idle_thread;
 
-   current_thread = next_thread;
-   next_thread->state = thread_control_block::thread_state::running;
+   set_thread_running(*next_thread);
    cyros_port_switch(previous_thread->context(), next_thread->context());
 }
 

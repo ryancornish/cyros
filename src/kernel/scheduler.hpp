@@ -23,7 +23,7 @@ enum class schedule_hint
 };
 
 // Implemented by the kernel
-schedule_hint wake_thread(thread_control_block& tcb);
+schedule_hint kernel_set_thread_ready(thread_control_block& tcb);
 
 // Implemented by the kernel
 void idle_task();
@@ -95,6 +95,12 @@ public:
 
    void set_thread_ready(thread_control_block& tcb) noexcept;
 
+   void set_thread_running(thread_control_block& tcb) noexcept;
+
+   void set_thread_blocked(thread_control_block& tcb) noexcept;
+
+   void set_thread_terminated(thread_control_block& tcb) noexcept;
+
    void drain_inbox() noexcept;
 
    // Cross-core safe posting API
@@ -106,11 +112,17 @@ public:
    * Invariants / contract:
    * - Called only by the owning core of this scheduler (no cross-core mutation).
    * - @c current_thread is non-null and is the thread currently executing on this core.
-   * - On entry, @c current_thread->state is NEVER Ready:
-   *     - Running    => treated as preempted/rotated and re-enqueued as Ready (except idle).
-   *     - Blocked    => must already be removed from ready structures - not re-enqueued.
-   *     - Terminated => must not be re-enqueued.
    * - The currently running thread is not present in the ready matrix on entry.
+   * - On entry, @c current_thread->state is one of:
+   *     - Running    => running normally - treated as preempted/rotated and re-enqueued
+   *                     (except idle).
+   *     - Ready      => "armed-then-woken before yield" - the thread armed itself on
+   *                     a wait_queue but was woken by a concurrent signaller before
+   *                     it reached this point. Indistinguishable from Running for
+   *                     scheduling purposes: rotate and re-enqueue.
+   *     - Blocked    => parking on a wait_queue - must already be removed from ready
+   *                     structures. Not re-enqueued.
+   *     - Terminated => must not be re-enqueued.
    * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
    */
    void reschedule() noexcept;
