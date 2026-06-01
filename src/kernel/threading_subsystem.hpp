@@ -38,21 +38,22 @@ public:
 };
 
 // State transition ownership:
-//   ready       - any core may request; routed via wake_thread()
-//                 -> set_thread_ready() with cross-core posting.
+//   ready       - any core may request. Routed via wake_thread() -> set_thread_ready() with cross-core posting.
+//                 Caller must ensure the thread is currently blocked (or running, for newly-registered threads). Calling
+//                 on an already-ready thread is a caller bug.
 //   blocked     - only the thread itself requests (always local).
 //   running     - only the dispatching scheduler requests (always local).
 //   terminated  - only the thread itself requests (always local).
-// All state mutations occur on the TCB's pinned core.
 
 struct thread_control_block
 {
    enum class thread_state : uint8_t { ready, running, blocked, terminated };
    thread_state state{thread_state::ready};
 
-   // Intrusive 'linked-list' links for a thread_ready_queue
-   thread_control_block* next{nullptr};
-   thread_control_block* prev{nullptr};
+   // Intrusive 'linked-list' links for a thread_ready_queue. Pointing to self
+   // represents the not-enqueued sentinel
+   thread_control_block* next{this};
+   thread_control_block* prev{this};
 
 
    uint32_t id;
@@ -77,7 +78,7 @@ struct thread_control_block
 
    [[nodiscard]] constexpr bool is_enqueued() const noexcept
    {
-      return next != nullptr || prev != nullptr;
+      return next != this;
    }
 
    [[nodiscard]] constexpr bool is_higher_priority_than(thread_control_block& rhs)  const noexcept

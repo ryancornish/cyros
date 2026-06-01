@@ -1,0 +1,8 @@
+[test]
+name   = "test_multicore_waitables"
+source = "test_multicore_waitables.cpp"
+config = "test_multicore_waitables_config.hpp"
+
+[link]
+# Uses its own main() — link gtest but not gtest_main.
+system_libraries = ["boost_context", "gtest"]

@@ -93,6 +93,7 @@ public:
    // Core-local operations (only called on owning core)
    void start() noexcept;
 
+   // This is NOT idempotent
    void set_thread_ready(thread_control_block& tcb) noexcept;
 
    void set_thread_running(thread_control_block& tcb) noexcept;
@@ -114,13 +115,13 @@ public:
    * - @c current_thread is non-null and is the thread currently executing on this core.
    * - The currently running thread is not present in the ready matrix on entry.
    * - On entry, @c current_thread->state is one of:
-   *     - Running    => running normally - treated as preempted/rotated and re-enqueued
-   *                     (except idle).
-   *     - Ready      => "armed-then-woken before yield" - the thread armed itself on
-   *                     a wait_queue but was woken by a concurrent signaller before
-   *                     it reached this point. Indistinguishable from Running for
-   *                     scheduling purposes: rotate and re-enqueue.
-   *     - Blocked    => parking on a wait_queue - must already be removed from ready
+   *     - Running    => running normally - treated as preempted/rotated and re-enqueued (except idle).
+   *     - Ready      => "armed-then-woken before yield" - the thread armed itself on a wait_queue but
+   *                     was woken by a concurrent signaller before reaching this point.
+   *                     The wake's set_thread_ready request was processed by drain_inbox() (called above),
+   *                     which transitioned state to Ready and enqueued the thread into the ready matrix.
+   *                     Therefore: do NOT re-enqueue here. Just fall through to picking the next thread.
+   *     - Blocked    => parking on a wait_queue - must already be removed from ready.
    *                     structures. Not re-enqueued.
    *     - Terminated => must not be re-enqueued.
    * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.

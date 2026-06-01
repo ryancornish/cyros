@@ -697,7 +697,7 @@ extern "C" void cyros_port_cpu_relax(void)
 
 extern "C" void cyros_port_idle(void)
 {
-   std::printf("(CORE %d) cyros_port_idle()\n", current_core.core->core_id);
+   // std::printf("(CORE %d) cyros_port_idle()\n", current_core.core->core_id);
    auto& core_poke = global.cores[current_core.core->core_id].core_poke;
 
    // Fast path: don't sleep if already pending.

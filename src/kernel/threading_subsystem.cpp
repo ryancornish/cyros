@@ -110,18 +110,17 @@ thread_control_block* thread_ready_queue::pop_front() noexcept
    auto* tcb = head;
    head = tcb->next;
    if (head) head->prev = nullptr; else tail = nullptr;
-   tcb->next = tcb->prev = nullptr;
+   tcb->next = tcb->prev = tcb;
    return tcb;
 }
 
 void thread_ready_queue::remove(thread_control_block& tcb) noexcept
 {
-   CYROS_ASSERT(&tcb == head || tcb.prev != nullptr);
-   CYROS_ASSERT(&tcb == tail || tcb.next != nullptr);
+   CYROS_ASSERT(tcb.is_enqueued());  // can only remove enqueued threads
 
    if (tcb.prev) tcb.prev->next = tcb.next; else head = tcb.next;
    if (tcb.next) tcb.next->prev = tcb.prev; else tail = tcb.prev;
-   tcb.next = tcb.prev = nullptr;
+   tcb.next = tcb.prev = &tcb;
    // Invariant: if one end is null, both are null
    CYROS_ASSERT((head == nullptr) == (tail == nullptr));
 }
