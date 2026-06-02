@@ -306,6 +306,7 @@ TEST_F(MultiCoreWaitables_Test,
 
    for (int rep = 0; rep < stress_repetitions; ++rep) {
       SCOPED_TRACE("stress rep " + std::to_string(rep));
+      //std::printf("\nTEST ITERATION: %d\n", rep);
 
       kernel::initialise();
 

@@ -96,6 +96,12 @@ stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const 
 
 void thread_ready_queue::push_back(thread_control_block& tcb) noexcept
 {
+   if (tcb.is_enqueued()) {
+      std::printf("DOUBLE ENQUEUE: tcb id=%u state=%d next=%p prev=%p this=%p\n",
+                  tcb.id, (int)tcb.state, (void*)tcb.next, (void*)tcb.prev, (void*)&tcb);
+      // Also dump where we're being called from
+      cyros_port_breakpoint();
+   }
    CYROS_ASSERT(!tcb.is_enqueued());
    CYROS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready); // Thread must be ready to be enqueued
    tcb.next = nullptr;

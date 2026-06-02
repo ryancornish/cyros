@@ -149,6 +149,17 @@ public:
          spinlock_guard guard(lock);
          pin_thread_to_core(tcb);
       }
+      auto& scheduler = scheduler_for_core(tcb.pinned_core);
+
+      // If cores are not running yet, enqueue directly (even for remote cores)
+      if (!running.load(std::memory_order_acquire)) {
+         (void)scheduler.set_thread_ready(tcb);
+         return;
+      }
+
+      // Thread state should be freshly constructed with 'ready'
+      CYROS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready);
+      CYROS_ASSERT(!tcb.is_enqueued());
 
       if (set_thread_ready(tcb) == schedule_hint::warranted) {
          // Weak request: Registering the thread is not itself blocking, it is
@@ -178,31 +189,25 @@ public:
    */
    schedule_hint set_thread_ready(thread_control_block& tcb) noexcept
    {
-      CYROS_ASSERT_OP(tcb.state, !=, thread_control_block::thread_state::terminated);
-
-      auto& scheduler = scheduler_for_core(tcb.pinned_core);
-
-      // if cores are not running yet, enqueue directly (even for remote cores)
-      if (!running.load(std::memory_order_acquire)) {
-         scheduler.set_thread_ready(tcb);
+      // Fast path: if the thread is already terminated. Can happen with stale remote-ready-requests
+      // A thread that terminates AFTER this check is handled by the scheduler-level guard when the request is drained.
+      if (tcb.state == thread_control_block::thread_state::terminated) {
          return schedule_hint::unwarranted;
       }
 
-      auto this_core = cyros_port_get_core_id();
-      if (this_core == tcb.pinned_core) {
-         scheduler.set_thread_ready(tcb);
+      auto& scheduler = scheduler_for_core(tcb.pinned_core);
 
-         if (tcb.is_higher_priority_than(scheduler.current_thread_priority())) {
-            return schedule_hint::warranted;
-         }
-      } else {
+      auto this_core = cyros_port_get_core_id();
+      if (this_core != tcb.pinned_core) {
          bool posted = scheduler.post_to_inbox({
             .type = cross_core_request::set_thread_ready,
-            .tcb = &tcb
+            .tcb = &tcb,
          });
          CYROS_ASSERT(posted);
+         return schedule_hint::unwarranted;
       }
-      return schedule_hint::unwarranted;
+
+      return scheduler.set_thread_ready(tcb);
    }
 };
 constinit kernel_state kernel_instance;

@@ -41,17 +41,38 @@ void scheduler::start() noexcept
    cyros_port_start_first(current_thread->context());
 }
 
-void scheduler::set_thread_ready(thread_control_block& tcb) noexcept
+schedule_hint scheduler::set_thread_ready(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+
+   // Idempotent: a remote core might have sent us a late request to ready
+   // this thread, and we have already terminated it since. No-op.
+   if (tcb.state == thread_control_block::thread_state::terminated) {
+      return schedule_hint::unwarranted;
+   }
+
+   // Idempotent: if already enqueued, this is a redundant wake/admit (e.g.
+   // two signallers raced, or a stale wake from a prior round). The thread
+   // is already going to run.
+   if (tcb.is_enqueued()) {
+      CYROS_ASSERT(tcb.state == thread_control_block::thread_state::ready); // Worth checking
+      return schedule_hint::unwarranted;
+   }
 
    tcb.state = thread_control_block::thread_state::ready;
 
    // Idle thread does not belong in the ready_matrix,
    // but DOES follow state transition semantics
-   if (&tcb == idle_thread) return;
+   if (&tcb == idle_thread) {
+      return schedule_hint::unwarranted;
+   }
 
    ready_matrix.enqueue_thread(tcb);
+
+   if (tcb.is_higher_priority_than(current_thread_priority())) {
+      return schedule_hint::warranted;
+   }
+   return schedule_hint::unwarranted;
 }
 
 void scheduler::set_thread_running(thread_control_block& tcb) noexcept
@@ -85,7 +106,8 @@ void scheduler::drain_inbox() noexcept
    while (inbox.pop(request)) {
       switch (request.type) {
          case cross_core_request::set_thread_ready:
-            set_thread_ready(*request.tcb);
+            // Drain inbox happens during a reschedule. No need to acknowledge the hint
+            (void)set_thread_ready(*request.tcb);
             break;
       }
    }
@@ -134,7 +156,7 @@ void scheduler::reschedule() noexcept
 
    switch (previous_thread->state) {
       case thread_control_block::thread_state::running:
-         set_thread_ready(*previous_thread);
+         (void)set_thread_ready(*previous_thread); // Discard the hint because we are already rescheduling
          break;
 
       case thread_control_block::thread_state::ready:
@@ -152,7 +174,15 @@ void scheduler::reschedule() noexcept
 
 void scheduler::reset()
 {
-   CYROS_ASSERT_OP(inbox.approx_size(), ==, 0); // Cannot reset whilst inbox is not empty
+   // At shutdown the inbox may still hold stale wake requests (e.g. a signaller
+   // can post wakes faster than the target drains them, and the target may
+   // terminate with surplus wakes still queued). But a wake to a
+   // terminated thread is a no-op. But we don't want to miss any pending work
+   // to a thread that is still live and blocked.
+   cross_core_request request;
+   while (inbox.pop(request)) {
+      CYROS_ASSERT_OP(request.tcb->state, ==, thread_control_block::thread_state::terminated);
+   }
    CYROS_ASSERT(ready_matrix.empty()); // Cannot reset whilst threads still in the queue
 
    pinned_thread_counter.store(0, std::memory_order_relaxed);

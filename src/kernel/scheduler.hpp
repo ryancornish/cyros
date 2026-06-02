@@ -93,8 +93,7 @@ public:
    // Core-local operations (only called on owning core)
    void start() noexcept;
 
-   // This is NOT idempotent
-   void set_thread_ready(thread_control_block& tcb) noexcept;
+   [[nodiscard]] schedule_hint set_thread_ready(thread_control_block& tcb) noexcept;
 
    void set_thread_running(thread_control_block& tcb) noexcept;
 
@@ -105,7 +104,7 @@ public:
    void drain_inbox() noexcept;
 
    // Cross-core safe posting API
-   bool post_to_inbox(cross_core_request request) noexcept;
+   [[nodiscard]] bool post_to_inbox(cross_core_request request) noexcept;
 
    /**
    * @brief Selects the next runnable thread for this core and performs a context switch.
