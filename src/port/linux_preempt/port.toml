@@ -1,0 +1,15 @@
+name = "linux_preempt"
+
+sources = [
+   "port_linux_preempt.cpp",
+   "../../../external/sigctx/src/sigctx.c",
+   "../../../external/sigctx/src/sigctx_intercept.c",
+]
+
+private_includes = [
+   "../../../external/sigctx/include",
+]
+
+public_headers = [
+  "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]
