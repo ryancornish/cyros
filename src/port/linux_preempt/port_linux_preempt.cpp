@@ -14,8 +14,10 @@
  * all reduce to "make the reschedule signal land". sigctx_intercept captures the
  * interrupted context, hands it to on_reschedule(), and resumes whatever context
  * that handler returns. The handler runs the kernel scheduler, which ends in
- * cyros_port_switch(), which rt_sigreturns into the chosen thread. The signal
- * handler is the analogue of PendSV running on the handler stack.
+ * cyros_port_switch(). That records the context to resume and returns, and the
+ * interceptor performs the rt_sigreturn into it. So the kernel's reschedule
+ * routine stays a normal call that unwinds, with no hidden non-local exit. The
+ * signal handler is the analogue of PendSV running on the handler stack.
  *
  * Synchronous yield (first-step simplification)
  * ---------------------------------------------
@@ -110,7 +112,7 @@ static constexpr int preempt_signo = SIGURG;
  * altstack where the kernel lays the raw signal frame. Generously sized to hold
  * a captured context, its FP area, and the full reschedule call depth.
  */
-static constexpr std::size_t handler_stack_size = 128 * 1024;
+static constexpr std::size_t handler_stack_size = 128 * 1024; // 128KB
 
 
 /* ============================================================================
@@ -220,6 +222,11 @@ struct current_core_state
    // consumed by the cyros_port_switch() it drives. Valid only for that call.
    sigctx_ucontext_t*  paused_uc{nullptr};
 
+   // The context cyros_port_switch() chose, read back by on_reschedule() and
+   // returned to the interceptor to resume. Single-shot scratch with the same
+   // lifetime as paused_uc, but it points at durable TCB storage.
+   sigctx_ucontext_t*  resume_uc{nullptr};
+
    // First signal delivery on this core takes the bring-up branch.
    bool                bootstrapping{false};
    cyros_port_context* first_ctx{nullptr};
@@ -297,9 +304,8 @@ static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void* arg)
    // unwind back into start_first(), then launch this core's first thread.
    if (current_core.bootstrapping) {
       current_core.bootstrapping = false;
-      sigctx_copy(&core.scheduler_ctx.uc,
-                  core.scheduler_ctx.fpstate, sizeof(core.scheduler_ctx.fpstate),
-                  paused);
+      sigctx_copy(/*dst=*/ &core.scheduler_ctx.uc, core.scheduler_ctx.fpstate, sizeof(core.scheduler_ctx.fpstate),
+                  /*src=*/ paused);
       current_core.current_context = current_core.first_ctx;
       return &current_core.first_ctx->sctx.uc;
    }
@@ -312,13 +318,17 @@ static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void* arg)
    }
 
    // Drive the core-local scheduler. It ends in cyros_port_switch(), which
-   // resumes the chosen thread through sigctx_resume() and does not return here.
-   // The fallthrough below is reached only if the scheduler performed no switch,
-   // in which case resuming the paused context is the correct answer.
+   // records the context to resume in resume_uc and returns normally, so the
+   // kernel reschedule routine unwinds like any other call. Clear resume_uc
+   // first so the assert below catches a scheduler path that failed to switch
+   // rather than passing on a stale value.
    current_core.paused_uc = paused;
+   current_core.resume_uc = nullptr;
    global.reschedule_handler();
    current_core.paused_uc = nullptr;
-   return paused;
+
+   CYROS_ASSERT(current_core.resume_uc); // scheduler returned without choosing a context
+   return current_core.resume_uc;
 }
 
 /**
@@ -589,21 +599,21 @@ void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to)
    CYROS_ASSERT(current_core.paused_uc); // a switch is only ever driven from on_reschedule
 
    if (from && !current_core.discard_outgoing) {
-      // Relocate the captured frame into the outgoing TCB. The capture lives on
-      // the handler stack and dies with this handler invocation, so copying it
-      // into durable TCB storage is what lets the thread resume later.
-      sigctx_copy(&from->sctx.uc,
-                  from->sctx.fpstate, sizeof(from->sctx.fpstate),
-                  current_core.paused_uc);
+      // Relocate the captured frame into the outgoing TCB while paused_uc still
+      // points at live handler-stack storage. This is what lets the thread
+      // resume later, after this handler invocation is gone.
+      sigctx_copy(/*dst=*/ &from->sctx.uc, from->sctx.fpstate, sizeof(from->sctx.fpstate),
+                  /*src=*/ current_core.paused_uc);
    }
 
    current_core.discard_outgoing = false;
    current_core.paused_uc        = nullptr;
    current_core.current_context  = to;
 
-   // rt_sigreturn into the incoming thread. The jump discards every handler-stack
-   // frame above us, so this call does not return.
-   sigctx_resume(&to->sctx.uc);
+   // Record the context to resume and return. on_reschedule() hands it back to
+   // the interceptor, which performs the rt_sigreturn from the trampoline. This
+   // keeps the kernel reschedule routine a plain returning call.
+   current_core.resume_uc = &to->sctx.uc;
 }
 
 void cyros_port_start_first(cyros_port_context_t* first)
