@@ -2,4 +2,4 @@ name = "gcc-coverage"
 extends = "gcc-debug.toml"
 
 [flags]
-common_add = ["--coverage"]
+common_add = ["--coverage", "-fprofile-update=atomic"]
