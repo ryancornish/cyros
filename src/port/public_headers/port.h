@@ -2,11 +2,20 @@
  * @file port.h
  * @brief Cyros Port Layer API (C ABI)
  *
- * This is the hardware abstraction layer between the Cyros kernel and
- * platform-specific code. All functions use C linkage for easy implementation
- * in assembly or C.
+ * This is the main* contract between the kernel component, and the hardware/platform.
+ * Code that implements this contract's API for a specific platforms architecture is
+ * a 'port implementation'. A port implementation must implemented definitions for ALL
+ * functions declared here.
  *
- * Port implementations must provide all functions declared here.
+ * The API uses C linkage for a _simpler_ ABI. This allows port implemenetations to
+ * be in C or assembly. Though C++ is still available.
+ *
+ * *This is the _main_ contract, but not the only port contract. More specifically,
+ * this is the contract between the kernel component of Cyros and the platform.
+ * It is the bare-minimum implementable for a complete Cyros build. Other components
+ * such as the time-driver also require a port implementation. If the Cyros build requires
+ * a time-driver, then it also requires the port component to implement it. The contract
+ * for the time driver is separate-but-parallel to this contract (see port_time.h).
  */
 
 #ifndef CYROS_PORT_H
@@ -24,6 +33,9 @@ extern "C" {
 
 /* ============================================================================
  * Port Configuration Validation
+ * ----------------------------------------------------------------------------
+ * Verify and validate the port_traits.h implementation exposes all
+ * necessary macro definitions and that the values are sane.
  * ========================================================================= */
 
 #ifndef CYROS_PORT_CONTEXT_SIZE
@@ -46,12 +58,8 @@ extern "C" {
 # error "Port must define CYROS_PORT_CORE_COUNT"
 #endif
 
-#ifndef CYROS_PORT_SCHEDULING_TYPE
-# error "Port must define CYROS_PORT_SCHEDULING_TYPE (CYROS_PORT_SCHED_PREEMPTIVE or CYROS_PORT_SCHED_COOPERATIVE)"
-#endif
-
-#ifndef CYROS_PORT_ENVIRONMENT
-# error "Port must define CYROS_PORT_ENVIRONMENT (CYROS_PORT_ENV_BARE_METAL or CYROS_PORT_ENV_SIMULATION)"
+#ifndef CYROS_PORT_CAPTURE_LOCATION
+# error "Port must define CYROS_PORT_CAPTURE_LOCATION"
 #endif
 
 #if (CYROS_PORT_CONTEXT_SIZE) <= 0
@@ -86,16 +94,15 @@ extern "C" {
 # error "CYROS_PORT_CACHE_LINE must be a power of two"
 #endif
 
-#if (CYROS_PORT_SCHEDULING_TYPE != 1) && (CYROS_PORT_SCHEDULING_TYPE != 2)
-# error "Invalid CYROS_PORT_SCHEDULING_TYPE. Use CYROS_SCHED_PREEMPTIVE (1) or CYROS_SCHED_COOPERATIVE (2)."
+#if (CYROS_PORT_CAPTURE_LOCATION != 0) &&  (CYROS_PORT_CAPTURE_LOCATION != 1)
+# error "CYROS_PORT_CAPTURE_LOCATION must be '0' (false) or '1' (true)"
 #endif
 
-#if (CYROS_PORT_ENVIRONMENT != 1) && (CYROS_PORT_ENVIRONMENT != 2)
-# error "Invalid CYROS_PORT_ENVIRONMENT. Use CYROS_ENV_BARE_METAL (1) or CYROS_ENV_SIMULATION (2)."
-#endif
 
 /* ============================================================================
- * Type Definitions
+ * Port Type Definitions
+ * ----------------------------------------------------------------------------
+ * Various types to support the contract API.
  * ========================================================================= */
 
 /**
@@ -126,29 +133,81 @@ typedef void (*cyros_port_entry_t)(void* arg);
  */
 typedef void (*cyros_port_core_entry_t)(void);
 
-/**
- * @brief ISR signature
- */
-typedef void (*cyros_port_isr_handler_t)(void* arg);
 
 /* ============================================================================
- * Platform Initialization
+ * Port Contract API
+ * ----------------------------------------------------------------------------
+ * Functions that must be implemented by a port implementation.
+ * Sections include:
+ * - Platform Initialisation
+ * - SMP & Multi-Core Support
+ * - Interrupt Control
+ * - Preemption Control
+ * - Context Management & Switching
+ * - Reschedule Requests
+ * - Thread-Local Storage
+ * - CPU Hints & Idle
+ * - Debug & Diagnostics
  * ========================================================================= */
 
+/* ----------------------------------------------------------------------------
+ * Platform Initialisation
+ * ------------------------------------------------------------------------- */
+
 /**
- * @brief Initialize the port layer
+ * @brief Initialise the port layer
  * @param reschedule_handler Port->kernel hook invoked to service a reschedule
  *                           on the calling core (see cyros_port_reschedule_t).
  */
 void cyros_port_init(cyros_port_reschedule_t reschedule_handler);
 
-/* ============================================================================
- * Critical Sections (Interrupt Control)
+
+/* ----------------------------------------------------------------------------
+ * SMP & Multi-Core Support
+ *
+ * Each pthread represents a simulated "core". Core 0 runs on the calling
+ * thread, additional cores spawn as pthreads.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Get the ID of the current CPU core
+ * @return Core ID (0-indexed)
+ *
+ * For single-core systems, always returns 0.
+ * For SMP systems, returns which core is executing this code.
+ */
+uint32_t cyros_port_get_core_id(void);
+
+/**
+ * @brief Start (or release) all secondary cores and run entry on every core.
+ * @param cores_to_use Number of cores to start
+ * @param entry Entry point to run on each core
+ *
+ * After this call returns on the bootstrap core:
+ *  - On embedded: typically never returns because entry will start the first thread.
+ *  - On simulation: may return if port_start_first returns (cooperative).
+ */
+void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry);
+
+/**
+ * @brief Send an IPI to another core to trigger a reschedule
+ * @param core_id Target core ID
+ *
+ * Causes the target core to perform a reschedule at its next safe point. This
+ * is the cross-core analogue of cyros_port_pend_reschedule(): it carries the
+ * same weak guarantee and the receiving core resolves it exactly as a locally
+ * pended reschedule would be.
+ */
+void cyros_port_send_reschedule_ipi(uint32_t core_id);
+
+
+/* ----------------------------------------------------------------------------
+ * Interrupt Control
  *
  * Interrupt masking blocks the *hardware*: while raised, asynchronous
  * interrupts cannot be delivered to the calling core. This is distinct from
  * preemption control (below) - see the note in the Preemption Control section.
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 /**
  * @brief Disable interrupts
@@ -184,7 +243,8 @@ uint32_t cyros_port_irq_save(void);
  */
 void cyros_port_irq_restore(uint32_t state);
 
-/* ============================================================================
+
+/* ----------------------------------------------------------------------------
  * Preemption Control
  *
  * Preemption disabling blocks the *scheduler*: while raised, no context switch
@@ -209,7 +269,7 @@ void cyros_port_irq_restore(uint32_t state);
  * these, and with what nesting.
  *
  * Both functions nest. Calls must be balanced.
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 /**
  * @brief Disable preemption on the calling core (nestable).
@@ -233,9 +293,10 @@ void cyros_port_preempt_disable(void);
  */
 void cyros_port_preempt_enable(void);
 
-/* ============================================================================
+
+/* ----------------------------------------------------------------------------
  * Context Management & Switching
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 /**
  * @brief Initialize a thread context
@@ -281,7 +342,8 @@ void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to);
  */
 void cyros_port_start_first(cyros_port_context_t* first);
 
-/* ============================================================================
+
+/* ----------------------------------------------------------------------------
  * Reschedule Requests
  *
  * Cyros distinguishes TWO reschedule operations. They differ in their
@@ -316,7 +378,7 @@ void cyros_port_start_first(cyros_port_context_t* first);
  *                                  baseline priority only, synchronous.
  *  cyros_port_pend_reschedule()   weak guarantee, callable from any context,
  *                                  may be deferred.
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 /**
  * @brief Yield the calling thread to the scheduler (synchronous reschedule).
@@ -396,47 +458,10 @@ void cyros_port_pend_reschedule(void);
  */
 void cyros_port_thread_exit(void);// __attribute__((noreturn));
 
-/* ============================================================================
- * SMP & Multi-Core Support
- *
- * Each pthread represents a simulated "core". Core 0 runs on the calling
- * thread, additional cores spawn as pthreads.
- * ========================================================================= */
 
-/**
- * @brief Get the ID of the current CPU core
- * @return Core ID (0-indexed)
- *
- * For single-core systems, always returns 0.
- * For SMP systems, returns which core is executing this code.
- */
-uint32_t cyros_port_get_core_id(void);
-
-/**
- * @brief Start (or release) all secondary cores and run entry on every core.
- * @param cores_to_use Number of cores to start
- * @param entry Entry point to run on each core
- *
- * After this call returns on the bootstrap core:
- *  - On embedded: typically never returns because entry will start the first thread.
- *  - On simulation: may return if port_start_first returns (cooperative).
- */
-void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry);
-
-/**
- * @brief Send an IPI to another core to trigger a reschedule
- * @param core_id Target core ID
- *
- * Causes the target core to perform a reschedule at its next safe point. This
- * is the cross-core analogue of cyros_port_pend_reschedule(): it carries the
- * same weak guarantee and the receiving core resolves it exactly as a locally
- * pended reschedule would be.
- */
-void cyros_port_send_reschedule_ipi(uint32_t core_id);
-
-/* ============================================================================
+/* ----------------------------------------------------------------------------
  * Thread-Local Storage
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 /**
  * @brief Set the TLS pointer for the current thread
@@ -451,111 +476,9 @@ void cyros_port_set_tls_pointer(void* tls_base);
 void* cyros_port_get_tls_pointer(void);
 
 
-
-/* ============================================================================
- * Time Driver Port
- *
- * Provides monotonic time for real drivers (periodic / tickless) in unit
- * tests, plus tickless one-shot arming and ISR delivery when pumped.
- *
- * Note:
- * - The simulation time driver owns time and does NOT use this.
- * - Periodic driver unit tests call on_timer_isr() directly.
- * ========================================================================= */
-
-/**
- * @brief Configure the underlying timer peripheral(s) used for OS time.
- * @param tick_hz Tick frequency (0 for tickless mode)
- *
- * If tick_hz > 0:
- *   Configure a periodic timer interrupt at tick_hz.
- *   The port must deliver the registered ISR handler once per tick IRQ.
- *
- * If tick_hz == 0:
- *   Configure tickless one-shot mode.
- *   The driver will call cyros_port_time_arm()/disarm() to schedule deadlines.
- *   The port must deliver the registered ISR handler when time_now() >= armed deadline.
- *
- * Called by the selected time driver during start().
- */
-void cyros_port_time_setup(uint32_t tick_hz);
-
-/**
- * @brief Monotonic time source
- * @return Current time in port ticks
- *
- * Must be monotonic 64-bit in "port ticks" (opaque unit for whole system).
- */
-uint64_t cyros_port_time_now(void);
-
-/**
- * @brief Free-running counter frequency in Hz (ticks per second).
- * @return Frequency in Hz
- *
- * For example:
- *  - DWT_CYCCNT at CPU clock: 168'000'000
- *  - Timer running at 1 MHz: 1'000'000
- *  - Linux steady_clock ns ticks: 1'000'000'000
- */
-uint64_t cyros_port_time_freq_hz(void);
-
-/**
- * @brief Reset any internal global time tracking state.
- * @param time Initial time value
- *
- * On embedded targets this is typically meaningless or implemented
- * implicitly by a system reset.
- *
- * Intended primarily for simulation and unit testing to provide
- * deterministic startup conditions.
- */
-void cyros_port_time_reset(uint64_t time);
-
-/**
- * @brief Register an ISR handler for timer interrupts
- * @param handler ISR callback function
- * @param arg Argument to pass to handler
- */
-void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t handler, void* arg);
-
-/**
- * @brief Enable timer interrupts
- */
-void cyros_port_time_irq_enable(void);
-
-/**
- * @brief Disable timer interrupts
- */
-void cyros_port_time_irq_disable(void);
-
-/**
- * @brief Arm a one-shot interrupt for the given absolute deadline.
- * @param deadline Absolute time in port ticks
- *
- * If called multiple times before the interrupt fires, the port must ensure
- * the earliest deadline is honored (i.e., effectively min(current, deadline)).
- *
- * Must be safe to call with interrupts disabled.
- */
-void cyros_port_time_arm(uint64_t deadline);
-
-/**
- * @brief Disable any pending one-shot.
- */
-void cyros_port_time_disarm(void);
-
-/**
- * @brief Notify the time core that there is pending time work.
- * @param core_id Target core ID
- *
- * If unimplemented on a platform, it may be an empty function.
- * Used for SMP policy where non-time cores enqueue requests for the time core.
- */
-void cyros_port_send_time_ipi(uint32_t core_id);
-
-/* ============================================================================
+/* ----------------------------------------------------------------------------
  * CPU Hints & Idle
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 /**
  * @brief CPU yield hint for busy-wait loops
@@ -570,9 +493,9 @@ void cyros_port_cpu_relax(void);
  */
 void cyros_port_idle(void);
 
-/* ============================================================================
+/* ----------------------------------------------------------------------------
  * Debug & Diagnostics
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 /**
  * @brief Internal Kernel asserts
@@ -580,7 +503,7 @@ void cyros_port_idle(void);
  */
 void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional) __attribute__((noreturn));
 
-#if CYROS_PORT_ENVIRONMENT == 2
+#if CYROS_PORT_CAPTURE_LOCATION
  #define CYROS_PORT_CAPTURE_FILE (__FILE__)
  #define CYROS_PORT_CAPTURE_LINE (__LINE__)
 #else
@@ -604,6 +527,7 @@ void cyros_port_breakpoint(void);
  * @return Current stack pointer
  */
 void* cyros_port_get_stack_pointer(void);
+
 
 #ifdef __cplusplus
 }

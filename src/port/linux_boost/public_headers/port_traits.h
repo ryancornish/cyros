@@ -1,5 +1,5 @@
 /**
- * @file cyros/port_traits.h
+ * @file port_traits.h
  * @brief Port-specific compile-time traits.
  *
  * Each port must provide exactly one `port_traits.h` defining the constants
@@ -51,23 +51,12 @@
 #define CYROS_PORT_CORE_COUNT 4
 
 /**
- * @def CYROS_PORT_SCHEDULING_TYPE
- * @brief Scheduling model implemented by this port.
+ * @def CYROS_PORT_CAPTURE_LOCATION
+ * @brief Capture file and line information on assert.
  *
- * Must be one of:
- *  - `SchedulerFlavour::Preemptive`  (1)
- *  - `SchedulerFlavour::Cooperative` (2)
+ * Turning this on can increase code-size as the compiler attaches
+ * strings to every CORTOS_ASSERT* location.
  */
-#define CYROS_PORT_SCHEDULING_TYPE  2 /* cooperative */
-
-/**
- * @def CYROS_PORT_ENVIRONMENT
- * @brief Execution environment for this port.
- *
- * Must be one of:
- *  - `Environment::BareMetal`      (1)
- *  - `Environment::BareSimulation` (2)
- */
-#define CYROS_PORT_ENVIRONMENT  2 /* simulation */
+#define CYROS_PORT_CAPTURE_LOCATION 1
 
 #endif /* CYROS_PORT_TRAITS_H */

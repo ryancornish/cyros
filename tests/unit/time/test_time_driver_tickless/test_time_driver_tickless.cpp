@@ -31,7 +31,7 @@
  */
 
 #include <cyros/time/time.hpp>
-#include <cyros/port/port.h>
+#include <cyros/port/port_time.h>
 
 #include <gtest/gtest.h>
 
@@ -42,7 +42,7 @@
 using namespace cyros;
 
 // Linux-only deterministic test hook, implemented in the linux_boost port.
-extern "C" void cyros_port_time_advance(uint64_t delta);
+extern void cyros_port_time_advance(uint64_t delta);
 
 namespace
 {

@@ -3,6 +3,7 @@ kind = "port"
 
 public_headers = [
   "public_headers/port.h -> cyros/port/port.h",
+  "public_headers/port_time.h -> cyros/port/port_time.h",
 ]
 
 variants = [

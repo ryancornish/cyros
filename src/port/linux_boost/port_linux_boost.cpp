@@ -80,8 +80,6 @@ static_assert(alignof(cyros_port_context) == CYROS_PORT_CONTEXT_ALIGN,
               "CYROS_PORT_CONTEXT_ALIGN mismatch - adjust in port_traits.h");
 static_assert((CYROS_PORT_STACK_ALIGN & (CYROS_PORT_STACK_ALIGN - 1)) == 0,
               "CYROS_PORT_STACK_ALIGN must be a power of two");
-static_assert(CYROS_PORT_SCHEDULING_TYPE == 2);
-static_assert(CYROS_PORT_ENVIRONMENT == 2);
 
 /* ============================================================================
  * Port MultiCore Structure
@@ -219,7 +217,7 @@ static thread_local constinit current_core_state current_core;
  * Platform Initialization
  * ========================================================================= */
 
-extern "C" void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
+void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
 {
    global.reschedule_handler = reschedule_handler;
 }
@@ -260,24 +258,24 @@ static void resolve_pending_reschedule_if_baseline()
  * non-zero, (simulated) interrupts cannot be delivered.
  * ========================================================================= */
 
-extern "C" void cyros_port_disable_interrupts(void)
+void cyros_port_disable_interrupts(void)
 {
    current_core.interrupt_disable_depth++;
 }
 
-extern "C" void cyros_port_enable_interrupts(void)
+void cyros_port_enable_interrupts(void)
 {
    if (current_core.interrupt_disable_depth > 0) {
       current_core.interrupt_disable_depth--;
    }
 }
 
-extern "C" bool cyros_port_interrupts_enabled(void)
+bool cyros_port_interrupts_enabled(void)
 {
    return current_core.interrupt_disable_depth == 0;
 }
 
-extern "C" uint32_t cyros_port_irq_save(void)
+uint32_t cyros_port_irq_save(void)
 {
    // Return previous enabled-state as 1/0 (simple)
    uint32_t prev_enabled = (current_core.interrupt_disable_depth == 0) ? 1u : 0u;
@@ -285,7 +283,7 @@ extern "C" uint32_t cyros_port_irq_save(void)
    return prev_enabled;
 }
 
-extern "C" void cyros_port_irq_restore(uint32_t state)
+void cyros_port_irq_restore(uint32_t state)
 {
    (void)state;
    // Unwind one nesting level
@@ -307,12 +305,12 @@ extern "C" void cyros_port_irq_restore(uint32_t state)
  * unaffected.
  * ========================================================================= */
 
-extern "C" void cyros_port_preempt_disable(void)
+void cyros_port_preempt_disable(void)
 {
    current_core.preempt_disable_depth++;
 }
 
-extern "C" void cyros_port_preempt_enable(void)
+void cyros_port_preempt_enable(void)
 {
    CYROS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
    current_core.preempt_disable_depth--;
@@ -335,7 +333,7 @@ struct preallocated_stack_noop
    void deallocate(boost::context::stack_context&) noexcept {}
 };
 
-extern "C" void cyros_port_context_init(cyros_port_context_t* context,
+void cyros_port_context_init(cyros_port_context_t* context,
                                          void* stack_base,
                                          size_t stack_size,
                                          cyros_port_entry_t entry,
@@ -388,7 +386,7 @@ extern "C" void cyros_port_context_init(cyros_port_context_t* context,
    );
 }
 
-extern "C" void cyros_port_context_destroy(cyros_port_context_t* context)
+void cyros_port_context_destroy(cyros_port_context_t* context)
 {
    // Verify fiber has completed
    CYROS_ASSERT(!context->thread); // Bug: destroying a live thread
@@ -396,7 +394,7 @@ extern "C" void cyros_port_context_destroy(cyros_port_context_t* context)
    context->~cyros_port_context();
 }
 
-extern "C" void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_context_t* to)
+void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_context_t* to)
 {
    CYROS_ASSERT(to->thread); // No context to switch to
 
@@ -405,7 +403,7 @@ extern "C" void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_con
    current_core.current_context = nullptr;
 }
 
-extern "C" void cyros_port_start_first(cyros_port_context_t* first)
+void cyros_port_start_first(cyros_port_context_t* first)
 {
    // Nothing special to be done on the first switch
    cyros_port_switch(nullptr, first);
@@ -433,7 +431,7 @@ static void switch_to_scheduler_fiber()
    current_core.thread_caller = std::move(current_core.thread_caller).resume();
 }
 
-extern "C" void cyros_port_thread_yield(void)
+void cyros_port_thread_yield(void)
 {
    // Strong-guarantee, synchronous. Contract precondition: thread context at
    // baseline priority. Assert it - this port can observe all conditions.
@@ -444,7 +442,7 @@ extern "C" void cyros_port_thread_yield(void)
    switch_to_scheduler_fiber();
 }
 
-extern "C" void cyros_port_pend_reschedule(void)
+void cyros_port_pend_reschedule(void)
 {
    // Weak-guarantee, deferred-safe. Callable from any context.
 
@@ -468,7 +466,7 @@ extern "C" void cyros_port_pend_reschedule(void)
    }
 }
 
-extern "C" void cyros_port_thread_exit(void)
+void cyros_port_thread_exit(void)
 {
    CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
    global.active_contexts.fetch_sub(1, std::memory_order_seq_cst);
@@ -557,7 +555,7 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    global.reset();
 }
 
-extern "C" uint32_t cyros_port_get_core_id(void)
+uint32_t cyros_port_get_core_id(void)
 {
    // If no cores have been explicitly launched yet, then we must be on core0
    if (!global.cores_launched()) return 0;
@@ -566,7 +564,7 @@ extern "C" uint32_t cyros_port_get_core_id(void)
    return current_core.core->core_id;
 }
 
-extern "C" void cyros_port_send_reschedule_ipi(uint32_t core_id)
+void cyros_port_send_reschedule_ipi(uint32_t core_id)
 {
    CYROS_ASSERT_OP(core_id, <, global.cores.size());
 
@@ -592,100 +590,22 @@ extern "C" void cyros_port_send_reschedule_ipi(uint32_t core_id)
  * Thread-Local Storage
  * ========================================================================= */
 
-extern "C" void cyros_port_set_tls_pointer(void* tls_base)
+void cyros_port_set_tls_pointer(void* tls_base)
 {
    current_core.tls_pointer = tls_base;
 }
 
-extern "C" void* cyros_port_get_tls_pointer(void)
+void* cyros_port_get_tls_pointer(void)
 {
    return current_core.tls_pointer;
 }
 
-/* ============================================================================
- * Time Driver Port
- *
- * Provides monotonic time for real drivers (periodic / tickless) in unit
- * tests, plus tickless one-shot arming and ISR delivery when pumped.
- *
- * Note:
- * - The simulation time driver owns time and does NOT use this.
- * - Periodic driver unit tests call on_timer_isr() directly.
- * ========================================================================= */
-
-struct time_state
-{
-   std::atomic<bool>        irq_enabled{false};
-   std::atomic<uint64_t>            now{0};
-   std::atomic<uint64_t> armed_deadline{UINT64_MAX};
-
-   std::atomic<cyros_port_isr_handler_t> isr{nullptr};
-   std::atomic<void*>                 isr_arg{nullptr};
-};
-static constinit time_state time_instance;
-
-extern "C" void cyros_port_time_setup(uint32_t tick_hz)
-{
-   (void)tick_hz;
-}
-
-extern "C" uint64_t cyros_port_time_now(void)
-{
-   return time_instance.now.load(std::memory_order_relaxed);
-}
-
-extern "C" uint64_t cyros_port_time_freq_hz(void)
-{
-   return 1'000'000ull; // 1 tick = 1 us (recommend)
-}
-
-extern "C" void cyros_port_time_reset(uint64_t t)
-{
-   time_instance.now.store(t, std::memory_order_release);
-   time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
-}
-
-extern "C" void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t h, void* arg)
-{
-   time_instance.isr_arg.store(arg, std::memory_order_relaxed);
-   time_instance.isr.store(h, std::memory_order_release);
-}
-
-extern "C" void cyros_port_time_irq_enable(void)  { time_instance.irq_enabled.store(true,  std::memory_order_release); }
-extern "C" void cyros_port_time_irq_disable(void) { time_instance.irq_enabled.store(false, std::memory_order_release); }
-
-extern "C" void cyros_port_time_arm(uint64_t deadline)
-{
-   // Keep earliest
-   uint64_t cur = time_instance.armed_deadline.load(std::memory_order_relaxed);
-   while (deadline < cur &&
-            !time_instance.armed_deadline.compare_exchange_weak(cur, deadline,
-                                                   std::memory_order_release,
-                                                   std::memory_order_relaxed))
-   {}
-}
-
-extern "C" void cyros_port_time_disarm(void)
-{
-   time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
-}
-
-// Linux-only helper for tests
-extern "C" void cyros_port_time_advance(uint64_t delta)
-{
-   time_instance.now.fetch_add(delta, std::memory_order_release);
-}
-
-extern "C" void cyros_port_send_time_ipi(uint32_t /*core_id*/)
-{
-   // SMP simulation TODO: poke target core thread.
-}
 
 /* ============================================================================
  * CPU Hints & Idle
  * ========================================================================= */
 
-extern "C" void cyros_port_cpu_relax(void)
+void cyros_port_cpu_relax(void)
 {
    // CPU yield hint for busy-wait loops
 #if defined(__x86_64__) || defined(__i386__)
@@ -695,7 +615,7 @@ extern "C" void cyros_port_cpu_relax(void)
 #endif
 }
 
-extern "C" void cyros_port_idle(void)
+void cyros_port_idle(void)
 {
    // std::printf("(CORE %d) cyros_port_idle()\n", current_core.core->core_id);
    auto& core_poke = global.cores[current_core.core->core_id].core_poke;
@@ -749,7 +669,7 @@ static void print_formatted_context(char const* file, int target_line, int range
    }
 }
 
-extern "C" void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
+void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
 {
    std::printf("KERNEL PANIC at %s:%d\n", file_optional, line_optional);
    print_formatted_context(file_optional, line_optional);
@@ -757,7 +677,7 @@ extern "C" void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2
    std::terminate();
 }
 
-extern "C" void cyros_port_breakpoint(void)
+void cyros_port_breakpoint(void)
 {
 #if defined(__x86_64__) || defined(__i386__)
    __asm__ __volatile__("int3");
@@ -768,7 +688,7 @@ extern "C" void cyros_port_breakpoint(void)
 #endif
 }
 
-extern "C" void* cyros_port_get_stack_pointer(void)
+void* cyros_port_get_stack_pointer(void)
 {
    void* sp;
 #if defined(__x86_64__)
