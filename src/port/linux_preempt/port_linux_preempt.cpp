@@ -1,13 +1,72 @@
 /**
- * @file port_linux_boost.cpp
- * @brief Linux simulation port using sigctx
+ * @file port_linux_preempt.cpp
+ * @brief Linux simulation port using sigctx for genuine preemptive switching
  *
- * @TODO: Description
+ * Where the boost.context port is cooperative end to end, this port exists to
+ * exercise the one path that port structurally cannot reach: an asynchronous
+ * signal interrupting a running thread mid-instruction and forcing a context
+ * switch out of it. Each pthread still simulates one "core".
+ *
+ * One road into the scheduler
+ * ---------------------------
+ * Every reschedule on this port travels through a single signal. The preemption
+ * tick (future), the cross-core IPI, the voluntary yield, and the deferred pend
+ * all reduce to "make the reschedule signal land". sigctx_intercept captures the
+ * interrupted context, hands it to on_reschedule(), and resumes whatever context
+ * that handler returns. The handler runs the kernel scheduler, which ends in
+ * cyros_port_switch(), which rt_sigreturns into the chosen thread. The signal
+ * handler is the analogue of PendSV running on the handler stack.
+ *
+ * Synchronous yield (first-step simplification)
+ * ---------------------------------------------
+ * cyros_port_thread_yield() raises the reschedule signal against itself. At
+ * baseline the signal is delivered before pthread_kill() returns, so the yield
+ * still gets its strong synchronous round-trip. This pays a signal round-trip
+ * per yield. A direct synchronous sigctx swap would be faster and can replace it
+ * later once the preemptive path is proven.
+ *
+ * Masking model
+ * -------------
+ * Interrupt-disable and preempt-disable gate the SAME reschedule signal here,
+ * because the reschedule handler does nothing beyond the switch it is already
+ * deferring. So blocking the signal under either depth is correct, and the
+ * kernel's pending bit doubles as the deferred-reschedule flag. There is no
+ * separate software pending flag.
+ *
+ * The two depths still mean different things, and the difference becomes visible
+ * when the timer port lands. A timer signal will be masked by interrupt-disable
+ * (its ISR must not run) and left unmasked by preempt-disable (its ISR runs, and
+ * only the switch it requests is deferred). The block helpers below are where a
+ * timer signal joins the interrupt path and stays out of the preempt path.
+ *
+ * Ordering rule: a disable blocks the signal BEFORE raising its depth, which
+ * closes the window where the signal could land between reading and raising the
+ * depth. An enable lowers its depth first, then unmasks only when BOTH depths are
+ * clear.
+ *
+ * Lifetime hazard the whole port turns on
+ * ---------------------------------------
+ * The captured context the handler receives, and its FP buffer, live on the
+ * handler stack that sigctx_intercept carves per invocation. They are valid only
+ * for that one handler call. So the outgoing thread's state is relocated into its
+ * TCB with sigctx_copy() before any other context is resumed, and the resumed
+ * context is always a durable TCB context.
  */
 
 #include <cyros/port/port.h>
 
 #include <sigctx/sigctx.h>
+#include <sigctx/sigctx_intercept.h>
+
+#include <atomic>
+#include <csignal>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <memory>
+#include <pthread.h>
+#include <string>
 
 
 /* ============================================================================
@@ -16,7 +75,7 @@
 
 struct cyros_port_context
 {
-   sigctx_inl_t         context;
+   sigctx_inl_t         sctx;        // resumable signal-frame context, FP inline
    void*                stack_top;
    size_t               stack_size;
    cyros_port_entry_t   entry;
@@ -34,13 +93,285 @@ static_assert((CYROS_PORT_STACK_ALIGN & (CYROS_PORT_STACK_ALIGN - 1)) == 0,
               "CYROS_PORT_STACK_ALIGN must be a power of two");
 
 
+/* ============================================================================
+ * Internal Configuration
+ * ========================================================================= */
+
+/**
+ * The signal that drives every reschedule on this port. SIGURG is chosen
+ * because typical applications do not use it, so it does not collide with
+ * ordinary signal handling. The port owns this signal's disposition entirely.
+ */
+static constexpr int preempt_signo = SIGURG;
+
+/**
+ * Per-core stack on which the interceptor trampoline, the capture relocation,
+ * and the kernel reschedule all run. This is distinct from the library-internal
+ * altstack where the kernel lays the raw signal frame. Generously sized to hold
+ * a captured context, its FP area, and the full reschedule call depth.
+ */
+static constexpr std::size_t handler_stack_size = 128 * 1024;
+
+
+/* ============================================================================
+ * Internal Types
+ * ========================================================================= */
+
+/**
+ * @brief Simulated core. One pthread per core, with its own handler stack and a
+ *        bring-up context captured at start_first so shutdown can unwind it.
+ */
 struct cpu_core
 {
-   pthread_t pthread{}; // @note This is null/unused for core0
-   uint32_t  core_id{}; // Index from 0... num cores
+   pthread_t               pthread{}; // core0 records pthread_self() here too
+   uint32_t                core_id{};
    cyros_port_core_entry_t entry{};
+
+   alignas(64) std::uint8_t handler_stack[handler_stack_size];
+
+   // Captured at first signal delivery on this core. Resuming it unwinds back
+   // through cyros_port_start_first() so the owning OS thread can be joined.
+   sigctx_inl_t scheduler_ctx{};
 };
 
+/**
+ * @brief Dynamically-sized container for cpu_core's.
+ *
+ * A std::vector is impossible because cpu_core is non-copyable in practice
+ * (large embedded arrays), so this wraps a unique_ptr array the same way the
+ * boost port does.
+ */
+class cpu_core_array
+{
+public:
+   using iterator       = cpu_core*;
+   using const_iterator = const cpu_core*;
+
+   constexpr cpu_core_array() = default;
+   explicit cpu_core_array(std::size_t count, cyros_port_core_entry_t core_entry)
+      : cores(std::make_unique<cpu_core[]>(count)), count(count)
+   {
+      for (std::uint32_t i = 0; i < count; ++i) {
+         cores[i].core_id = i;
+         cores[i].entry   = core_entry;
+      }
+   }
+   cpu_core_array(cpu_core_array&&) noexcept            = default;
+   cpu_core_array& operator=(cpu_core_array&&) noexcept = default;
+   cpu_core_array(cpu_core_array const&)            = delete;
+   cpu_core_array& operator=(cpu_core_array const&) = delete;
+
+   cpu_core&       operator[](std::size_t index)       { return cores[index]; }
+   cpu_core const& operator[](std::size_t index) const { return cores[index]; }
+
+   [[nodiscard]] std::size_t size() const { return count; }
+
+   iterator begin() { return cores.get(); }
+   iterator end()   { return cores.get() + count; }
+
+   [[nodiscard]] const_iterator begin() const { return cores.get(); }
+   [[nodiscard]] const_iterator end()   const { return cores.get() + count; }
+
+private:
+   std::unique_ptr<cpu_core[]> cores;
+   std::size_t count{0};
+};
+
+
+/* ============================================================================
+ * Internal State
+ * ========================================================================= */
+
+struct global_state
+{
+   std::atomic<bool>       shutdown_requested{false};
+   std::atomic<uint32_t>   active_contexts{0};
+   cyros_port_reschedule_t reschedule_handler{nullptr};
+   cpu_core_array          cores;
+
+   /// @brief Have any cores been launched?
+   [[nodiscard]] bool cores_launched() const { return cores.size() > 0; }
+
+   void reset()
+   {
+      shutdown_requested.store(false);
+      active_contexts.store(0);
+      reschedule_handler = nullptr;
+      cores = {};
+   }
+};
+static constinit global_state global;
+
+/**
+ * @brief Per-OS-thread (per-core) state.
+ *
+ * paused_uc, bootstrapping, first_ctx, and discard_outgoing are scratch shared
+ * between on_reschedule() and cyros_port_switch() within a single handler
+ * invocation. The depth counters back the masking model.
+ */
+struct current_core_state
+{
+   cpu_core*           core{nullptr};
+
+   // Non-null while executing inside a thread context on this core.
+   cyros_port_context* current_context{nullptr};
+
+   // The live captured frame on the handler stack, set by on_reschedule() and
+   // consumed by the cyros_port_switch() it drives. Valid only for that call.
+   sigctx_ucontext_t*  paused_uc{nullptr};
+
+   // First signal delivery on this core takes the bring-up branch.
+   bool                bootstrapping{false};
+   cyros_port_context* first_ctx{nullptr};
+
+   // The outgoing thread is dead, so the next switch must not save it back.
+   bool                discard_outgoing{false};
+
+   // Interrupt-masking depth (Critical Sections). Masks the hardware.
+   std::uint32_t       interrupt_disable_depth{0};
+
+   // Preemption-disable depth (Preemption Control). Blocks the switch while the
+   // simulated interrupt still flows.
+   std::uint32_t       preempt_disable_depth{0};
+
+   void*               tls_pointer{nullptr};
+};
+static thread_local constinit current_core_state current_core;
+
+
+/* ============================================================================
+ * Internal Helpers
+ * ========================================================================= */
+
+/* ----------------------------------------------------------------------------
+ * Signal masking
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Block one signal on the calling core. Blocking an already-blocked
+ *        signal is a no-op, so this nests safely.
+ */
+static void mask_signal(int signo)
+{
+   sigset_t s;
+   sigemptyset(&s);
+   sigaddset(&s, signo);
+   pthread_sigmask(SIG_BLOCK, &s, nullptr);
+}
+
+/**
+ * @brief Unmask the reschedule signal, but only once both depth counters are
+ *        clear. Called on every enable path after the depth is lowered.
+ *
+ * Unmasking delivers any reschedule that pended while masked, which runs the
+ * handler before this returns. That is the safe-point drain.
+ */
+static void unmask_reschedule_if_baseline(void)
+{
+   if (current_core.preempt_disable_depth   != 0) return;
+   if (current_core.interrupt_disable_depth != 0) return;
+
+   sigset_t s;
+   sigemptyset(&s);
+   sigaddset(&s, preempt_signo);
+   pthread_sigmask(SIG_UNBLOCK, &s, nullptr);
+}
+
+/* ----------------------------------------------------------------------------
+ * Reschedule handler (the scheduler context for this port)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Called by the interceptor with the just-paused context. Returns the
+ *        context to resume.
+ *
+ * Guaranteed to run at baseline: the reschedule signal is only ever delivered
+ * when both depth counters are zero, so there is no preempt-disabled branch to
+ * handle here.
+ */
+static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void* arg)
+{
+   auto& core = *static_cast<cpu_core*>(arg);
+
+   // First delivery on this core. Stash the bring-up context so shutdown can
+   // unwind back into start_first(), then launch this core's first thread.
+   if (current_core.bootstrapping) {
+      current_core.bootstrapping = false;
+      sigctx_copy(&core.scheduler_ctx.uc,
+                  core.scheduler_ctx.fpstate, sizeof(core.scheduler_ctx.fpstate),
+                  paused);
+      current_core.current_context = current_core.first_ctx;
+      return &current_core.first_ctx->sctx.uc;
+   }
+
+   // The system has quiesced to one idle thread per core. Abandon the current
+   // (idle) context and resume the bring-up point so this OS thread unwinds and
+   // can be joined.
+   if (global.shutdown_requested.load(std::memory_order_acquire)) {
+      return &core.scheduler_ctx.uc;
+   }
+
+   // Drive the core-local scheduler. It ends in cyros_port_switch(), which
+   // resumes the chosen thread through sigctx_resume() and does not return here.
+   // The fallthrough below is reached only if the scheduler performed no switch,
+   // in which case resuming the paused context is the correct answer.
+   current_core.paused_uc = paused;
+   global.reschedule_handler();
+   current_core.paused_uc = nullptr;
+   return paused;
+}
+
+/**
+ * @brief Install the interceptor on the calling core. sigaltstack is per-thread,
+ *        so each core's OS thread must call this once before running its entry.
+ */
+static int install_interceptor(cpu_core& core)
+{
+   sigctx_intercept_cfg cfg{
+      .signo      = preempt_signo,
+      .handler_sp = core.handler_stack,
+      .handler_ss = sizeof(core.handler_stack),
+      .handler    = on_reschedule,
+      .arg        = &core,
+   };
+   return sigctx_intercept_install(&cfg);
+}
+
+/* ----------------------------------------------------------------------------
+ * Diagnostics formatting
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Print the surrounding source lines for a panic location.
+ */
+static void print_formatted_context(char const* file, int target_line, int range = 2)
+{
+   static constexpr auto CLR_RESET  = "\033[0m";
+   static constexpr auto CLR_RED    = "\033[1;31m";
+   static constexpr auto CLR_ORANGE = "\033[38;5;208m";
+
+   std::ifstream fs(file);
+   if (!fs.is_open()) return;
+
+   std::string text;
+   int current = 0;
+   int start = (target_line - range > 0) ? target_line - range : 1;
+   int end   = target_line + range;
+
+   while (std::getline(fs, text)) {
+      current++;
+      if (current >= start && current <= end) {
+         std::printf("├ ");
+         std::printf("%s%4d%s  ", CLR_ORANGE, current, CLR_RESET);
+         if (current == target_line) {
+            std::printf("%s>> %s%s\n", CLR_RED, text.c_str(), CLR_RESET);
+         } else {
+            std::printf("   %s\n", text.c_str());
+         }
+      }
+      if (current > end) break;
+   }
+}
 
 
 /* ============================================================================
@@ -53,7 +384,10 @@ struct cpu_core
  * Platform Initialisation
  * ------------------------------------------------------------------------- */
 
-void cyros_port_init(cyros_port_reschedule_t reschedule_handler);
+void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
+{
+   global.reschedule_handler = reschedule_handler;
+}
 
 
 /* ----------------------------------------------------------------------------
@@ -63,35 +397,156 @@ void cyros_port_init(cyros_port_reschedule_t reschedule_handler);
  * thread, additional cores spawn as pthreads.
  * ------------------------------------------------------------------------- */
 
-uint32_t cyros_port_get_core_id(void);
+uint32_t cyros_port_get_core_id(void)
+{
+   // If no cores have been launched yet, we must be on core0.
+   if (!global.cores_launched()) return 0;
 
-void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry);
+   CYROS_ASSERT(current_core.core != nullptr);
+   return current_core.core->core_id;
+}
 
-void cyros_port_send_reschedule_ipi(uint32_t core_id);
+void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
+{
+   CYROS_ASSERT(cores_to_use > 0);
+   CYROS_ASSERT(cores_to_use <= CYROS_PORT_CORE_COUNT);
+
+   // A preempted thread's full FP state is relocated into its TCB context, whose
+   // inline buffer is bounded by SIGCTX_FPSTATE_CAPACITY. If this machine's XSAVE
+   // area is larger, that relocation would quietly demote to a legacy frame and
+   // drop vector state across a preemption, so refuse to run rather than corrupt
+   // registers.
+   uint32_t fp_size = sigctx_fpstate_size();
+   CYROS_ASSERT(fp_size <= SIGCTX_FPSTATE_CAPACITY); // raise capacity or use a dyn context
+
+   global.cores = cpu_core_array(cores_to_use, entry);
+
+   // core0 runs on this calling OS thread. Record its handle so a cross-core IPI
+   // can target it the same way as any spawned core.
+   global.cores[0].pthread = pthread_self();
+
+   for (auto& core : global.cores) {
+      // core0 is the calling thread, so it is not spawned here.
+      if (core.core_id == 0) continue;
+
+      pthread_create(
+         &core.pthread,
+         nullptr,
+         +[](void* arg) -> void*
+         {
+            auto* init = static_cast<cpu_core*>(arg);
+            current_core.core = init;
+
+            int rc = install_interceptor(*init);
+            CYROS_ASSERT(rc == 0); // interceptor failed to install on this core
+
+            // Runs the kernel entry for this core, which starts its first thread.
+            init->entry();
+            return nullptr;
+         },
+         &core
+      );
+   }
+
+   // core0 on the calling thread.
+   auto& core0 = global.cores[0];
+   current_core.core = &core0;
+
+   int rc = install_interceptor(core0);
+   CYROS_ASSERT(rc == 0); // interceptor failed to install on core0
+
+   core0.entry();
+
+   // core0's entry returns only once its bring-up context has been resumed at
+   // shutdown. Join the other cores, which unwind the same way.
+   for (auto& core : global.cores) {
+      if (core.core_id == 0) continue;
+      pthread_join(core.pthread, nullptr);
+   }
+
+   global.reset();
+}
+
+void cyros_port_send_reschedule_ipi(uint32_t core_id)
+{
+   CYROS_ASSERT_OP(core_id, <, global.cores.size());
+
+   // Targeting the signal at a core is the whole IPI. A core at baseline takes
+   // it now, a masked core takes it on unmask, an idle core parked in
+   // sigsuspend wakes and reschedules. Self-targeting works the same way.
+   pthread_kill(global.cores[core_id].pthread, preempt_signo);
+}
 
 
 /* ----------------------------------------------------------------------------
  * Interrupt Control
+ *
+ * Masks the hardware: while raised, the reschedule signal (and, once it exists,
+ * the timer signal) cannot be delivered to this core.
  * ------------------------------------------------------------------------- */
 
-void cyros_port_disable_interrupts(void);
+void cyros_port_disable_interrupts(void)
+{
+   mask_signal(preempt_signo); // a timer signal joins here once the timer port lands
+   current_core.interrupt_disable_depth++;
+}
 
-void cyros_port_enable_interrupts(void);
+void cyros_port_enable_interrupts(void)
+{
+   if (current_core.interrupt_disable_depth > 0) {
+      current_core.interrupt_disable_depth--;
+      unmask_reschedule_if_baseline();
+   }
+}
 
-bool cyros_port_interrupts_enabled(void);
+bool cyros_port_interrupts_enabled(void)
+{
+   return current_core.interrupt_disable_depth == 0;
+}
 
-uint32_t cyros_port_irq_save(void);
+uint32_t cyros_port_irq_save(void)
+{
+   uint32_t prev_enabled = (current_core.interrupt_disable_depth == 0) ? 1u : 0u;
+   mask_signal(preempt_signo); // block first, then raise the depth
+   current_core.interrupt_disable_depth++;
+   return prev_enabled;
+}
 
-void cyros_port_irq_restore(uint32_t state);
+void cyros_port_irq_restore(uint32_t state)
+{
+   (void)state;
+   if (current_core.interrupt_disable_depth > 0) {
+      current_core.interrupt_disable_depth--;
+      // Reaching interrupt depth 0 is a safe point. Unmask only if preemption is
+      // also enabled, which delivers any reschedule that pended while masked.
+      unmask_reschedule_if_baseline();
+   }
+}
 
 
 /* ----------------------------------------------------------------------------
  * Preemption Control
+ *
+ * Blocks the switch but, once a timer exists, leaves its ISR free to run. For
+ * now the only gated signal is the reschedule signal, so the masking action is
+ * the same as interrupt control. The depths stay separate because the timer
+ * will split them.
  * ------------------------------------------------------------------------- */
 
-void cyros_port_preempt_disable(void);
+void cyros_port_preempt_disable(void)
+{
+   mask_signal(preempt_signo); // block first, then raise the depth
+   current_core.preempt_disable_depth++;
+}
 
-void cyros_port_preempt_enable(void);
+void cyros_port_preempt_enable(void)
+{
+   CYROS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
+   current_core.preempt_disable_depth--;
+   // Reaching preempt depth 0 is a safe point. Unmask only if interrupts are
+   // also unmasked.
+   unmask_reschedule_if_baseline();
+}
 
 
 /* ----------------------------------------------------------------------------
@@ -99,53 +554,217 @@ void cyros_port_preempt_enable(void);
  * ------------------------------------------------------------------------- */
 
 void cyros_port_context_init(cyros_port_context_t* context,
-                              void* stack_base,
-                              size_t stack_size,
-                              cyros_port_entry_t entry,
-                              void* arg);
+                             void* stack_base,
+                             size_t stack_size,
+                             cyros_port_entry_t entry,
+                             void* arg)
+{
+   global.active_contexts.fetch_add(1, std::memory_order_seq_cst);
 
-void cyros_port_context_destroy(cyros_port_context_t* context);
+   ::new (context) cyros_port_context{
+      .sctx       = {},
+      .stack_top  = static_cast<uint8_t*>(stack_base) + stack_size,
+      .stack_size = stack_size,
+      .entry      = entry,
+      .arg        = arg,
+   };
 
-void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to);
+   // Synthesize a resumable signal-frame context that enters entry(arg) on the
+   // supplied stack. The FP area lives inline in this TCB context, so it travels
+   // with the context and the self-pointer stays valid as long as the TCB does.
+   sigctx_create(&context->sctx.uc,
+                 context->sctx.fpstate, sizeof(context->sctx.fpstate),
+                 stack_base, stack_size,
+                 entry, arg);
+}
 
-void cyros_port_start_first(cyros_port_context_t* first);
+void cyros_port_context_destroy(cyros_port_context_t* context)
+{
+   context->~cyros_port_context();
+}
+
+void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to)
+{
+   CYROS_ASSERT(to);
+   CYROS_ASSERT(current_core.paused_uc); // a switch is only ever driven from on_reschedule
+
+   if (from && !current_core.discard_outgoing) {
+      // Relocate the captured frame into the outgoing TCB. The capture lives on
+      // the handler stack and dies with this handler invocation, so copying it
+      // into durable TCB storage is what lets the thread resume later.
+      sigctx_copy(&from->sctx.uc,
+                  from->sctx.fpstate, sizeof(from->sctx.fpstate),
+                  current_core.paused_uc);
+   }
+
+   current_core.discard_outgoing = false;
+   current_core.paused_uc        = nullptr;
+   current_core.current_context  = to;
+
+   // rt_sigreturn into the incoming thread. The jump discards every handler-stack
+   // frame above us, so this call does not return.
+   sigctx_resume(&to->sctx.uc);
+}
+
+void cyros_port_start_first(cyros_port_context_t* first)
+{
+   current_core.first_ctx        = first;
+   current_core.bootstrapping    = true;
+   current_core.discard_outgoing = false; // clear stale scratch from a prior run
+
+   // Enter on_reschedule() once to capture this bring-up point and jump into the
+   // first thread. Control returns past this line only at shutdown, when the
+   // captured context is resumed.
+   pthread_kill(pthread_self(), preempt_signo);
+}
 
 
 /* ----------------------------------------------------------------------------
  * Reschedule Requests
  * ------------------------------------------------------------------------- */
 
-void cyros_port_thread_yield(void);
+void cyros_port_thread_yield(void)
+{
+   // Strong-guarantee, synchronous. Contract precondition: thread context at
+   // baseline priority.
+   CYROS_ASSERT(current_core.current_context);              // must be a thread
+   CYROS_ASSERT(current_core.interrupt_disable_depth == 0); // interrupts unmasked
+   CYROS_ASSERT(current_core.preempt_disable_depth   == 0); // preemption enabled
 
-void cyros_port_pend_reschedule(void);
+   // At baseline the signal is delivered before this returns. The handler
+   // captures this point and switches us out, and the signal returns here only
+   // once we are scheduled back in, which is the strong round-trip.
+   pthread_kill(pthread_self(), preempt_signo);
+}
 
-void cyros_port_thread_exit(void);
+void cyros_port_pend_reschedule(void)
+{
+   // Weak-guarantee, deferred-safe. No thread context means nothing to switch
+   // away from.
+   if (!current_core.current_context) return;
+
+   // Raise the reschedule signal against ourselves. At baseline it is delivered
+   // before this returns. If a depth counter has it masked it stays pending and
+   // is delivered the moment the matching enable unmasks it. The kernel pending
+   // bit is the deferral mechanism, so no separate flag is required.
+   pthread_kill(pthread_self(), preempt_signo);
+}
+
+void cyros_port_thread_exit(void)
+{
+   CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
+
+   // Mask our own reschedule signal for the duration so that initiating the
+   // shutdown storm below does not bounce us into the handler mid-teardown,
+   // which would abandon cores we have not yet signalled.
+   sigset_t s;
+   sigemptyset(&s);
+   sigaddset(&s, preempt_signo);
+   pthread_sigmask(SIG_BLOCK, &s, nullptr);
+
+   uint32_t remaining = global.active_contexts.fetch_sub(1, std::memory_order_seq_cst) - 1;
+
+   // One idle thread per core remaining means the system has quiesced. The first
+   // terminator to observe this wins the CAS and wakes every core to unwind.
+   if (remaining <= global.cores.size()) {
+      bool expected = false;
+      if (global.shutdown_requested.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+         for (auto& core : global.cores) {
+            pthread_kill(core.pthread, preempt_signo); // pends on us, blocked above
+         }
+      }
+   }
+
+   // The next switch must not write this dead context back into the terminated
+   // TCB, whose joiner may already be tearing it down.
+   current_core.discard_outgoing = true;
+
+   // Pend our final reschedule, then unmask to let it fire. The handler discards
+   // this context and resumes either the next thread or, under shutdown, the
+   // bring-up context. We do not return.
+   pthread_kill(pthread_self(), preempt_signo);
+   pthread_sigmask(SIG_UNBLOCK, &s, nullptr);
+   __builtin_unreachable();
+}
 
 
 /* ----------------------------------------------------------------------------
  * Thread-Local Storage
  * ------------------------------------------------------------------------- */
 
-void cyros_port_set_tls_pointer(void* tls_base);
+void cyros_port_set_tls_pointer(void* tls_base)
+{
+   current_core.tls_pointer = tls_base;
+}
 
-void* cyros_port_get_tls_pointer(void);
+void* cyros_port_get_tls_pointer(void)
+{
+   return current_core.tls_pointer;
+}
 
 
 /* ----------------------------------------------------------------------------
  * CPU Hints & Idle
  * ------------------------------------------------------------------------- */
 
-void cyros_port_cpu_relax(void);
+void cyros_port_cpu_relax(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+   __builtin_ia32_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+   __asm__ __volatile__("yield");
+#endif
+}
 
-void cyros_port_idle(void);
+void cyros_port_idle(void)
+{
+   // Park until a reschedule signal arrives. Delivery runs the handler, which
+   // reschedules this core. If a thread became ready we are switched out and do
+   // not return here until parked as idle again. sigsuspend returns once a
+   // handler has run and we were resumed as the idle thread.
+   sigset_t wait_mask;
+   sigemptyset(&wait_mask); // wait with everything deliverable
+   sigsuspend(&wait_mask);  // always returns -1 with EINTR after a handler runs
+}
 
 
 /* ----------------------------------------------------------------------------
  * Debug & Diagnostics
  * ------------------------------------------------------------------------- */
 
-void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional) __attribute__((noreturn));
+void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
+{
+   std::printf("KERNEL PANIC at %s:%d\n", file_optional, line_optional);
+   print_formatted_context(file_optional, line_optional);
+   std::printf("└ AUX1: 0x%lX, AUX2: 0x%lX\n", auxilary1, auxilary2);
+   std::terminate();
+}
 
-void cyros_port_breakpoint(void);
+void cyros_port_breakpoint(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+   __asm__ __volatile__("int3");
+#elif defined(__aarch64__) || defined(__arm__)
+   __builtin_trap();
+#else
+   raise(SIGTRAP);
+#endif
+}
 
-void* cyros_port_get_stack_pointer(void);
+void* cyros_port_get_stack_pointer(void)
+{
+   void* sp;
+#if defined(__x86_64__)
+   __asm__ __volatile__("mov %%rsp, %0" : "=r"(sp));
+#elif defined(__i386__)
+   __asm__ __volatile__("mov %%esp, %0" : "=r"(sp));
+#elif defined(__aarch64__)
+   __asm__ __volatile__("mov %0, sp" : "=r"(sp));
+#elif defined(__arm__)
+   __asm__ __volatile__("mov %0, sp" : "=r"(sp));
+#else
+   int dummy;
+   sp = &dummy;
+#endif
+   return sp;
+}
