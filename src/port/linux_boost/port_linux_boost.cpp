@@ -60,6 +60,7 @@
 #include <pthread.h>
 #include <string>
 
+
 /* ============================================================================
  * Port Context Structure
  * ========================================================================= */
@@ -73,7 +74,9 @@ struct cyros_port_context
    void*                 arg;
 };
 
-// Verify that port_traits.h constants are correct
+/* ============================================================================
+ * Verify Port Traits
+ * ========================================================================= */
 static_assert(sizeof(cyros_port_context) == CYROS_PORT_CONTEXT_SIZE,
               "CYROS_PORT_CONTEXT_SIZE mismatch - adjust in port_traits.h");
 static_assert(alignof(cyros_port_context) == CYROS_PORT_CONTEXT_ALIGN,
@@ -81,9 +84,7 @@ static_assert(alignof(cyros_port_context) == CYROS_PORT_CONTEXT_ALIGN,
 static_assert((CYROS_PORT_STACK_ALIGN & (CYROS_PORT_STACK_ALIGN - 1)) == 0,
               "CYROS_PORT_STACK_ALIGN must be a power of two");
 
-/* ============================================================================
- * Port MultiCore Structure
- * ========================================================================= */
+
 
 /**
  * For simulating the SMP schedulers on top of linux, we
@@ -155,14 +156,6 @@ private:
    size_t count{0};
 };
 
-/* ============================================================================
- * Global & Thread-Local State
- *
- * For SMP simulation, each OS-thread has its own state tracking using
- * thread_local. This is NOT stored in cyros_port_context to prevent
- * migration issues.
- * ========================================================================= */
-
 
 struct global_state
 {
@@ -184,6 +177,12 @@ struct global_state
 };
 static constinit global_state global;
 
+/**
+ * @brief Per-OS-Thread state
+ *
+ * For SMP simulation, each OS-thread has its own state tracking using
+ * thread_local.
+ */
 struct current_core_state
 {
    cpu_core* core{nullptr};
@@ -213,23 +212,58 @@ struct current_core_state
 };
 static thread_local constinit current_core_state current_core;
 
-/* ============================================================================
- * Platform Initialization
- * ========================================================================= */
-
-void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
+// Boost requires a stubbed allocator for our pre-allocated stack memory
+struct preallocated_stack_noop
 {
-   global.reschedule_handler = reschedule_handler;
+   using traits_type = boost::context::stack_traits;
+   boost::context::stack_context allocate(size_t) { std::abort(); }
+   void deallocate(boost::context::stack_context&) noexcept {}
+};
+
+void cpu_core::start_scheduler()
+{
+   scheduler_fiber = boost::context::fiber(
+      [this](boost::context::fiber&& caller) mutable -> boost::context::fiber
+      {
+         current_core.os_caller = std::move(caller);
+
+         // Run kernel entry for this simulated core (will start first thread etc.)
+         entry();
+
+         // Cooperative pump until only idle threads remain (one idle thread per core).
+         while (global.active_contexts.load(std::memory_order_acquire) > global.cores.size()) {
+            global.reschedule_handler();
+         }
+
+         // First core to observe quiescence initiates shutdown.
+         bool expected = false;
+         if (global.shutdown_requested.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            for (auto& c : global.cores) {
+               cyros_port_send_reschedule_ipi(c.core_id);
+            }
+         }
+
+         return std::move(current_core.os_caller);
+      }
+   );
+
+   // Enter the scheduler fiber. When it returns, this OS-thread is done.
+   scheduler_fiber = std::move(scheduler_fiber).resume();
 }
 
-/* ============================================================================
- * Reschedule resolution helper
+/**
+ * @brief Perform the synchronous switch into the scheduler fiber.
  *
- * Shared by the two safe points (irq_restore depth 0, preempt_enable depth 0).
- * Declared early so the critical-section and preemption code below can use it.
- * ========================================================================= */
-
-static void switch_to_scheduler_fiber();
+ * Precondition: we are inside a thread fiber (current_context != nullptr).
+ * The scheduler fiber ('thread_caller') runs the kernel reschedule and, when
+ * this thread is later selected again, control returns here.
+ */
+static void switch_to_scheduler_fiber()
+{
+   CYROS_ASSERT(current_core.current_context); // not inside a thread fiber
+   CYROS_ASSERT(current_core.thread_caller);   // no scheduler fiber to resume
+   current_core.thread_caller = std::move(current_core.thread_caller).resume();
+}
 
 /**
  * @brief Drain a deferred reschedule if the core is now at baseline priority.
@@ -251,12 +285,145 @@ static void resolve_pending_reschedule_if_baseline()
    switch_to_scheduler_fiber();
 }
 
+/**
+ * @brief Print the surrounding code given the source location
+ */
+static void print_formatted_context(char const* file, int target_line, int range = 2)
+{
+   // Colour Constants
+   static constexpr auto CLR_RESET  = "\033[0m";
+   static constexpr auto CLR_RED    = "\033[1;31m";
+   static constexpr auto CLR_ORANGE = "\033[38;5;208m";
+
+   std::ifstream fs(file);
+   if (!fs.is_open()) return;
+
+   std::string text;
+   int current = 0;
+   int start = (target_line - range > 0) ? target_line - range : 1;
+   int end = target_line + range;
+
+   while (std::getline(fs, text)) {
+      current++;
+      if (current >= start && current <= end) {
+         std::printf("├ ");
+         std::printf("%s%4d%s  ", CLR_ORANGE, current, CLR_RESET);
+         if (current == target_line) {
+            std::printf("%s>> %s%s\n", CLR_RED, text.c_str(), CLR_RESET);
+         } else {
+            std::printf("   %s\n", text.c_str());
+         }
+      }
+      if (current > end) break;
+   }
+}
+
+
 /* ============================================================================
- * Critical Sections (Interrupt Control) - Simulated
+ * Port Contract API
+ * ----------------------------------------------------------------------------
+ * Complete implementation of the contract:
+ * ========================================================================= */
+
+/* ----------------------------------------------------------------------------
+ * Platform Initialisation
+ * ------------------------------------------------------------------------- */
+
+void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
+{
+   global.reschedule_handler = reschedule_handler;
+}
+
+
+/* ----------------------------------------------------------------------------
+ * SMP & Multi-Core Support
+ *
+ * Each pthread represents a simulated "core". Core 0 runs on the calling
+ * thread, additional cores spawn as pthreads.
+ * ------------------------------------------------------------------------- */
+
+uint32_t cyros_port_get_core_id(void)
+{
+   // If no cores have been explicitly launched yet, then we must be on core0
+   if (!global.cores_launched()) return 0;
+
+   CYROS_ASSERT(current_core.core != nullptr);
+   return current_core.core->core_id;
+}
+
+void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
+{
+   CYROS_ASSERT(cores_to_use > 0); // Invoking with 0 cores_to_use is invalid
+   CYROS_ASSERT(cores_to_use <= CYROS_PORT_CORE_COUNT);
+
+   global.cores = cpu_core_array(cores_to_use, entry);
+
+   for (auto& core : global.cores) {
+      // No need to spawn the first core/thread as that is assigned to this current calling core/thread
+      if (core.core_id == 0) continue;
+
+      pthread_create(
+         &core.pthread,
+         nullptr,
+         +[](void* arg)-> void*
+         {
+            auto* init = static_cast<cpu_core*>(arg);
+            current_core.core = init;
+
+            // Enter the scheduler-fiber
+            init->start_scheduler();
+
+            // On exit, we finish this OS-thread instance and core0's OS-thread can join with us
+            return nullptr;
+         },
+         &core
+      );
+   }
+
+   // core0 runs on calling thread
+   auto& core0 = global.cores[0];
+   current_core.core = &core0;
+
+   // Enter the scheduler-fiber for core0
+   core0.start_scheduler();
+
+   // When core0's scheduler-fiber returns, join to any other active Core OS-thread
+   for (auto& core : global.cores) {
+      if (core.core_id == 0) continue;
+      pthread_join(core.pthread, nullptr);
+   }
+   global.reset();
+}
+
+void cyros_port_send_reschedule_ipi(uint32_t core_id)
+{
+   CYROS_ASSERT_OP(core_id, <, global.cores.size());
+
+   auto& core_poke = global.cores[core_id].core_poke;
+
+   // Set the pending bit first (release) so the woken core sees it.
+   core_poke.pending.store(true, std::memory_order_release);
+
+   // Wake the core if it is blocked in idle().
+   pthread_mutex_lock(&core_poke.mutex);
+   pthread_cond_signal(&core_poke.cond_var);
+   pthread_mutex_unlock(&core_poke.mutex);
+
+   if (core_id == current_core.core->core_id && current_core.current_context) {
+      // Targeting our own core from within a thread fiber: an IPI is a weak,
+      // deferred-safe request - route through pend_reschedule(), not a forced
+      // synchronous yield.
+      cyros_port_pend_reschedule();
+   }
+}
+
+
+/* ----------------------------------------------------------------------------
+ * Interrupt Control - Simulated
  *
  * Tracks an interrupt-masking nesting depth. Blocks the hardware: while
  * non-zero, (simulated) interrupts cannot be delivered.
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 void cyros_port_disable_interrupts(void)
 {
@@ -297,13 +464,14 @@ void cyros_port_irq_restore(uint32_t state)
    resolve_pending_reschedule_if_baseline();
 }
 
-/* ============================================================================
- * Preemption Control - Simulated
+
+/* ----------------------------------------------------------------------------
+ * Preemption Control
  *
  * Tracks a preemption-disable nesting depth. Blocks the scheduler: while
  * non-zero, no context switch is performed on this core. Interrupts are
  * unaffected.
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 void cyros_port_preempt_disable(void)
 {
@@ -321,23 +489,16 @@ void cyros_port_preempt_enable(void)
    resolve_pending_reschedule_if_baseline();
 }
 
-/* ============================================================================
- * Context Management & Switching
- * ========================================================================= */
 
-// No-op stack allocator for preallocated memory
-struct preallocated_stack_noop
-{
-   using traits_type = boost::context::stack_traits;
-   boost::context::stack_context allocate(size_t) { std::abort(); }
-   void deallocate(boost::context::stack_context&) noexcept {}
-};
+/* ----------------------------------------------------------------------------
+ * Context Management & Switching
+ * ------------------------------------------------------------------------- */
 
 void cyros_port_context_init(cyros_port_context_t* context,
-                                         void* stack_base,
-                                         size_t stack_size,
-                                         cyros_port_entry_t entry,
-                                         void* arg)
+                             void* stack_base,
+                             size_t stack_size,
+                             cyros_port_entry_t entry,
+                             void* arg)
 {
    global.active_contexts.fetch_add(1, std::memory_order_seq_cst);
 
@@ -403,33 +564,17 @@ void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_context_t* to)
    current_core.current_context = nullptr;
 }
 
+
 void cyros_port_start_first(cyros_port_context_t* first)
 {
    // Nothing special to be done on the first switch
    cyros_port_switch(nullptr, first);
 }
 
-/* ============================================================================
- * Reschedule Requests
- *
- * See port.h "Reschedule Requests" for the full contract. On this cooperative
- * simulation port the synchronous switch is a resume of the scheduler fiber
- * (current_core.thread_caller).
- * ========================================================================= */
 
-/**
- * @brief Perform the synchronous switch into the scheduler fiber.
- *
- * Precondition: we are inside a thread fiber (current_context != nullptr).
- * The scheduler fiber ('thread_caller') runs the kernel reschedule and, when
- * this thread is later selected again, control returns here.
- */
-static void switch_to_scheduler_fiber()
-{
-   CYROS_ASSERT(current_core.current_context); // not inside a thread fiber
-   CYROS_ASSERT(current_core.thread_caller);   // no scheduler fiber to resume
-   current_core.thread_caller = std::move(current_core.thread_caller).resume();
-}
+/* ----------------------------------------------------------------------------
+ * Reschedule Requests
+ * ------------------------------------------------------------------------- */
 
 void cyros_port_thread_yield(void)
 {
@@ -441,6 +586,7 @@ void cyros_port_thread_yield(void)
 
    switch_to_scheduler_fiber();
 }
+
 
 void cyros_port_pend_reschedule(void)
 {
@@ -472,123 +618,10 @@ void cyros_port_thread_exit(void)
    global.active_contexts.fetch_sub(1, std::memory_order_seq_cst);
 }
 
-/* ============================================================================
- * SMP & Multi-Core Support
- *
- * Each pthread represents a simulated "core". Core 0 runs on the calling
- * thread, additional cores spawn as pthreads.
- * ========================================================================= */
 
-
-void cpu_core::start_scheduler()
-{
-   scheduler_fiber = boost::context::fiber(
-      [this](boost::context::fiber&& caller) mutable -> boost::context::fiber
-      {
-         current_core.os_caller = std::move(caller);
-
-         // Run kernel entry for this simulated core (will start first thread etc.)
-         entry();
-
-         // Cooperative pump until only idle threads remain (one idle thread per core).
-         while (global.active_contexts.load(std::memory_order_acquire) > global.cores.size()) {
-            global.reschedule_handler();
-         }
-
-         // First core to observe quiescence initiates shutdown.
-         bool expected = false;
-         if (global.shutdown_requested.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-            for (auto& c : global.cores) {
-               cyros_port_send_reschedule_ipi(c.core_id);
-            }
-         }
-
-         return std::move(current_core.os_caller);
-      }
-   );
-
-   // Enter the scheduler fiber. When it returns, this OS-thread is done.
-   scheduler_fiber = std::move(scheduler_fiber).resume();
-}
-
-void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
-{
-   CYROS_ASSERT(cores_to_use > 0); // Invoking with 0 cores_to_use is invalid
-   CYROS_ASSERT(cores_to_use <= CYROS_PORT_CORE_COUNT);
-
-   global.cores = cpu_core_array(cores_to_use, entry);
-
-   for (auto& core : global.cores) {
-      // No need to spawn the first core/thread as that is assigned to this current calling core/thread
-      if (core.core_id == 0) continue;
-
-      pthread_create(
-         &core.pthread,
-         nullptr,
-         +[](void* arg)-> void*
-         {
-            auto* init = static_cast<cpu_core*>(arg);
-            current_core.core = init;
-
-            // Enter the scheduler-fiber
-            init->start_scheduler();
-
-            // On exit, we finish this OS-thread instance and core0's OS-thread can join with us
-            return nullptr;
-         },
-         &core
-      );
-   }
-
-   // core0 runs on calling thread
-   auto& core0 = global.cores[0];
-   current_core.core = &core0;
-
-   // Enter the scheduler-fiber for core0
-   core0.start_scheduler();
-
-   // When core0's scheduler-fiber returns, join to any other active Core OS-thread
-   for (auto& core : global.cores) {
-      if (core.core_id == 0) continue;
-      pthread_join(core.pthread, nullptr);
-   }
-   global.reset();
-}
-
-uint32_t cyros_port_get_core_id(void)
-{
-   // If no cores have been explicitly launched yet, then we must be on core0
-   if (!global.cores_launched()) return 0;
-
-   CYROS_ASSERT(current_core.core != nullptr);
-   return current_core.core->core_id;
-}
-
-void cyros_port_send_reschedule_ipi(uint32_t core_id)
-{
-   CYROS_ASSERT_OP(core_id, <, global.cores.size());
-
-   auto& core_poke = global.cores[core_id].core_poke;
-
-   // Set the pending bit first (release) so the woken core sees it.
-   core_poke.pending.store(true, std::memory_order_release);
-
-   // Wake the core if it is blocked in idle().
-   pthread_mutex_lock(&core_poke.mutex);
-   pthread_cond_signal(&core_poke.cond_var);
-   pthread_mutex_unlock(&core_poke.mutex);
-
-   if (core_id == current_core.core->core_id && current_core.current_context) {
-      // Targeting our own core from within a thread fiber: an IPI is a weak,
-      // deferred-safe request - route through pend_reschedule(), not a forced
-      // synchronous yield.
-      cyros_port_pend_reschedule();
-   }
-}
-
-/* ============================================================================
+/* ----------------------------------------------------------------------------
  * Thread-Local Storage
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 void cyros_port_set_tls_pointer(void* tls_base)
 {
@@ -601,9 +634,9 @@ void* cyros_port_get_tls_pointer(void)
 }
 
 
-/* ============================================================================
+/* ----------------------------------------------------------------------------
  * CPU Hints & Idle
- * ========================================================================= */
+ * ------------------------------------------------------------------------- */
 
 void cyros_port_cpu_relax(void)
 {
@@ -635,39 +668,10 @@ void cyros_port_idle(void)
    pthread_mutex_unlock(&core_poke.mutex);
 }
 
-/* ============================================================================
+
+/* ----------------------------------------------------------------------------
  * Debug & Diagnostics
- * ========================================================================= */
-
-static void print_formatted_context(char const* file, int target_line, int range = 2)
-{
-   // Colour Constants
-   static constexpr auto CLR_RESET  = "\033[0m";
-   static constexpr auto CLR_RED    = "\033[1;31m";
-   static constexpr auto CLR_ORANGE = "\033[38;5;208m";
-
-   std::ifstream fs(file);
-   if (!fs.is_open()) return;
-
-   std::string text;
-   int current = 0;
-   int start = (target_line - range > 0) ? target_line - range : 1;
-   int end = target_line + range;
-
-   while (std::getline(fs, text)) {
-      current++;
-      if (current >= start && current <= end) {
-         std::printf("├ ");
-         std::printf("%s%4d%s  ", CLR_ORANGE, current, CLR_RESET);
-         if (current == target_line) {
-            std::printf("%s>> %s%s\n", CLR_RED, text.c_str(), CLR_RESET);
-         } else {
-            std::printf("   %s\n", text.c_str());
-         }
-      }
-      if (current > end) break;
-   }
-}
+ * ------------------------------------------------------------------------- */
 
 void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
 {
