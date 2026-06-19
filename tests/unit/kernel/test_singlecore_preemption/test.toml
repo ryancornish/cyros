@@ -1,0 +1,15 @@
+[test]
+name   = "test_singlecore_preemption"
+source = "test_singlecore_preemption.cpp"
+config = "test_singlecore_preemption_config.hpp"
+
+# This test exercises behaviour specific to the linux_preempt port (signal-based
+# preemption). It is skipped automatically when any other port is active.
+# `port` accepts a single string or a list, e.g. port = ["linux_preempt", "qnx"].
+[requires]
+port = "linux_preempt"
+
+[link]
+# No boost_context: the preempt port pulls in sigctx via its own port.toml.
+# pthread is needed for the std::thread that stands in for an interrupt source.
+system_libraries = ["gtest", "gtest_main", "pthread"]
