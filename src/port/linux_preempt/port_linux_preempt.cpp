@@ -360,12 +360,18 @@ static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void* arg)
  */
 static int install_interceptor(cpu_core& core)
 {
+   // Keep the timer signal masked during reschedule
+   sigset_t extra;
+   sigemptyset(&extra);
+   sigaddset(&extra, timer_signo);
+
    sigctx_intercept_cfg cfg{
-      .signo      = preempt_signo,
-      .handler_sp = core.handler_stack,
-      .handler_ss = sizeof(core.handler_stack),
-      .handler    = on_reschedule,
-      .arg        = &core,
+      .signo       = preempt_signo,
+      .handler_sp  = core.handler_stack,
+      .handler_ss  = sizeof(core.handler_stack),
+      .handler     = on_reschedule,
+      .arg         = &core,
+      .block_extra = &extra,
    };
    return sigctx_intercept_install(&cfg);
 }
