@@ -2,6 +2,7 @@ name = "linux_preempt"
 
 sources = [
    "port_linux_preempt.cpp",
+   "port_time_linux_preempt.cpp",
    "../../../external/sigctx/src/sigctx.c",
    "../../../external/sigctx/src/sigctx_intercept.c",
 ]

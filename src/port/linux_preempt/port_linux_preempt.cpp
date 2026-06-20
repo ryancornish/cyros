@@ -66,6 +66,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <initializer_list>
 #include <memory>
 #include <pthread.h>
 #include <string>
@@ -105,6 +106,14 @@ static_assert((CYROS_PORT_STACK_ALIGN & (CYROS_PORT_STACK_ALIGN - 1)) == 0,
  * ordinary signal handling. The port owns this signal's disposition entirely.
  */
 static constexpr int preempt_signo = SIGURG;
+
+/**
+ * The signal the time-driver port raises to deliver a timer interrupt. It MUST
+ * match timer_signo in port_time_linux_preempt.cpp. Interrupt-disable masks it,
+ * preempt-disable does not, which is the whole interrupt-versus-preempt split.
+ * SIGRTMIN is not a constant expression, so this is a runtime-initialised const.
+ */
+static const int timer_signo = SIGRTMIN;
 
 /**
  * Per-core stack on which the interceptor trampoline, the capture relocation,
@@ -255,33 +264,47 @@ static thread_local constinit current_core_state current_core;
  * ------------------------------------------------------------------------- */
 
 /**
- * @brief Block one signal on the calling core. Blocking an already-blocked
+ * @brief Block a set of signals on the calling core. Blocking an already-blocked
  *        signal is a no-op, so this nests safely.
  */
-static void mask_signal(int signo)
+static void block_signals(std::initializer_list<int> signos)
+{
+   sigset_t s;
+   sigemptyset(&s);
+   for (int signo : signos) {
+      sigaddset(&s, signo);
+   }
+   pthread_sigmask(SIG_BLOCK, &s, nullptr);
+}
+
+static void unblock_signal(int signo)
 {
    sigset_t s;
    sigemptyset(&s);
    sigaddset(&s, signo);
-   pthread_sigmask(SIG_BLOCK, &s, nullptr);
+   pthread_sigmask(SIG_UNBLOCK, &s, nullptr);
 }
 
 /**
- * @brief Unmask the reschedule signal, but only once both depth counters are
- *        clear. Called on every enable path after the depth is lowered.
+ * @brief Re-open whatever the current depths now allow. Called on every enable
+ *        path after a depth has been lowered.
  *
- * Unmasking delivers any reschedule that pended while masked, which runs the
- * handler before this returns. That is the safe-point drain.
+ * This only ever unblocks, and only when the gate is open, so it cannot race the
+ * disable paths, which block before they raise a depth. The asymmetry is the
+ * interrupt-versus-preempt distinction made concrete: the timer is gated by
+ * interrupt-disable alone, so it runs again the moment interrupts are unmasked
+ * even while preemption stays disabled. The reschedule signal needs BOTH depths
+ * clear. Unmasking delivers anything that pended while masked before returning.
  */
-static void unmask_reschedule_if_baseline(void)
+static void reopen_signal_mask(void)
 {
-   if (current_core.preempt_disable_depth   != 0) return;
    if (current_core.interrupt_disable_depth != 0) return;
 
-   sigset_t s;
-   sigemptyset(&s);
-   sigaddset(&s, preempt_signo);
-   pthread_sigmask(SIG_UNBLOCK, &s, nullptr);
+   unblock_signal(timer_signo);
+
+   if (current_core.preempt_disable_depth == 0) {
+      unblock_signal(preempt_signo);
+   }
 }
 
 /* ----------------------------------------------------------------------------
@@ -491,13 +514,13 @@ void cyros_port_send_reschedule_ipi(uint32_t core_id)
 /* ----------------------------------------------------------------------------
  * Interrupt Control
  *
- * Masks the hardware: while raised, the reschedule signal (and, once it exists,
- * the timer signal) cannot be delivered to this core.
+ * Masks the hardware: while raised, neither the reschedule signal nor the timer
+ * signal can be delivered to this core.
  * ------------------------------------------------------------------------- */
 
 void cyros_port_disable_interrupts(void)
 {
-   mask_signal(preempt_signo); // a timer signal joins here once the timer port lands
+   block_signals({preempt_signo, timer_signo}); // block first, then raise the depth
    current_core.interrupt_disable_depth++;
 }
 
@@ -505,7 +528,7 @@ void cyros_port_enable_interrupts(void)
 {
    if (current_core.interrupt_disable_depth > 0) {
       current_core.interrupt_disable_depth--;
-      unmask_reschedule_if_baseline();
+      reopen_signal_mask();
    }
 }
 
@@ -517,7 +540,7 @@ bool cyros_port_interrupts_enabled(void)
 uint32_t cyros_port_irq_save(void)
 {
    uint32_t prev_enabled = (current_core.interrupt_disable_depth == 0) ? 1u : 0u;
-   mask_signal(preempt_signo); // block first, then raise the depth
+   block_signals({preempt_signo, timer_signo}); // block first, then raise the depth
    current_core.interrupt_disable_depth++;
    return prev_enabled;
 }
@@ -527,9 +550,10 @@ void cyros_port_irq_restore(uint32_t state)
    (void)state;
    if (current_core.interrupt_disable_depth > 0) {
       current_core.interrupt_disable_depth--;
-      // Reaching interrupt depth 0 is a safe point. Unmask only if preemption is
-      // also enabled, which delivers any reschedule that pended while masked.
-      unmask_reschedule_if_baseline();
+      // Reaching interrupt depth 0 is a safe point. Re-open whatever the
+      // remaining preempt depth allows, which delivers anything pended while
+      // masked.
+      reopen_signal_mask();
    }
 }
 
@@ -537,15 +561,15 @@ void cyros_port_irq_restore(uint32_t state)
 /* ----------------------------------------------------------------------------
  * Preemption Control
  *
- * Blocks the switch but, once a timer exists, leaves its ISR free to run. For
- * now the only gated signal is the reschedule signal, so the masking action is
- * the same as interrupt control. The depths stay separate because the timer
- * will split them.
+ * Blocks the switch but leaves the timer ISR free to run. Preempt-disable masks
+ * only the reschedule signal, so a timer interrupt still fires under it and only
+ * the reschedule that interrupt requests is deferred. That is the difference
+ * from interrupt control, which masks both.
  * ------------------------------------------------------------------------- */
 
 void cyros_port_preempt_disable(void)
 {
-   mask_signal(preempt_signo); // block first, then raise the depth
+   block_signals({preempt_signo}); // block first, then raise the depth
    current_core.preempt_disable_depth++;
 }
 
@@ -553,9 +577,9 @@ void cyros_port_preempt_enable(void)
 {
    CYROS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
    current_core.preempt_disable_depth--;
-   // Reaching preempt depth 0 is a safe point. Unmask only if interrupts are
-   // also unmasked.
-   unmask_reschedule_if_baseline();
+   // Reaching preempt depth 0 is a safe point. Re-open the reschedule signal if
+   // interrupts are also unmasked. The timer is unaffected by preempt depth.
+   reopen_signal_mask();
 }
 
 
