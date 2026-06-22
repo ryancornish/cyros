@@ -303,6 +303,11 @@ void finalise()
    kernel_instance.finalise();
 }
 
+void pend_reschedule()
+{
+   cyros_port_pend_reschedule();
+}
+
 std::uint32_t core_count() noexcept
 {
    return config::cores;

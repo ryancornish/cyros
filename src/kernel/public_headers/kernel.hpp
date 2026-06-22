@@ -37,6 +37,15 @@ void start();
 void finalise();
 
 /**
+ * @brief Request a deferred reschedule on the calling core.
+ *
+ * Pends a reschedule on the current core, safe to call from an ISR.
+ * @note This may return without rescheduling. If so, the reschedule is deferred and resolved
+ * at the next safe point.
+ */
+void pend_reschedule();
+
+/**
  * @brief Get total number of CPU cores
  * @return Number of cores (1 for single-core)
  */

@@ -22,13 +22,11 @@
  * ISR performs pends a reschedule that the kernel delivers when the handler
  * returns.
  *
- * KNOWN GAP (reverse nesting): the reschedule handler is the sigctx interceptor,
- * whose sa_mask is hardcoded empty, so timer_signo is NOT masked during a
- * reschedule. The clean fix is a small sigctx_intercept_cfg field that folds an
- * extra mask into its sa_mask. Until then there is a narrow window where the
- * timer can fire during the interceptor's capture on the shared altstack. The
- * ISR does not touch the capture, so it is probably benign, but it is not yet
- * hardened.
+ * The reverse direction is closed symmetrically by the main port. Its reschedule
+ * interceptor is installed with sigctx's block_extra set to timer_signo, so the
+ * timer stays masked for the whole interception, capture and handler alike. A
+ * timer can therefore never land on the shared handler stack mid-reschedule, and
+ * the two signals can never nest into each other in either order.
  *
  * Targeting
  * ---------
