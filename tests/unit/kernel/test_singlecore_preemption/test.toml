@@ -3,10 +3,10 @@ name   = "test_singlecore_preemption"
 source = "test_singlecore_preemption.cpp"
 config = "test_singlecore_preemption_config.hpp"
 
-# This test exercises behaviour specific to the linux_preempt port (signal-based
-# preemption). It is skipped automatically when any other port is active.
-# `port` accepts a single string or a list, e.g. port = ["linux_preempt", "qnx"].
-[requires]
+# Locked to the linux_preempt port: this test exercises signal-based preemption.
+# `port` is a filter — the test runs only when the active profile's port is
+# linux_preempt, and is skipped otherwise. Accepts a string or a list.
+[components]
 port = "linux_preempt"
 
 [link]

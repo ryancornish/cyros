@@ -1,7 +1,0 @@
-name = "libcyros"
-kind = "optional"
-description = "Optional higher-level RTOS library"
-
-dependencies = ["kernel", "time"]
-
-public_modules = ["round_robin"]
