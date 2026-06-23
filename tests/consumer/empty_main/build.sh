@@ -14,7 +14,7 @@ mkdir ./out/bin/
 
 g++-15 main.cpp \
    -std=gnu++26 \
-   -Iout/gcc-basic/include/ \
-   -Lout/gcc-basic/lib/ \
+   -Iout/empty_main/gcc-basic/include/ \
+   -Lout/empty_main/gcc-basic/lib/ \
    -lcyros \
    -o out/bin/main

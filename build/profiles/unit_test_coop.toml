@@ -1,5 +1,5 @@
 [profile]
-name = "unit_test"
+name = "unit_test_coop"
 toolchain = "../toolchains/gcc-debug.toml"
 # config_header is intentionally omitted. Each test supplies its own via
 # test.toml [test].config.

@@ -14,8 +14,8 @@ mkdir ./out/bin/
 
 g++-15 main.cpp \
    -std=gnu++26 -O0 -g3 \
-   -Iout/gcc-basic/include/ \
-   -Lout/gcc-basic/lib/ \
+   -Iout/basic_project_1/gcc-basic/include/ \
+   -Lout/basic_project_1/gcc-basic/lib/ \
    -lcyros \
    -lboost_context \
    -o out/bin/main
