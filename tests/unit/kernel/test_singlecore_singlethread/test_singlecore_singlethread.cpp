@@ -13,6 +13,8 @@ using namespace cyros;
 
 static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
+static constexpr auto STACK_SIZE = thread::min_stack_size + (16 * 1024);
+
 int main(int argc, char** argv)
 {
    ::testing::InitGoogleTest(&argc, argv);
@@ -30,7 +32,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
 
    bool thread_ran = false;
 
@@ -63,7 +65,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
 
    uint32_t thread_executed_on_core = std::numeric_limits<uint32_t>::max();
 
@@ -96,7 +98,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
 
    thread::priority threads_priority(std::numeric_limits<uint8_t>::max());
 
@@ -128,7 +130,7 @@ TEST(SingleCoreSingleThread_Test,
 
    // GIVEN:
 
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> stack;
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
 
    bool thread_completed = false;
 

@@ -4,6 +4,9 @@
 namespace cyros
 {
 
+static_assert(sizeof(thread_control_block) + 4096 <= thread::min_stack_size,
+              "Public constant thread::min_stack_size no longer accurately reflects the true min_stack_size");
+
 thread::~thread()
 {
    if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty

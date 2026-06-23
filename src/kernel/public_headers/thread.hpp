@@ -1,6 +1,7 @@
 #ifndef CYROS_THREAD_HPP
 #define CYROS_THREAD_HPP
 
+#include <cyros/port/port_traits.h>
 #include <cyros/kernel/function.hpp>
 
 #include <cstdint>
@@ -97,11 +98,16 @@ public:
     */
    void join() noexcept;
 
-
-   static std::size_t reserved_stack_size();
-
 private:
+   static constexpr std::size_t  tcb_size = 256;
+   static constexpr std::size_t min_frame = 4096;
    struct thread_control_block* tcb{nullptr};
+
+public:
+   /**
+    * @brief Minimal size (bytes) a stack must be for a thread to execute on
+    */
+   static constexpr std::size_t min_stack_size = CYROS_PORT_CONTEXT_SIZE + tcb_size + min_frame;
 };
 
 namespace this_thread

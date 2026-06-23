@@ -5,6 +5,7 @@ namespace cyros
 
 void scheduler::pin_thread(thread_control_block& tcb)
 {
+   CYROS_ASSERT(core_id < CYROS_PORT_CORE_COUNT);
    tcb.pinned_core = core_id;
    pinned_thread_counter.fetch_add(1, std::memory_order_relaxed);
 }

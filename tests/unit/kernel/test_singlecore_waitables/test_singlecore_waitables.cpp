@@ -14,6 +14,8 @@ using namespace cyros;
 
 static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
+static constexpr auto STACK_SIZE = thread::min_stack_size + (16 * 1024);
+
 int main(int argc, char** argv)
 {
    ::testing::InitGoogleTest(&argc, argv);
@@ -70,8 +72,8 @@ protected:
 TEST_F(SingleCoreWaitables_Test,
        GivenOneWaiter_WhenConditionSetAndWakeOne_ThenWaiterReturns)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
    TestWaitable w;
    bool waiter_completed = false;
@@ -104,7 +106,7 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenConditionAlreadyTrue_WhenWaiterCallsWaitOn_ThenWaiterDoesNotBlock)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
 
    TestWaitable w;
    w.condition.store(true, std::memory_order_release);
@@ -131,8 +133,8 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenWaiter_WhenWokenButConditionStillFalse_ThenWaiterReblocks)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
    TestWaitable w;
    bool waiter_completed = false;
@@ -172,8 +174,8 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenTwoWaitables_WhenSecondIsSatisfied_ThenWinnerIndexIs1)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
    TestWaitable w0;
    TestWaitable w1;
@@ -206,7 +208,7 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenTwoWaitablesBothSatisfied_WhenWaiterChecks_ThenLowestIndexWins)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
 
    TestWaitable w0;
    TestWaitable w1;
@@ -238,9 +240,9 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenTwoWaitersDifferentPriority_WhenWakeOne_ThenHighestPriorityWakesFirst)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> hi_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> lo_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> hi_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> lo_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
    TestWaitable w;
    std::atomic<int> wake_sequence{0};
@@ -293,10 +295,10 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenThreeWaiters_WhenWakeAll_ThenAllThreeReturn)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> a_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> b_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> c_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> a_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> b_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> c_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
    TestWaitable w;
    std::atomic<int> woke_count{0};
@@ -326,8 +328,8 @@ TEST_F(SingleCoreWaitables_Test,
 TEST_F(SingleCoreWaitables_Test,
        GivenWaitOnAnyWokenByOneSourceButConditionFalse_ThenWaiterReblocks)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
    TestWaitable w0;
    TestWaitable w1;
@@ -389,8 +391,8 @@ protected:
 TEST_F(SingleCoreWaitables_Test,
        GivenWaiter_WhenIsSatisfiedIsCalled_ThenCallerArgIsTheWaitingThread)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> waiter_stack{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> signaler_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
    IdentityCheckingWaitable w;
    thread::id captured_waiter_id = 0;

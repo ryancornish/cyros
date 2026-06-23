@@ -15,6 +15,8 @@ using namespace cyros;
 
 static_assert(config::cores >= 4, "Test suite is designed for (atleast) quad core configuration only");
 
+static constexpr auto STACK_SIZE = thread::min_stack_size + (8 * 1024);
+
 int main(int argc, char** argv)
 {
    ::testing::InitGoogleTest(&argc, argv);
@@ -43,8 +45,8 @@ class MultiCoreMultiThread_Test : public ::testing::Test
 TEST_F(MultiCoreMultiThread_Test,
        GivenTwoCoresAndOneThreadPinnedToEach_WhenKernelStarts_ThenBothThreadsRunOnExpectedCore)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s0{};
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s1{};
 
    bool ran0 = false;
    bool ran1 = false;
@@ -93,8 +95,8 @@ TEST_F(MultiCoreMultiThread_Test,
 TEST_F(MultiCoreMultiThread_Test,
        GivenTwoCores_WhenCore0CreatesAThreadPinnedToCore1AfterStart_ThenCore1RunsIt)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_creator{};
-   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 16 * 1024> s_remote{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s_creator{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s_remote{};
 
    bool remote_ran = false;
    uint32_t remote_seen_core = std::numeric_limits<uint32_t>::max();
@@ -143,14 +145,14 @@ TEST_F(MultiCoreMultiThread_Test,
 {
    if (kernel::core_count() < 4)  GTEST_SKIP() << "Need at least 4 cores for this test";
 
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s0{};
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s1{};
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s2{};
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s3{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s2{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s3{};
 
    std::array<int, 4> stages{0};
 
-   auto make_thread = [&](uint32_t core_id, std::array<std::byte, 16 * 1024>& stack) -> thread
+   auto make_thread = [&](uint32_t core_id, std::array<std::byte, STACK_SIZE>& stack) -> thread
    {
       return {
          [&, core_id]{
@@ -194,8 +196,8 @@ TEST_F(MultiCoreMultiThread_Test,
 TEST_F(MultiCoreMultiThread_Test,
        GivenTwoCores_WhenCore0PokesCore1WhileCore1IsIdle_ThenCore1WakesAndRunsQueuedWork)
 {
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s_core0{};
-   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 16 * 1024> s_core1_work{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s_core0{};
+   alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> s_core1_work{};
 
    bool core1_work_ran = false;
    thread core1_work; // Empty handle

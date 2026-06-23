@@ -43,11 +43,13 @@ using namespace cyros;
 
 static_assert(config::cores == 1, "Test suite is designed for single core configuration only");
 
+static constexpr auto STACK_SIZE = thread::min_stack_size + (32 * 1024);
+
 namespace
 {
 
-alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 32 * 1024> a_stack{};
-alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, 32 * 1024> b_stack{};
+alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> a_stack{};
+alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> b_stack{};
 
 }  // namespace
 

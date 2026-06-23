@@ -7,7 +7,8 @@
 #include <cstddef>
 #include <array>
 
-alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, 4096> user_stack;
+alignas(CYROS_PORT_STACK_ALIGN)
+static std::array<std::byte, cyros::thread::min_stack_size + 4096> user_stack;
 
 int main()
 {
