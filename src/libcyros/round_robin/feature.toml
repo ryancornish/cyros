@@ -1,0 +1,16 @@
+name = "round_robin"
+description = "Setup timer to trigger a reschedule every X ticks"
+
+dependencies = [
+   "kernel",
+   "time",
+]
+
+sources = [
+  "round_robin.cpp",
+]
+
+public_headers = [
+  "public_headers/round_robin.hpp -> cyros/rr/round_robin.hpp",
+]
+

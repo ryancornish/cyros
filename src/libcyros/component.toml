@@ -1,8 +1,7 @@
 name = "libcyros"
-kind = "library"
+kind = "optional"
+description = "Optional higher-level RTOS library"
 
-sources = [
-  "mutex.cpp",
-]
+dependencies = ["kernel", "time"]
 
-public_headers = []
+public_modules = ["round_robin"]

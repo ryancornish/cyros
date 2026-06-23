@@ -1,0 +1,10 @@
+[test]
+name   = "test_round_robin"
+source = "test_round_robin.cpp"
+config = "test_round_robin_config.hpp"
+
+[requires]
+port = "linux_preempt"
+
+[link]
+system_libraries = ["gtest", "gtest_main", "pthread"]
