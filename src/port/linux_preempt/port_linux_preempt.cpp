@@ -329,6 +329,17 @@ static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void* arg)
       current_core.bootstrapping = false;
       sigctx_copy(/*dst=*/ &core.scheduler_ctx.uc, core.scheduler_ctx.fpstate, sizeof(core.scheduler_ctx.fpstate),
                   /*src=*/ paused);
+
+      // A shutdown storm can fire before this core finished coming up. Its kill
+      // then coalesces with our own bring-up self-signal into the single delivery
+      // being handled right now, so honouring shutdown only after entering the
+      // first thread would lose it. The bring-up context is captured just above,
+      // so resume it now to unwind this core straight away.
+      if (global.shutdown_requested.load(std::memory_order_acquire)) {
+         printf("SHUTDOWN BEFORE COMEUP (id: %d)\n", core.core_id);
+         return &core.scheduler_ctx.uc;
+      }
+
       current_core.current_context = current_core.first_ctx;
       return &current_core.first_ctx->sctx.uc;
    }
