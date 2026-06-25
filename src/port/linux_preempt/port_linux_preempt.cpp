@@ -464,6 +464,14 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    // can target it the same way as any spawned core.
    global.cores[0].pthread = pthread_self();
 
+   // Prevent IPIs from initialized cores to uninitialized/initializing cores.
+   // This avoids a premature reschedule before the target core is ready.
+   // The block is removed when the target core starts its first thread.
+   sigset_t set;
+   sigemptyset(&set);
+   sigaddset(&set, preempt_signo);
+   pthread_sigmask(SIG_BLOCK, &set, nullptr);
+
    for (auto& core : global.cores) {
       // core0 is the calling thread, so it is not spawned here.
       if (core.core_id == 0) continue;
@@ -650,12 +658,21 @@ void cyros_port_start_first(cyros_port_context_t* first)
 {
    current_core.first_ctx        = first;
    current_core.bootstrapping    = true;
-   current_core.discard_outgoing = false; // clear stale scratch from a prior run
+   current_core.discard_outgoing = false; // Clear stale scratch from any prior runs
 
-   // Enter on_reschedule() once to capture this bring-up point and jump into the
-   // first thread. Control returns past this line only at shutdown, when the
-   // captured context is resumed.
+   // Pend on_reschedule() to capture this bring-up point and jump into the
+   // first thread.
    pthread_kill(pthread_self(), preempt_signo);
+
+   // Our self-trigger is coalesced with any earlier IPI requests to us
+   // On unblock, one and only one reschedule interrupt occurs.
+   sigset_t set;
+   sigemptyset(&set);
+   sigaddset(&set, preempt_signo);
+   pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
+
+   // Control returns here only at core-shutdown, when the captured scheduler_ctx
+   // is resumed
 }
 
 

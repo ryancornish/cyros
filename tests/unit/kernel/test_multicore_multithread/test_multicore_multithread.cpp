@@ -15,7 +15,7 @@ using namespace cyros;
 
 static_assert(config::cores >= 4, "Test suite is designed for (atleast) quad core configuration only");
 
-static constexpr auto STACK_SIZE = thread::min_stack_size + (8 * 1024);
+static constexpr auto STACK_SIZE = thread::min_stack_size + (16 * 1024);
 
 int main(int argc, char** argv)
 {
