@@ -254,11 +254,16 @@ void thread_launcher(void* tcb_ptr)
 
 void idle_task()
 {
+   // We may have received a message whilst bootstrapping (if idle_thread was first picked)
+   if (kernel_instance.scheduler_for_this_core().inbox_pending()) {
+      this_thread::yield();
+   }
+
    while (kernel_instance.is_running()) {
       cyros_port_idle();
       // Weak request: idle never blocks, it only asks the scheduler to
       // re-check whether any thread has become ready.
-      cyros_port_pend_reschedule();
+      kernel::pend_reschedule();
    }
 }
 

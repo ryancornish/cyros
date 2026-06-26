@@ -321,34 +321,29 @@ static void reopen_signal_mask(void)
  */
 static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void* arg)
 {
+   if (!global.cores_launched()) return paused; // Delivery after kernel teardown, ignore
+
    auto& core = *static_cast<cpu_core*>(arg);
 
-   // First delivery on this core. Stash the bring-up context so shutdown can
-   // unwind back into start_first(), then launch this core's first thread.
-   if (current_core.bootstrapping) {
+   bool const bootstrapping = current_core.bootstrapping;
+
+   if (bootstrapping) {
       current_core.bootstrapping = false;
       sigctx_copy(/*dst=*/ &core.scheduler_ctx.uc, core.scheduler_ctx.fpstate, sizeof(core.scheduler_ctx.fpstate),
                   /*src=*/ paused);
-
-      // A shutdown storm can fire before this core finished coming up. Its kill
-      // then coalesces with our own bring-up self-signal into the single delivery
-      // being handled right now, so honouring shutdown only after entering the
-      // first thread would lose it. The bring-up context is captured just above,
-      // so resume it now to unwind this core straight away.
-      if (global.shutdown_requested.load(std::memory_order_acquire)) {
-         printf("SHUTDOWN BEFORE COMEUP (id: %d)\n", core.core_id);
-         return &core.scheduler_ctx.uc;
-      }
-
-      current_core.current_context = current_core.first_ctx;
-      return &current_core.first_ctx->sctx.uc;
    }
 
-   // The system has quiesced to one idle thread per core. Abandon the current
-   // (idle) context and resume the bring-up point so this OS thread unwinds and
+   // The system has quiesced to one idle thread per core.
+   // Resume the bring-up point so this OS thread unwinds and
    // can be joined.
    if (global.shutdown_requested.load(std::memory_order_acquire)) {
+      sigaddset(&core.scheduler_ctx.uc.uc_sigmask, preempt_signo);
       return &core.scheduler_ctx.uc;
+   }
+
+   if (bootstrapping) {
+      current_core.current_context = current_core.first_ctx;
+      return &current_core.first_ctx->sctx.uc;
    }
 
    // Drive the core-local scheduler. It ends in cyros_port_switch(), which
@@ -511,15 +506,32 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    current_core.core = &core0;
 
    int rc = install_interceptor(core0);
-   CYROS_ASSERT(rc == 0); // interceptor failed to install on core0
+   CYROS_ASSERT(rc == 0); // Interceptor failed to install on core0
 
    core0.entry();
+
+   sigset_t now;
+   pthread_sigmask(SIG_BLOCK, /*set=*/nullptr, &now);
+   CYROS_ASSERT(sigismember(&now, preempt_signo)); // Shutdown unwind should have left this blocked
 
    // core0's entry returns only once its bring-up context has been resumed at
    // shutdown. Join the other cores, which unwind the same way.
    for (auto& core : global.cores) {
       if (core.core_id == 0) continue;
       pthread_join(core.pthread, nullptr);
+   }
+
+   // core0 has unwound and is no longer a scheduling participant. Any preempt_signo
+   // still pending on this thread is a stale IPI or self-signal from teardown and
+   // must not run on_reschedule against a reset kernel. Drain it while masked.
+   sigset_t pend;
+   sigpending(&pend);
+   if (sigismember(&pend, preempt_signo)) {
+      int sig;
+      sigset_t only;
+      sigemptyset(&only);
+      sigaddset(&only, preempt_signo);
+      sigwait(&only, &sig); // Consume the pending instance without running the handler
    }
 
    global.reset();

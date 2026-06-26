@@ -86,6 +86,11 @@ public:
       return pinned_thread_counter.load(std::memory_order_relaxed);
    }
 
+   [[nodiscard]] bool inbox_pending() const noexcept
+   {
+      return inbox_poke_pending.load(std::memory_order_relaxed);
+   }
+
    void pin_thread(thread_control_block& tcb);
 
    void init_idle_thread();
