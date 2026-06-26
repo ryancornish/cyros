@@ -1,9 +1,8 @@
 [test]
-name   = "test_port"
-source = "test_port.cpp"
-config = "test_port_config.hpp"
+name   = "test_linux_boost_port"
+source = "test_linux_boost_port.cpp"
+config = "test_linux_boost_port_config.hpp"
 
-# This test targets the boost-context port specifically.
 [components]
 port = "linux_boost"
 

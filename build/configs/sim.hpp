@@ -1,6 +1,6 @@
 /**
  * @file config.hpp
- * @brief Cyros Configuration header
+ * @brief Cyros Configuration header template
  */
 
 #ifndef CYROS_CONFIG_HPP
