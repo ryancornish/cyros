@@ -732,15 +732,8 @@ void cyros_port_pend_reschedule(void)
 
 void cyros_port_thread_exit(void)
 {
+   CYROS_ASSERT(current_core.preempt_disable_depth > 0); // thread_exit routine must be uninterruptible!
    CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
-
-   // Mask our own reschedule signal for the duration so that initiating the
-   // shutdown storm below does not bounce us into the handler mid-teardown,
-   // which would abandon cores we have not yet signalled.
-   sigset_t s;
-   sigemptyset(&s);
-   sigaddset(&s, preempt_signo);
-   pthread_sigmask(SIG_BLOCK, &s, nullptr);
 
    uint32_t remaining = global.active_contexts.fetch_sub(1, std::memory_order_seq_cst) - 1;
 
@@ -763,7 +756,7 @@ void cyros_port_thread_exit(void)
    // this context and resumes either the next thread or, under shutdown, the
    // bring-up context. We do not return.
    pthread_kill(pthread_self(), preempt_signo);
-   pthread_sigmask(SIG_UNBLOCK, &s, nullptr);
+   cyros_port_preempt_enable(); // Depth 1 -> 0, reopens preempt_signo, pended kill fires
    __builtin_unreachable();
 }
 

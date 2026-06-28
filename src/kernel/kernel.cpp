@@ -244,11 +244,21 @@ void thread_launcher(void* tcb_ptr)
 
    auto& scheduler = kernel_instance.scheduler_for_this_core();
 
+   // Idle threads are outside the teardown bookkeeping and return normally
+   if (tcb->id == scheduler::idle_thread_id) {
+      scheduler.set_thread_terminated(*tcb);
+      return;
+   }
+
+   // Teardown of the user thread must not be interrupted.
+   // Bookkeeping and port exit mechanics must be made
+   // atomically. It is up to the port exit routine to
+   // return us to the reschedule routine.
+   cyros_port_preempt_disable();
+
    scheduler.set_thread_terminated(*tcb);
-
-   if (tcb->id == scheduler::idle_thread_id) return; // idle threads are not apart of the same bookkeeping
-
    kernel_instance.unregister_thread();
+
    cyros_port_thread_exit();
 }
 
