@@ -11,7 +11,7 @@ thread::~thread()
 {
    if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty
 
-   CYROS_ASSERT(tcb->state == thread_control_block::thread_state::terminated);
+   CYROS_ASSERT(tcb->state == thread_state::terminated);
    tcb->public_thread_handle = nullptr;
 }
 
@@ -131,8 +131,8 @@ void thread_ready_queue::remove(thread_control_block& tcb) noexcept
 void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.effective_priority, <, config::max_priorities);
-   CYROS_ASSERT1(tcb.state == thread_control_block::thread_state::ready ||
-                 tcb.state == thread_control_block::thread_state::ready_pending, tcb.state);
+   CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
+
    matrix[tcb.effective_priority].push_back(tcb);
    bitmap |= (1u << tcb.effective_priority);
 }

@@ -37,20 +37,27 @@ public:
    }
 };
 
+enum class thread_state : uint8_t
+{
+   created,
+   ready,
+   running,
+   blocked,
+   terminated,
+};
+
+enum class thread_disposition : uint8_t
+{
+   none,      ///< No pending wish - scheduled purely on position.
+   prepared,  ///< Wishes to block but still deciding - stays runnable if preempted.
+   committed, ///< Decision made under preempt-disable - reschedule will park it.
+};
 
 struct thread_control_block
 {
-   enum class thread_state : uint8_t
-   {
-      created,
-      ready,
-      ready_pending,
-      running,
-      running_pending,
-      blocked,
-      terminated,
-   };
+
    thread_state state{thread_state::created};
+   thread_disposition disposition{thread_disposition::none};
 
    // Intrusive 'linked-list' links for a thread_ready_queue. Pointing to self
    // represents the not-enqueued sentinel

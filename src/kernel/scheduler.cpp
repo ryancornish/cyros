@@ -22,7 +22,7 @@ void scheduler::init_idle_thread()
       nullptr
    );
    idle_thread->pinned_core = core_id;
-   idle_thread->state = thread_control_block::thread_state::ready;
+   idle_thread->state = thread_state::ready;
 }
 
 // Core-local operations (only called on owning core)
@@ -35,38 +35,33 @@ void scheduler::start() noexcept
       first = idle_thread;
    }
    CYROS_ASSERT(first != nullptr);
-   CYROS_ASSERT_OP(first->state, ==, thread_control_block::thread_state::ready);
+   CYROS_ASSERT_OP(first->state, ==, thread_state::ready);
 
-   set_thread_running(*first, false);
+   set_thread_running(*first);
 
    //cyros_port_set_thread_pointer(current_thread);
    cyros_port_start_first(current_thread->context());
 }
 
-schedule_hint scheduler::set_thread_ready(thread_control_block& tcb, bool pending) noexcept
+schedule_hint scheduler::set_thread_ready(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
 
    // Idempotent: a remote core might have sent us a late request to ready
    // this thread, and we have already terminated it since. No-op.
-   if (tcb.state == thread_control_block::thread_state::terminated) {
+   if (tcb.state == thread_state::terminated) {
       return schedule_hint::unwarranted;
    }
 
    // Idempotent: if already enqueued, this is a redundant wake/admit (e.g.
    // two signallers raced, or a stale wake from a prior round). The thread
    // is already going to run.
-   if ((tcb.state == thread_control_block::thread_state::ready         && !pending) ||
-       (tcb.state == thread_control_block::thread_state::ready_pending &&  pending)) {
-      CYROS_ASSERT(tcb.is_enqueued() || &tcb == idle_thread);
+   if (tcb.is_enqueued()) {
+      CYROS_ASSERT(tcb.state == thread_state::ready);
       return schedule_hint::unwarranted;
    }
 
-   if (pending) {
-      tcb.state = thread_control_block::thread_state::ready_pending;
-   } else {
-      tcb.state = thread_control_block::thread_state::ready;
-   }
+   tcb.state = thread_state::ready;
 
    // Idle thread does not belong in the ready_matrix,
    // but DOES follow state transition semantics
@@ -82,34 +77,31 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb, bool pendin
    return schedule_hint::unwarranted;
 }
 
-void scheduler::set_thread_running(thread_control_block& tcb, bool pending) noexcept
+void scheduler::set_thread_running(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
-   CYROS_ASSERT(tcb.state != thread_control_block::thread_state::terminated);
-   CYROS_ASSERT(tcb.state != thread_control_block::thread_state::blocked);
+   CYROS_ASSERT(tcb.state == thread_state::ready);
 
-   if (pending) {
-      tcb.state = thread_control_block::thread_state::running_pending;
-   } else {
-      tcb.state = thread_control_block::thread_state::running;
-   }
+   tcb.state = thread_state::running;
    current_thread = &tcb;
 }
 
 void scheduler::set_thread_blocked(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
-   CYROS_ASSERT(tcb.state == thread_control_block::thread_state::running_pending);
+   CYROS_ASSERT(tcb.state == thread_state::running);
+   CYROS_ASSERT(tcb.disposition == thread_disposition::committed);
    CYROS_ASSERT(!tcb.is_enqueued());
 
-   tcb.state = thread_control_block::thread_state::blocked;
+   tcb.disposition = thread_disposition::none;
+   tcb.state = thread_state::blocked;
 }
 
 void scheduler::set_thread_terminated(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
 
-   tcb.state = thread_control_block::thread_state::terminated;
+   tcb.state = thread_state::terminated;
    tcb.termination.terminate(); // signal joiners
 }
 
@@ -121,8 +113,9 @@ void scheduler::drain_inbox() noexcept
    while (inbox.pop(request)) {
       switch (request.type) {
          case cross_core_request::set_thread_ready:
+            request.tcb->disposition = thread_disposition::none;
             // Drain inbox happens during a reschedule. No need to acknowledge the hint
-            (void)set_thread_ready(*request.tcb, /*pending=*/false);
+            (void)set_thread_ready(*request.tcb);
             break;
       }
    }
@@ -170,25 +163,28 @@ void scheduler::reschedule() noexcept
    auto* previous_thread = current_thread;
 
    switch (previous_thread->state) {
-      case thread_control_block::thread_state::running:
-         (void)set_thread_ready(*previous_thread, /*pending=*/false);
-         break;
-      case thread_control_block::thread_state::running_pending:
-         (void)set_thread_ready(*previous_thread, /*pending=*/true);
+      case thread_state::running:
+         if (previous_thread->disposition == thread_disposition::committed) {
+            set_thread_blocked(*previous_thread);
+         } else {
+            (void)set_thread_ready(*previous_thread);
+         }
          break;
 
-      case thread_control_block::thread_state::ready:
-      case thread_control_block::thread_state::ready_pending:
-      case thread_control_block::thread_state::blocked:
-      case thread_control_block::thread_state::terminated:
-      case thread_control_block::thread_state::created: // Fault?
+      case thread_state::terminated:
+         break;
+      case thread_state::ready:
+      case thread_state::blocked:
+      case thread_state::created:
+         CYROS_ASSERT(false); // Illegal state
          break;
    }
 
    auto* next_thread = ready_matrix.pop_best_thread();
    if (!next_thread) next_thread = idle_thread;
 
-   set_thread_running(*next_thread, next_thread->state == thread_control_block::thread_state::ready_pending);
+   set_thread_running(*next_thread);
+
    cyros_port_switch(previous_thread->context(), next_thread->context());
 }
 
@@ -201,7 +197,7 @@ void scheduler::reset()
    // to a thread that is still live and blocked.
    cross_core_request request;
    while (inbox.pop(request)) {
-      CYROS_ASSERT_OP(request.tcb->state, ==, thread_control_block::thread_state::terminated);
+      CYROS_ASSERT_OP(request.tcb->state, ==, thread_state::terminated);
    }
    CYROS_ASSERT(ready_matrix.empty()); // Cannot reset whilst threads still in the queue
 

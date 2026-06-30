@@ -68,10 +68,6 @@ void waitable::wait_queue::arm(wait_node& node) noexcept
    CYROS_ASSERT(node.owner != nullptr);
    CYROS_ASSERT(node.next  == nullptr); // node must not already be on a list
 
-   // For now, hard code the state change. They are supposed to all be done through the
-   // scheduler interface, but we dont have access to that here
-   node.owner->state = thread_control_block::thread_state::running_pending;
-
    // Priority-ordered insert (best at head).
    wait_node** slot = &head;
    while (*slot && (*slot)->owner->effective_priority <= node.owner->effective_priority) {

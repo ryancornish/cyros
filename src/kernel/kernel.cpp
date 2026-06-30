@@ -153,12 +153,12 @@ public:
 
       // If cores are not running yet, enqueue directly (even for remote cores)
       if (!running.load(std::memory_order_acquire)) {
-         (void)scheduler.set_thread_ready(tcb, false);
+         (void)scheduler.set_thread_ready(tcb);
          return;
       }
 
       // Thread state should be freshly constructed
-      CYROS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::created);
+      CYROS_ASSERT_OP(tcb.state, ==, thread_state::created);
       CYROS_ASSERT(!tcb.is_enqueued());
 
       if (set_thread_ready(tcb) == schedule_hint::warranted) {
@@ -191,7 +191,7 @@ public:
    {
       // Fast path: if the thread is already terminated. Can happen with stale remote-ready-requests
       // A thread that terminates AFTER this check is handled by the scheduler-level guard when the request is drained.
-      if (tcb.state == thread_control_block::thread_state::terminated) {
+      if (tcb.state == thread_state::terminated) {
          return schedule_hint::unwarranted;
       }
 
@@ -207,7 +207,7 @@ public:
          return schedule_hint::unwarranted;
       }
 
-      return scheduler.set_thread_ready(tcb, false);
+      return scheduler.set_thread_ready(tcb);
    }
 };
 constinit kernel_state kernel_instance;
@@ -376,23 +376,29 @@ void yield()
    wait_node_vector nodes(waitables.size(), tcb);
 
    while (true) {
-      waitable_arm_guard arm_guard(waitables, nodes);
+      tcb->disposition = thread_disposition::prepared;
 
-      // Check each source. Lowest-index wins on ties (e.g. resource before
-      // timeout).
+      // All waitable wakes are serialised on the arm_guard.
+      // If a wake fires BEFORE the arm_guard:
+      // - Thread is not readied because we are not registered.
+      waitable_arm_guard arm_guard(waitables, nodes);
+      // If a wake fires AFTER the arm_guard:
+      // - Thread is readied and we are no longer 'prepared' to block.
+
+      // Lowest-index wins on ties
       for (std::size_t i = 0; waitable& waitable : waitables) {
          if (waitable.is_satisfied(*tcb->public_thread_handle)) {
-            scheduler.set_thread_running(*tcb, /*pending=*/false);
+            scheduler.set_thread_running(*tcb);
             return i;
          }
          ++i;
       }
 
       cyros_port_preempt_disable();
-      if (tcb->state == thread_control_block::thread_state::running_pending) {
-         // Nothing satisfied, block until woken
-         scheduler.set_thread_blocked(*tcb);
-         cyros_port_pend_reschedule();
+      if (tcb->disposition == thread_disposition::prepared) {
+         // Condition unsatisfied AND no wake came after arming, block until woken
+         tcb->disposition = thread_disposition::committed;
+         cyros_port_pend_reschedule(); // Delayed until preempt_enable()
       }
       cyros_port_preempt_enable();
    }
