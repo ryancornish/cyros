@@ -37,18 +37,20 @@ public:
    }
 };
 
-// State transition ownership:
-//   ready       - any core may request. Routed via wake_thread() -> set_thread_ready() with cross-core posting.
-//                 Caller must ensure the thread is currently blocked (or running, for newly-registered threads). Calling
-//                 on an already-ready thread is a caller bug.
-//   blocked     - only the thread itself requests (always local).
-//   running     - only the dispatching scheduler requests (always local).
-//   terminated  - only the thread itself requests (always local).
 
 struct thread_control_block
 {
-   enum class thread_state : uint8_t { ready, running, blocked, terminated };
-   thread_state state{thread_state::ready};
+   enum class thread_state : uint8_t
+   {
+      created,
+      ready,
+      ready_pending,
+      running,
+      running_pending,
+      blocked,
+      terminated,
+   };
+   thread_state state{thread_state::created};
 
    // Intrusive 'linked-list' links for a thread_ready_queue. Pointing to self
    // represents the not-enqueued sentinel

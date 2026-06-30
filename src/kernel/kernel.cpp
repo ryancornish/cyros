@@ -153,12 +153,12 @@ public:
 
       // If cores are not running yet, enqueue directly (even for remote cores)
       if (!running.load(std::memory_order_acquire)) {
-         (void)scheduler.set_thread_ready(tcb);
+         (void)scheduler.set_thread_ready(tcb, false);
          return;
       }
 
-      // Thread state should be freshly constructed with 'ready'
-      CYROS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::ready);
+      // Thread state should be freshly constructed
+      CYROS_ASSERT_OP(tcb.state, ==, thread_control_block::thread_state::created);
       CYROS_ASSERT(!tcb.is_enqueued());
 
       if (set_thread_ready(tcb) == schedule_hint::warranted) {
@@ -207,7 +207,7 @@ public:
          return schedule_hint::unwarranted;
       }
 
-      return scheduler.set_thread_ready(tcb);
+      return scheduler.set_thread_ready(tcb, false);
    }
 };
 constinit kernel_state kernel_instance;
@@ -378,24 +378,23 @@ void yield()
    while (true) {
       waitable_arm_guard arm_guard(waitables, nodes);
 
-      // Commit to blocking BEFORE the predicate check. If a wake fires
-      // between arming and yielding, the wake's set_thread_ready request
-      // is queued in our inbox. The next yield drains it and transitions
-      // us back to ready.
-      scheduler.set_thread_blocked(*tcb);
-
       // Check each source. Lowest-index wins on ties (e.g. resource before
       // timeout).
       for (std::size_t i = 0; waitable& waitable : waitables) {
          if (waitable.is_satisfied(*tcb->public_thread_handle)) {
-            scheduler.set_thread_running(*tcb);
+            scheduler.set_thread_running(*tcb, /*pending=*/false);
             return i;
          }
          ++i;
       }
 
-      // Nothing satisfied, block until woken
-      cyros_port_thread_yield();
+      cyros_port_preempt_disable();
+      if (tcb->state == thread_control_block::thread_state::running_pending) {
+         // Nothing satisfied, block until woken
+         scheduler.set_thread_blocked(*tcb);
+         cyros_port_pend_reschedule();
+      }
+      cyros_port_preempt_enable();
    }
 }
 

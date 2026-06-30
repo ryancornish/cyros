@@ -98,9 +98,9 @@ public:
    // Core-local operations (only called on owning core)
    void start() noexcept;
 
-   [[nodiscard]] schedule_hint set_thread_ready(thread_control_block& tcb) noexcept;
+   [[nodiscard]] schedule_hint set_thread_ready(thread_control_block& tcb, bool pending) noexcept;
 
-   void set_thread_running(thread_control_block& tcb) noexcept;
+   void set_thread_running(thread_control_block& tcb, bool pending) noexcept;
 
    void set_thread_blocked(thread_control_block& tcb) noexcept;
 

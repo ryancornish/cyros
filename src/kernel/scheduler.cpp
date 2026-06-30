@@ -22,6 +22,7 @@ void scheduler::init_idle_thread()
       nullptr
    );
    idle_thread->pinned_core = core_id;
+   idle_thread->state = thread_control_block::thread_state::ready;
 }
 
 // Core-local operations (only called on owning core)
@@ -36,13 +37,13 @@ void scheduler::start() noexcept
    CYROS_ASSERT(first != nullptr);
    CYROS_ASSERT_OP(first->state, ==, thread_control_block::thread_state::ready);
 
-   set_thread_running(*first);
+   set_thread_running(*first, false);
 
    //cyros_port_set_thread_pointer(current_thread);
    cyros_port_start_first(current_thread->context());
 }
 
-schedule_hint scheduler::set_thread_ready(thread_control_block& tcb) noexcept
+schedule_hint scheduler::set_thread_ready(thread_control_block& tcb, bool pending) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
 
@@ -55,12 +56,17 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb) noexcept
    // Idempotent: if already enqueued, this is a redundant wake/admit (e.g.
    // two signallers raced, or a stale wake from a prior round). The thread
    // is already going to run.
-   if (tcb.is_enqueued()) {
-      CYROS_ASSERT(tcb.state == thread_control_block::thread_state::ready); // Worth checking
+   if ((tcb.state == thread_control_block::thread_state::ready         && !pending) ||
+       (tcb.state == thread_control_block::thread_state::ready_pending &&  pending)) {
+      CYROS_ASSERT(tcb.is_enqueued() || &tcb == idle_thread);
       return schedule_hint::unwarranted;
    }
 
-   tcb.state = thread_control_block::thread_state::ready;
+   if (pending) {
+      tcb.state = thread_control_block::thread_state::ready_pending;
+   } else {
+      tcb.state = thread_control_block::thread_state::ready;
+   }
 
    // Idle thread does not belong in the ready_matrix,
    // but DOES follow state transition semantics
@@ -76,17 +82,25 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb) noexcept
    return schedule_hint::unwarranted;
 }
 
-void scheduler::set_thread_running(thread_control_block& tcb) noexcept
+void scheduler::set_thread_running(thread_control_block& tcb, bool pending) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+   CYROS_ASSERT(tcb.state != thread_control_block::thread_state::terminated);
+   CYROS_ASSERT(tcb.state != thread_control_block::thread_state::blocked);
 
-   tcb.state = thread_control_block::thread_state::running;
+   if (pending) {
+      tcb.state = thread_control_block::thread_state::running_pending;
+   } else {
+      tcb.state = thread_control_block::thread_state::running;
+   }
    current_thread = &tcb;
 }
 
 void scheduler::set_thread_blocked(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+   CYROS_ASSERT(tcb.state == thread_control_block::thread_state::running_pending);
+   CYROS_ASSERT(!tcb.is_enqueued());
 
    tcb.state = thread_control_block::thread_state::blocked;
 }
@@ -108,7 +122,7 @@ void scheduler::drain_inbox() noexcept
       switch (request.type) {
          case cross_core_request::set_thread_ready:
             // Drain inbox happens during a reschedule. No need to acknowledge the hint
-            (void)set_thread_ready(*request.tcb);
+            (void)set_thread_ready(*request.tcb, /*pending=*/false);
             break;
       }
    }
@@ -157,19 +171,24 @@ void scheduler::reschedule() noexcept
 
    switch (previous_thread->state) {
       case thread_control_block::thread_state::running:
-         (void)set_thread_ready(*previous_thread); // Discard the hint because we are already rescheduling
+         (void)set_thread_ready(*previous_thread, /*pending=*/false);
+         break;
+      case thread_control_block::thread_state::running_pending:
+         (void)set_thread_ready(*previous_thread, /*pending=*/true);
          break;
 
       case thread_control_block::thread_state::ready:
+      case thread_control_block::thread_state::ready_pending:
       case thread_control_block::thread_state::blocked:
       case thread_control_block::thread_state::terminated:
+      case thread_control_block::thread_state::created: // Fault?
          break;
    }
 
    auto* next_thread = ready_matrix.pop_best_thread();
    if (!next_thread) next_thread = idle_thread;
 
-   set_thread_running(*next_thread);
+   set_thread_running(*next_thread, next_thread->state == thread_control_block::thread_state::ready_pending);
    cyros_port_switch(previous_thread->context(), next_thread->context());
 }
 
