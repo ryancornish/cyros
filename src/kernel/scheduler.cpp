@@ -135,23 +135,34 @@ bool scheduler::post_to_inbox(cross_core_request request) noexcept
 }
 
 /**
- * @brief Selects the next runnable thread for this core and performs a context switch.
+ * @brief Select the next runnable thread for this core and switch to it.
  *
- * Invariants / contract:
- * - Called only by the owning core of this scheduler (no cross-core mutation).
- * - @c current_thread is non-null and is the thread currently executing on this core.
- * - The currently running thread is not present in the ready matrix on entry.
- * - On entry, @c current_thread->state is one of:
- *     - Running    => running normally; treated as preempted/rotated and re-enqueued (except idle).
- *     - Ready      => "armed-then-woken before yield" - the thread armed itself on a wait_queue but
- *                     was woken by a concurrent signaller before reaching this point.
- *                     The wake's set_thread_ready request was processed by drain_inbox() (called above),
- *                     which transitioned state to Ready and enqueued the thread into the ready matrix.
- *                     Therefore: do NOT re-enqueue here. Just fall through to picking the next thread.
- *     - Blocked    => parking on a wait_queue - must already be removed from ready.
- *                     structures. Not re-enqueued.
- *     - Terminated => must not be re-enqueued.
- * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
+ * Sole arbiter of contested transitions. Runs on the owning core in the
+ * current thread's context and reconciles that thread's own wish (its
+ * disposition) against any wake that raced it.
+ *
+ * Design: state (position) and disposition (intent to block) are orthogonal.
+ * A thread authors its own disposition, but this is the ONLY place committed
+ * becomes blocked, so the block decision has a single arbiter even though the
+ * wish is raised from thread context.
+ *
+ * Policy: drain_inbox() runs first and is the reconciler. A wake clears its
+ * target's disposition as it readies it, so a wake landing on a thread that
+ * already committed to blocking revokes that commit here. The wake wins and
+ * the thread stays runnable rather than parking on a stale decision. A
+ * rotation and the pick must therefore preserve a prepared disposition, so a
+ * waiter preempted mid-wait comes back still intending to block and cannot be
+ * stranded.
+ *
+ * Dispatch on the running thread:
+ *      committed          -> park, not re-enqueued
+ *      none / prepared    -> rotate, prepared preserved
+ *      ready              -> already readied by drain, not re-enqueued
+ *      terminated         -> exiting, not re-enqueued
+ *      blocked / created  -> illegal on entry (asserted)
+ *
+ * Entry contract: called only by the owning core, current_thread non-null
+ * and not enqueued. A blocked or created thread is never the running thread.
  */
 void scheduler::reschedule() noexcept
 {

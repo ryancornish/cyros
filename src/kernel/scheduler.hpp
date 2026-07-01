@@ -112,23 +112,13 @@ public:
    [[nodiscard]] bool post_to_inbox(cross_core_request request) noexcept;
 
    /**
-   * @brief Selects the next runnable thread for this core and performs a context switch.
+   * @brief Select the next runnable thread for this core and switch to it.
    *
-   * Invariants / contract:
-   * - Called only by the owning core of this scheduler (no cross-core mutation).
-   * - @c current_thread is non-null and is the thread currently executing on this core.
-   * - The currently running thread is not present in the ready matrix on entry.
-   * - On entry, @c current_thread->state is one of:
-   *     - Running    => running normally - treated as preempted/rotated and re-enqueued (except idle).
-   *     - Ready      => "armed-then-woken before yield" - the thread armed itself on a wait_queue but
-   *                     was woken by a concurrent signaller before reaching this point.
-   *                     The wake's set_thread_ready request was processed by drain_inbox() (called above),
-   *                     which transitioned state to Ready and enqueued the thread into the ready matrix.
-   *                     Therefore: do NOT re-enqueue here. Just fall through to picking the next thread.
-   *     - Blocked    => parking on a wait_queue - must already be removed from ready.
-   *                     structures. Not re-enqueued.
-   *     - Terminated => must not be re-enqueued.
-   * - Any cross-core readying requests must be visible via @c drain_inbox() before selection.
+   * Pick the highest-priority ready thread for this core and context-switch
+   * to it, parking or re-enqueuing the outgoing thread as its state and
+   * disposition dictate. Runs on the owning core in the current thread's
+   * context, driven by a yield, a wake, or a preemption IPI. See the .cpp
+   * for the full transition policy.
    */
    void reschedule() noexcept;
 
