@@ -1,4 +1,5 @@
 #include <cyros/time/time.hpp>
+
 #include <cyros/port/port.h>
 #include <cyros/port/port_time.h>
 
@@ -6,97 +7,152 @@
 #include <cstdint>
 #include <limits>
 
-namespace cyros::time::tickless
+/* ============================================================================
+ * Local State & Helpers
+ * ========================================================================= */
+
+namespace
 {
-   static constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
 
-   struct slot
-   {
-      uint32_t id{0};      // 0 = free
-      uint64_t when{0};    // absolute deadline in driver ticks
-      callback cb{nullptr};
-      void* arg{nullptr};
-   };
+using cyros::time::callback;
 
-   struct irq_guard
-   {
-      uint32_t state;
-      irq_guard() noexcept : state(cyros_port_irq_save()) {}
-      ~irq_guard() { cyros_port_irq_restore(state); }
+/// @brief Fixed-size embedded-safe slot count, avoids heap allocation.
+constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
 
-      irq_guard(irq_guard const&) = delete;
-      irq_guard& operator=(irq_guard const&) = delete;
-   };
+/**
+ * @brief One scheduled callback.
+ *
+ * period == 0 is a one-shot fired once at 'when'. period > 0 is recurring and
+ * re-arms itself every 'period' ticks. id == 0 marks the slot free.
+ */
+struct slot
+{
+   uint32_t id{0};
+   uint64_t when{0};    // absolute deadline in driver ticks
+   uint64_t period{0};  // 0 one-shot, else the recurring interval
+   callback cb{nullptr};
+   void* arg{nullptr};
+};
 
-   struct driver_state
-   {
-      bool initialised{false};
-      uint32_t frequency_hz{0};
-      uint32_t next_id{1};
-      bool started{false};
-      std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
-   };
+/// @brief RAII interrupt disable/restore guard.
+struct irq_guard
+{
+   uint32_t state;
 
-   static constinit driver_state ds{};
+   irq_guard() noexcept : state(cyros_port_irq_save()) {}
+   ~irq_guard() { cyros_port_irq_restore(state); }
 
-   static void fire_due_isr(uint64_t now_ticks) noexcept
-   {
-      // ISR context: free slot before invoking callback to avoid reentrancy hazards.
-      for (auto& s : ds.slots) {
-         if (s.id != 0 && s.when <= now_ticks) {
-            auto cb = s.cb;
-            auto arg = s.arg;
-            s = slot{};
-            cb(arg);
+   irq_guard(irq_guard const&) = delete;
+   irq_guard& operator=(irq_guard const&) = delete;
+};
+
+struct driver_state
+{
+   bool initialised{false};
+   uint32_t frequency_hz{0};
+   uint32_t next_id{1};
+   bool started{false};
+   std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
+};
+constinit driver_state driver_instance{};
+
+/**
+ * @brief Claim the next non-zero handle id.
+ */
+uint32_t next_handle_id() noexcept
+{
+   uint32_t id = driver_instance.next_id++;
+   if (id == 0) {
+      id = driver_instance.next_id++; // skip the invalid id
+   }
+   return id;
+}
+
+/**
+ * @brief Program the port one-shot to the earliest live deadline, or disarm it
+ *        when nothing is scheduled. Call with interrupts already masked.
+ */
+void rearm_locked() noexcept
+{
+   uint64_t earliest = std::numeric_limits<uint64_t>::max();
+
+   for (auto const& slot : driver_instance.slots) {
+      if (slot.id != 0 && slot.when < earliest) {
+         earliest = slot.when;
+      }
+   }
+
+   if (earliest == std::numeric_limits<uint64_t>::max()) {
+      cyros_port_time_disarm();
+   } else {
+      // If already due the port delivers an immediate or next-possible
+      // interrupt per platform policy.
+      cyros_port_time_arm(earliest);
+   }
+}
+
+/**
+ * @brief Fire every due slot. One-shots are freed before invoking. Recurring
+ *        slots advance on a fixed grid from their scheduled deadline so cadence
+ *        does not drift, skipping whole periods missed during a stall so a lag
+ *        yields one fire and not a catch-up burst. The caller re-arms the port
+ *        one-shot afterward, so an advanced recurring deadline is picked up.
+ *
+ * ISR context.
+ */
+void fire_due_isr(uint64_t now_ticks) noexcept
+{
+   for (auto& slot : driver_instance.slots) {
+      if (slot.id != 0 && slot.when <= now_ticks) {
+         auto callback = slot.cb;
+         auto* arg = slot.arg;
+
+         if (slot.period == 0) {
+            slot = {};
+         } else {
+            do {
+               slot.when += slot.period;
+            } while (slot.when <= now_ticks);
          }
+
+         callback(arg);
       }
    }
+}
 
-   static void rearm_locked() noexcept
-   {
-      uint64_t earliest = std::numeric_limits<uint64_t>::max();
+void isr_trampoline(void*) noexcept
+{
+   cyros::time::on_timer_isr();
+}
 
-      for (auto const& slot : ds.slots) {
-         if (slot.id != 0 && slot.when < earliest) {
-            earliest = slot.when;
-         }
-      }
+uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
+{
+   return (a + b - 1) / b;
+}
 
-      if (earliest == std::numeric_limits<uint64_t>::max()) {
-         cyros_port_time_disarm();
-      } else {
-         // Arm earliest absolute deadline. If already due, port should deliver
-         // an immediate or next-possible interrupt according to platform policy.
-         cyros_port_time_arm(earliest);
-      }
-   }
+} // namespace
 
-   static void isr_trampoline(void*) noexcept
-   {
-      cyros::time::on_timer_isr();
-   }
 
-   static inline uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
-   {
-      return (a + b - 1) / b;
-   }
-} // namespace cyros::time::tickless
-
+/* ============================================================================
+ * Time Driver Interface
+ * ========================================================================= */
 
 namespace cyros::time
 {
 
 void initialise(uint32_t frequency_hz)
 {
-   CYROS_ASSERT(!tickless::ds.initialised);
-   tickless::ds.initialised = true;
-   tickless::ds.frequency_hz = frequency_hz;
+   CYROS_ASSERT(!driver_instance.initialised);
+
+   driver_instance.initialised = true;
+   driver_instance.frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CYROS_ASSERT(tickless::ds.initialised);
-   tickless::ds = tickless::driver_state{};
+   CYROS_ASSERT(driver_instance.initialised);
+
+   driver_instance = driver_state{};
 }
 
 [[nodiscard]] time_point now() noexcept
@@ -110,25 +166,46 @@ void finalise()
       return {};
    }
 
-   tickless::irq_guard guard;
+   irq_guard guard;
 
-   for (auto& slot : tickless::ds.slots) {
+   for (auto& slot : driver_instance.slots) {
       if (slot.id == 0) {
-         uint32_t id = tickless::ds.next_id++;
-         if (id == 0) {
-            id = tickless::ds.next_id++;
-         }
+         slot.id     = next_handle_id();
+         slot.when   = tp.value;
+         slot.period = 0;
+         slot.cb     = cb;
+         slot.arg    = arg;
 
-         slot.id = id;
-         slot.when = tp.value;
-         slot.cb = cb;
-         slot.arg = arg;
+         // Do not invoke inline while masked even if already due. Re-arm to the
+         // earliest deadline and let the ISR path consume it.
+         rearm_locked();
 
-         // If already due, do not invoke inline while IRQs are masked.
-         // Rearm to the earliest deadline and let ISR path consume it.
-         tickless::rearm_locked();
+         return handle{slot.id};
+      }
+   }
 
-         return handle{id};
+   return {}; // out of slots
+}
+
+[[nodiscard]] handle schedule_recurring(duration interval, callback cb, void* arg) noexcept
+{
+   if (!cb || interval.value == 0) {
+      return {};
+   }
+
+   irq_guard guard;
+
+   for (auto& slot : driver_instance.slots) {
+      if (slot.id == 0) {
+         slot.id     = next_handle_id();
+         slot.when   = cyros_port_time_now() + interval.value;
+         slot.period = interval.value;
+         slot.cb     = cb;
+         slot.arg    = arg;
+
+         rearm_locked();
+
+         return handle{slot.id};
       }
    }
 
@@ -141,12 +218,12 @@ bool cancel(handle h) noexcept
       return false;
    }
 
-   tickless::irq_guard guard;
+   irq_guard guard;
 
-   for (auto& slot : tickless::ds.slots) {
+   for (auto& slot : driver_instance.slots) {
       if (slot.id == h.id) {
-         slot = tickless::slot{};
-         tickless::rearm_locked();
+         slot = {};
+         rearm_locked();
          return true;
       }
    }
@@ -156,57 +233,55 @@ bool cancel(handle h) noexcept
 
 [[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
-   const uint64_t ticks =
-      tickless::ceil_div_u64(static_cast<uint64_t>(ms) * tickless::ds.frequency_hz, 1000ULL);
+   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(ms) * driver_instance.frequency_hz, 1000ULL);
    return duration{ticks};
 }
 
 [[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
-   const uint64_t ticks =
-      tickless::ceil_div_u64(static_cast<uint64_t>(us) * tickless::ds.frequency_hz, 1'000'000ULL);
+   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(us) * driver_instance.frequency_hz, 1'000'000ULL);
    return duration{ticks};
 }
 
 void start() noexcept
 {
-   if (tickless::ds.started) {
+   if (driver_instance.started) {
       return;
    }
 
-   cyros_port_time_register_isr_handler(&tickless::isr_trampoline, nullptr);
+   cyros_port_time_register_isr_handler(&isr_trampoline, nullptr);
 
-   // By convention, tick_hz == 0 means tickless / one-shot mode.
+   // tick_hz == 0 selects tickless / one-shot mode.
    cyros_port_time_setup(0);
 
    {
-      tickless::irq_guard guard;
-      tickless::rearm_locked();
+      irq_guard guard;
+      rearm_locked();
    }
 
    cyros_port_time_irq_enable();
-   tickless::ds.started = true;
+   driver_instance.started = true;
 }
 
 void stop() noexcept
 {
-   if (!tickless::ds.started) {
+   if (!driver_instance.started) {
       return;
    }
 
    cyros_port_time_irq_disable();
    cyros_port_time_disarm();
-   tickless::ds.started = false;
+   driver_instance.started = false;
 }
 
 void on_timer_isr() noexcept
 {
-   const uint64_t now_ticks = cyros_port_time_now();
+   uint64_t const now_ticks = cyros_port_time_now();
 
-   tickless::fire_due_isr(now_ticks);
+   fire_due_isr(now_ticks);
 
-   tickless::irq_guard guard;
-   tickless::rearm_locked();
+   irq_guard guard;
+   rearm_locked();
 }
 
 } // namespace cyros::time

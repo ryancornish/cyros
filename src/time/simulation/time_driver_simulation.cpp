@@ -11,146 +11,208 @@
 #include <thread>
 #include <vector>
 
-namespace cyros::time::sim
+/* ============================================================================
+ * Local State & Helpers
+ * ========================================================================= */
+
+namespace
 {
-   /**
-    * @brief Scheduled callback event
-    */
-   struct event
+
+using cyros::time::callback;
+using cyros::time::simulation::mode;
+
+/**
+ * @brief One scheduled callback.
+ *
+ * period == 0 is a one-shot consumed once at 'when'. period > 0 is recurring
+ * and re-arms itself every 'period' ticks. A consumed or cancelled event is
+ * erased from the vector after each fire pass.
+ */
+struct event
+{
+   uint32_t id{0};
+   uint64_t when{0};
+   uint64_t period{0};  // 0 one-shot, else the recurring interval
+   callback cb{nullptr};
+   void* arg{nullptr};
+   bool cancelled{false};
+};
+
+struct driver_state
+{
+   mode active_mode{mode::virtual_time};
+
+   uint32_t tick_frequency_hz{1000};
+   std::atomic<uint32_t> next_id{1};
+
+   std::mutex mutex;
+   std::vector<event> events;
+
+   std::atomic<bool> running{false};
+   std::thread realtime_thread;
+
+   std::atomic<uint64_t> virtual_now{0};
+   std::chrono::steady_clock::time_point realtime_epoch{};
+
+   std::atomic<bool> started{false};
+};
+
+driver_state* driver_instance = nullptr;
+
+/**
+ * @brief Claim the next non-zero handle id.
+ */
+uint32_t next_handle_id() noexcept
+{
+   uint32_t id = driver_instance->next_id.fetch_add(1, std::memory_order_relaxed);
+   if (id == 0) {
+      id = driver_instance->next_id.fetch_add(1, std::memory_order_relaxed);
+   }
+   return id;
+}
+
+/**
+ * @brief Fire every due event outside the lock. One-shots are consumed and
+ *        erased. Recurring events advance on a fixed grid from their scheduled
+ *        deadline so cadence does not drift, skipping whole periods missed so a
+ *        lag yields one fire and not a catch-up burst.
+ */
+void fire_due_callbacks(uint64_t now_ticks) noexcept
+{
+   std::vector<event> due;
+
    {
-      uint32_t id{0};
-      uint64_t when{0};
-      callback cb{nullptr};
-      void* arg{nullptr};
-      bool cancelled{false};
-   };
+      std::lock_guard lk(driver_instance->mutex);
 
-   /**
-    * @brief Internal simulation time driver state
-    */
-   struct driver_state
-   {
-      simulation::mode mode{simulation::mode::virtual_time};
+      for (auto& e : driver_instance->events) {
+         if (e.id != 0 && !e.cancelled && e.when <= now_ticks) {
+            due.push_back(e);
 
-      uint32_t tick_frequency_hz{1000};
-      std::atomic<uint32_t> next_id{1};
-
-      std::mutex mutex;
-      std::vector<event> events;
-
-      std::atomic<bool> running{false};
-      std::thread realtime_thread;
-
-      std::atomic<uint64_t> virtual_now{0};
-      std::chrono::steady_clock::time_point realtime_epoch{};
-
-      std::atomic<bool> started{false};
-   };
-
-   static driver_state* ds = nullptr;
-
-   static void fire_due_callbacks(uint64_t now_ticks) noexcept
-   {
-      std::vector<event> due;
-
-      {
-         std::lock_guard lk(ds->mutex);
-
-         for (auto& e : ds->events) {
-            if (e.id != 0 && !e.cancelled && e.when <= now_ticks) {
-               due.push_back(e);
-               e.cancelled = true; // consume one-shot callback
+            if (e.period == 0) {
+               e.cancelled = true;
+            } else {
+               do {
+                  e.when += e.period;
+               } while (e.when <= now_ticks);
             }
          }
-
-         // Remove cancelled/consumed events
-         std::erase_if(ds->events, [](event const& e) {
-            return e.cancelled;
-         });
       }
 
-      for (auto& e : due) {
-         if (e.cb) {
-            e.cb(e.arg);
-         }
-      }
+      std::erase_if(driver_instance->events, [](event const& e) { return e.cancelled; });
    }
 
-   static void realtime_thread_main() noexcept
-   {
-      using namespace std::chrono_literals;
-
-      while (ds->running.load(std::memory_order_acquire)) {
-         std::this_thread::sleep_for(1ms);
-         cyros::time::on_timer_isr();
+   for (auto& e : due) {
+      if (e.cb) {
+         e.cb(e.arg);
       }
    }
+}
 
-   [[nodiscard]] static uint64_t realtime_now_ticks() noexcept
-   {
-      // Pre-start: treat as zero
-      if (!ds->started.load(std::memory_order_acquire)) {
-         return 0;
-      }
+void realtime_thread_main() noexcept
+{
+   using namespace std::chrono_literals;
 
-      auto elapsed = std::chrono::steady_clock::now() - ds->realtime_epoch;
-      auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
-      ns = std::max<long>(ns, 0);
-
-      return (static_cast<uint64_t>(ns) * ds->tick_frequency_hz) / 1'000'000'000ULL;
+   while (driver_instance->running.load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(1ms);
+      cyros::time::on_timer_isr();
    }
-} // namespace cyros::time::sim
+}
 
+[[nodiscard]] uint64_t realtime_now_ticks() noexcept
+{
+   // Pre-start counts as zero.
+   if (!driver_instance->started.load(std::memory_order_acquire)) {
+      return 0;
+   }
+
+   auto elapsed = std::chrono::steady_clock::now() - driver_instance->realtime_epoch;
+   auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+   ns = std::max<long>(ns, 0);
+
+   return (static_cast<uint64_t>(ns) * driver_instance->tick_frequency_hz) / 1'000'000'000ULL;
+}
+
+} // namespace
+
+
+/* ============================================================================
+ * Time Driver Interface
+ * ========================================================================= */
 
 namespace cyros::time
 {
 
 void initialise(uint32_t frequency_hz)
 {
-   CYROS_ASSERT(sim::ds == nullptr);
-   sim::ds = new sim::driver_state;
-   sim::ds->tick_frequency_hz = frequency_hz;
+   CYROS_ASSERT(driver_instance == nullptr);
+
+   driver_instance = new driver_state;
+   driver_instance->tick_frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CYROS_ASSERT(sim::ds != nullptr);
-   delete sim::ds;
-   sim::ds = nullptr;
+   CYROS_ASSERT(driver_instance != nullptr);
+
+   delete driver_instance;
+   driver_instance = nullptr;
 }
 
 [[nodiscard]] time_point now() noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
-   if (sim::ds->mode == simulation::mode::virtual_time) {
-      return time_point{sim::ds->virtual_now.load(std::memory_order_relaxed)};
+   if (driver_instance->active_mode == simulation::mode::virtual_time) {
+      return time_point{driver_instance->virtual_now.load(std::memory_order_relaxed)};
    }
 
-   return time_point{sim::realtime_now_ticks()};
+   return time_point{realtime_now_ticks()};
 }
 
 [[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
    if (!cb) {
       return {};
    }
 
-   uint32_t id = sim::ds->next_id.fetch_add(1, std::memory_order_relaxed);
-   if (id == 0) {
-      id = sim::ds->next_id.fetch_add(1, std::memory_order_relaxed);
-   }
+   uint32_t id = next_handle_id();
 
    {
-      std::lock_guard lk(sim::ds->mutex);
-      sim::ds->events.push_back(sim::event{
-         .id = id,
-         .when = tp.value,
-         .cb = cb,
-         .arg = arg,
-         .cancelled = false
+      std::lock_guard lk(driver_instance->mutex);
+      driver_instance->events.push_back(event{
+         .id        = id,
+         .when      = tp.value,
+         .period    = 0,
+         .cb        = cb,
+         .arg       = arg,
+         .cancelled = false,
+      });
+   }
+
+   return handle{id};
+}
+
+[[nodiscard]] handle schedule_recurring(duration interval, callback cb, void* arg) noexcept
+{
+   CYROS_ASSERT(driver_instance != nullptr);
+
+   if (!cb || interval.value == 0) {
+      return {};
+   }
+
+   uint32_t id = next_handle_id();
+
+   {
+      std::lock_guard lk(driver_instance->mutex);
+      driver_instance->events.push_back(event{
+         .id        = id,
+         .when      = now().value + interval.value,
+         .period    = interval.value,
+         .cb        = cb,
+         .arg       = arg,
+         .cancelled = false,
       });
    }
 
@@ -159,17 +221,17 @@ void finalise()
 
 bool cancel(handle h) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
    if (h.id == 0) {
       return false;
    }
 
-   std::lock_guard lk(sim::ds->mutex);
+   std::lock_guard lk(driver_instance->mutex);
 
-   for (auto& e : sim::ds->events) {
-      if (e.id == h.id && !e.cancelled) {
-         e.cancelled = true;
+   for (auto& event : driver_instance->events) {
+      if (event.id == h.id && !event.cancelled) {
+         event.cancelled = true;
          return true;
       }
    }
@@ -179,119 +241,121 @@ bool cancel(handle h) noexcept
 
 [[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
-   uint64_t const ticks = ((static_cast<uint64_t>(ms) * sim::ds->tick_frequency_hz) + 999) / 1000;
+   uint64_t const ticks = ((static_cast<uint64_t>(ms) * driver_instance->tick_frequency_hz) + 999) / 1000;
 
    return duration{ticks};
 }
 
 [[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
-   uint64_t const ticks = ((static_cast<uint64_t>(us) * sim::ds->tick_frequency_hz) + 999'999) / 1'000'000;
+   uint64_t const ticks = ((static_cast<uint64_t>(us) * driver_instance->tick_frequency_hz) + 999'999) / 1'000'000;
 
    return duration{ticks};
 }
 
 void start() noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
-   sim::ds->started.store(true, std::memory_order_release);
+   driver_instance->started.store(true, std::memory_order_release);
 
-   if (sim::ds->mode == simulation::mode::real_time) {
+   if (driver_instance->active_mode == simulation::mode::real_time) {
       bool expected = false;
-      if (!sim::ds->running.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      if (!driver_instance->running.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
          return; // already running
       }
 
-      sim::ds->realtime_epoch = std::chrono::steady_clock::now();
-      sim::ds->realtime_thread = std::thread(sim::realtime_thread_main);
+      driver_instance->realtime_epoch = std::chrono::steady_clock::now();
+      driver_instance->realtime_thread = std::thread(realtime_thread_main);
    }
 }
 
 void stop() noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
-   if (sim::ds->mode == simulation::mode::real_time) {
-      bool was_running = sim::ds->running.exchange(false, std::memory_order_acq_rel);
+   if (driver_instance->active_mode == simulation::mode::real_time) {
+      bool was_running = driver_instance->running.exchange(false, std::memory_order_acq_rel);
       if (!was_running) {
          return;
       }
 
-      if (sim::ds->realtime_thread.joinable()) {
-         sim::ds->realtime_thread.join();
+      if (driver_instance->realtime_thread.joinable()) {
+         driver_instance->realtime_thread.join();
       }
    }
 }
 
 void on_timer_isr() noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
+   CYROS_ASSERT(driver_instance != nullptr);
 
-   sim::fire_due_callbacks(now().value);
+   fire_due_callbacks(now().value);
 }
 
 } // namespace cyros::time
 
+
+/* ============================================================================
+ * Simulation Control Interface
+ * ========================================================================= */
 
 namespace cyros::time::simulation
 {
 
 void set_mode(mode m) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
-   CYROS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
+   CYROS_ASSERT(driver_instance != nullptr);
+   CYROS_ASSERT(!driver_instance->running.load(std::memory_order_acquire));
 
-   sim::ds->mode = m;
+   driver_instance->active_mode = m;
 }
 
 [[nodiscard]] mode get_mode() noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
-   return sim::ds->mode;
+   CYROS_ASSERT(driver_instance != nullptr);
+
+   return driver_instance->active_mode;
 }
 
 void reset(time_point tp) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
-   CYROS_ASSERT(!sim::ds->running.load(std::memory_order_acquire));
+   CYROS_ASSERT(driver_instance != nullptr);
+   CYROS_ASSERT(!driver_instance->running.load(std::memory_order_acquire));
 
    {
-      std::lock_guard lock(sim::ds->mutex);
-      sim::ds->events.clear();
+      std::lock_guard lock(driver_instance->mutex);
+      driver_instance->events.clear();
    }
 
-   sim::ds->next_id.store(1, std::memory_order_relaxed);
-   sim::ds->virtual_now.store(tp.value, std::memory_order_relaxed);
-   sim::ds->started.store(false, std::memory_order_relaxed);
-   sim::ds->realtime_epoch = std::chrono::steady_clock::time_point{};
+   driver_instance->next_id.store(1, std::memory_order_relaxed);
+   driver_instance->virtual_now.store(tp.value, std::memory_order_relaxed);
+   driver_instance->started.store(false, std::memory_order_relaxed);
+   driver_instance->realtime_epoch = std::chrono::steady_clock::time_point{};
 }
 
 void advance_to(time_point tp) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
-   CYROS_ASSERT(sim::ds->mode == mode::virtual_time);
+   CYROS_ASSERT(driver_instance != nullptr);
+   CYROS_ASSERT(driver_instance->active_mode == mode::virtual_time);
 
-   uint64_t cur = sim::ds->virtual_now.load(std::memory_order_relaxed);
-   uint64_t target = tp.value;
+   uint64_t cur = driver_instance->virtual_now.load(std::memory_order_relaxed);
+   uint64_t target = std::max(tp.value, cur); // monotonic clamp
 
-   target = std::max(target, cur); // monotonic clamp
-
-
-   sim::ds->virtual_now.store(target, std::memory_order_release);
+   driver_instance->virtual_now.store(target, std::memory_order_release);
    cyros::time::on_timer_isr();
 }
 
 void advance_by(duration d) noexcept
 {
-   CYROS_ASSERT(sim::ds != nullptr);
-   CYROS_ASSERT(sim::ds->mode == mode::virtual_time);
+   CYROS_ASSERT(driver_instance != nullptr);
+   CYROS_ASSERT(driver_instance->active_mode == mode::virtual_time);
 
-   uint64_t current = sim::ds->virtual_now.load(std::memory_order_relaxed);
+   uint64_t current = driver_instance->virtual_now.load(std::memory_order_relaxed);
    advance_to(time_point{current + d.value});
 }
 

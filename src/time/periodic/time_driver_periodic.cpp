@@ -1,4 +1,5 @@
 #include <cyros/time/time.hpp>
+
 #include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
 #include <cyros/port/port_time.h>
@@ -6,94 +7,126 @@
 #include <array>
 #include <cstdint>
 
-namespace cyros::time::periodic
+/* ============================================================================
+ * Local State & Helpers
+ * ========================================================================= */
+
+namespace
 {
-   /**
-    * @brief Maximum number of simultaneously scheduled callbacks
-    *
-    * This is a fixed-size embedded-safe limit to avoid heap allocation.
-    */
-   static constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
 
-   /**
-    * @brief Scheduled callback slot
-    */
-   struct slot
-   {
-      uint32_t id{0};
-      uint64_t when{0};
-      callback cb{nullptr};
-      void* arg{nullptr};
-   };
+using cyros::time::callback;
 
-   /**
-    * @brief RAII interrupt disable/restore guard
-    */
-   struct irq_guard
-   {
-      uint32_t state;
+/// @brief Fixed-size embedded-safe slot count, avoids heap allocation.
+constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
 
-      irq_guard() noexcept : state(cyros_port_irq_save()) {}
-      ~irq_guard() { cyros_port_irq_restore(state); }
+/**
+ * @brief One scheduled callback.
+ *
+ * period == 0 is a one-shot fired once at 'when'. period > 0 is recurring and
+ * re-arms itself every 'period' ticks. id == 0 marks the slot free.
+ */
+struct slot
+{
+   uint32_t id{0};
+   uint64_t when{0};    // absolute deadline in driver ticks
+   uint64_t period{0};  // 0 one-shot, else the recurring interval
+   callback cb{nullptr};
+   void* arg{nullptr};
+};
 
-      irq_guard(irq_guard const&) = delete;
-      irq_guard& operator=(irq_guard const&) = delete;
-   };
+/// @brief RAII interrupt disable/restore guard.
+struct irq_guard
+{
+   uint32_t state;
 
-   /**
-    * @brief Internal periodic driver state
-    */
-   struct driver_state
-   {
-      bool initialised{false};
-      uint32_t tick_frequency_hz{0};
-      uint32_t next_id{1};
-      bool started{false};
-      std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
-   };
+   irq_guard() noexcept : state(cyros_port_irq_save()) {}
+   ~irq_guard() { cyros_port_irq_restore(state); }
 
-   static constinit driver_state ds{};
+   irq_guard(irq_guard const&) = delete;
+   irq_guard& operator=(irq_guard const&) = delete;
+};
 
-   static void fire_due_isr(uint64_t now_ticks) noexcept
-   {
-      // No heap, ISR-safe.
-      // Free slot before invoking callback to avoid reentrancy hazards.
-      for (auto& s : ds.slots) {
-         if (s.id != 0 && s.when <= now_ticks) {
-            auto cb = s.cb;
-            auto arg = s.arg;
-            s = slot{};
-            cb(arg);
+struct driver_state
+{
+   bool initialised{false};
+   uint32_t tick_frequency_hz{0};
+   uint32_t next_id{1};
+   bool started{false};
+   std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
+};
+constinit driver_state driver_instance{};
+
+/**
+ * @brief Claim the next non-zero handle id.
+ */
+uint32_t next_handle_id() noexcept
+{
+   uint32_t id = driver_instance.next_id++;
+   if (id == 0) {
+      id = driver_instance.next_id++; // skip the invalid id
+   }
+   return id;
+}
+
+/**
+ * @brief Fire every due slot. One-shots are freed before invoking. Recurring
+ *        slots advance on a fixed grid from their scheduled deadline so cadence
+ *        does not drift, skipping whole periods missed during a stall so a lag
+ *        yields one fire and not a catch-up burst.
+ *
+ * ISR context.
+ */
+void fire_due_isr(uint64_t now_ticks) noexcept
+{
+   for (auto& slot : driver_instance.slots) {
+      if (slot.id != 0 && slot.when <= now_ticks) {
+         auto callback = slot.cb;
+         auto* arg = slot.arg;
+
+         if (slot.period == 0) {
+            slot = {};
+         } else {
+            do {
+               slot.when += slot.period;
+            } while (slot.when <= now_ticks);
          }
+
+         callback(arg);
       }
    }
+}
 
-   static void isr_trampoline(void*) noexcept
-   {
-      cyros::time::on_timer_isr();
-   }
+void isr_trampoline(void*) noexcept
+{
+   cyros::time::on_timer_isr();
+}
 
-   static inline uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
-   {
-      return (a + b - 1) / b;
-   }
-} // namespace cyros::time::periodic
+uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
+{
+   return (a + b - 1) / b;
+}
 
+} // namespace
+
+
+/* ============================================================================
+ * Time Driver Interface
+ * ========================================================================= */
 
 namespace cyros::time
 {
 
 void initialise(uint32_t frequency_hz)
 {
-   CYROS_ASSERT(!periodic::ds.initialised);
-   periodic::ds.initialised = true;
-   periodic::ds.tick_frequency_hz = frequency_hz;
+   CYROS_ASSERT(!driver_instance.initialised);
+   driver_instance.initialised = true;
+   driver_instance.tick_frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CYROS_ASSERT(periodic::ds.initialised);
-   periodic::ds = periodic::driver_state{};
+   CYROS_ASSERT(driver_instance.initialised);
+   driver_instance = {};
 }
 
 [[nodiscard]] time_point now() noexcept
@@ -107,27 +140,43 @@ void finalise()
       return {};
    }
 
-   // SMP note:
-   // For now this assumes schedule_at() is called on the time core.
-   // Future work can enqueue requests to the time core and poke it via IPI.
+   // SMP note: this assumes schedule_at() is called on the time core. Future
+   // work can enqueue requests to the time core and poke it via IPI.
+   irq_guard guard;
 
-   periodic::irq_guard guard;
-
-   for (auto& slot : periodic::ds.slots) {
+   for (auto& slot : driver_instance.slots) {
       if (slot.id == 0) {
-         uint32_t id = periodic::ds.next_id++;
-         if (id == 0) {
-            id = periodic::ds.next_id++; // avoid invalid handle id 0
-         }
+         slot.id     = next_handle_id();
+         slot.when   = tp.value;
+         slot.period = 0;
+         slot.cb     = cb;
+         slot.arg    = arg;
 
-         slot.id = id;
-         slot.when = tp.value;
-         slot.cb = cb;
-         slot.arg = arg;
+         // Periodic mode needs no one-shot re-arm. The tick ISR picks it up.
+         return handle{slot.id};
+      }
+   }
 
-         // In periodic mode, no one-shot rearm is required.
-         // The periodic ISR will pick this callback up when due.
-         return handle{id};
+   return {}; // out of slots
+}
+
+[[nodiscard]] handle schedule_recurring(duration interval, callback cb, void* arg) noexcept
+{
+   if (!cb || interval.value == 0) {
+      return {};
+   }
+
+   irq_guard guard;
+
+   for (auto& slot : driver_instance.slots) {
+      if (slot.id == 0) {
+         slot.id     = next_handle_id();
+         slot.when   = cyros_port_time_now() + interval.value;
+         slot.period = interval.value;
+         slot.cb     = cb;
+         slot.arg    = arg;
+
+         return handle{slot.id};
       }
    }
 
@@ -140,12 +189,13 @@ bool cancel(handle h) noexcept
       return false;
    }
 
-   // Same SMP note as schedule_at().
-   periodic::irq_guard guard;
+   // Clears the slot by id under the guard, so a recurring slot cannot re-arm
+   // in the ISR concurrently with this cancel.
+   irq_guard guard;
 
-   for (auto& slot : periodic::ds.slots) {
+   for (auto& slot : driver_instance.slots) {
       if (slot.id == h.id) {
-         slot = periodic::slot{};
+         slot = ::slot{};
          return true;
       }
    }
@@ -155,47 +205,46 @@ bool cancel(handle h) noexcept
 
 [[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
-   const uint64_t f = cyros_port_time_freq_hz();
-   const uint64_t ticks = periodic::ceil_div_u64(static_cast<uint64_t>(ms) * f, 1000ULL);
+   uint64_t const hz = cyros_port_time_freq_hz();
+   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(ms) * hz, 1000ULL);
    return duration{ticks};
 }
 
 [[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
-   const uint64_t f = cyros_port_time_freq_hz();
-   const uint64_t ticks = periodic::ceil_div_u64(static_cast<uint64_t>(us) * f, 1'000'000ULL);
+   uint64_t const hz = cyros_port_time_freq_hz();
+   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(us) * hz, 1'000'000ULL);
    return duration{ticks};
 }
 
 void start() noexcept
 {
-   if (periodic::ds.started) {
+   if (driver_instance.started) {
       return;
    }
 
-   CYROS_ASSERT(periodic::ds.tick_frequency_hz > 0);
+   CYROS_ASSERT(driver_instance.tick_frequency_hz > 0);
 
-   cyros_port_time_register_isr_handler(&periodic::isr_trampoline, nullptr);
-   cyros_port_time_setup(periodic::ds.tick_frequency_hz);
+   cyros_port_time_register_isr_handler(&isr_trampoline, nullptr);
+   cyros_port_time_setup(driver_instance.tick_frequency_hz);
    cyros_port_time_irq_enable();
 
-   periodic::ds.started = true;
+   driver_instance.started = true;
 }
 
 void stop() noexcept
 {
-   if (!periodic::ds.started) {
+   if (!driver_instance.started) {
       return;
    }
 
    cyros_port_time_irq_disable();
-   periodic::ds.started = false;
+   driver_instance.started = false;
 }
 
 void on_timer_isr() noexcept
 {
-   const uint64_t now_ticks = cyros_port_time_now();
-   periodic::fire_due_isr(now_ticks);
+   fire_due_isr(cyros_port_time_now());
 }
 
 } // namespace cyros::time

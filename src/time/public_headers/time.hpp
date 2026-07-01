@@ -146,6 +146,23 @@ void finalise();
 [[nodiscard]] handle schedule_at(time_point tp, callback cb, void* arg) noexcept;
 
 /**
+ * @brief Schedule a callback to run repeatedly at a fixed interval.
+ *
+ * @param interval Period between invocations in driver ticks. Must be non-zero.
+ * @param cb callback to invoke.
+ * @param arg User argument passed to the callback.
+ * @return handle for later cancellation, or an invalid handle on failure.
+ *
+ * The first invocation occurs one interval from now, and every interval
+ * thereafter. Unlike schedule_at(), a recurring callback never stops on its
+ * own, so the returned handle must be passed to cancel() to stop it.
+ *
+ * The callback may execute in interrupt context on embedded targets, or in the
+ * caller / simulation context depending on the active driver.
+ */
+[[nodiscard]] handle schedule_recurring(duration interval, callback cb, void* arg) noexcept;
+
+/**
  * @brief Cancel a scheduled callback.
  *
  * @param h handle returned by schedule_at().
