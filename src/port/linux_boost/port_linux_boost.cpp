@@ -614,8 +614,11 @@ void cyros_port_pend_reschedule(void)
 
 void cyros_port_thread_exit(void)
 {
+   CYROS_ASSERT(current_core.preempt_disable_depth > 0); // coop port doesnt care if this is disabled, but it is asset a kernel contract
    CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
    global.active_contexts.fetch_sub(1, std::memory_order_seq_cst);
+
+   cyros_port_preempt_enable();
 }
 
 
