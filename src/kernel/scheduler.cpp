@@ -80,7 +80,7 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb) noexcept
 void scheduler::set_thread_running(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
-   CYROS_ASSERT(tcb.state == thread_state::ready);
+   CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
 
    tcb.state = thread_state::running;
    current_thread = &tcb;
@@ -172,11 +172,12 @@ void scheduler::reschedule() noexcept
          break;
 
       case thread_state::terminated:
-         break;
       case thread_state::ready:
+         break;
+
       case thread_state::blocked:
       case thread_state::created:
-         CYROS_ASSERT(false); // Illegal state
+         CYROS_ASSERT1(false, previous_thread->state); // Illegal thread state
          break;
    }
 

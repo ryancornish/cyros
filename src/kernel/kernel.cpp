@@ -143,6 +143,9 @@ public:
 
    void register_thread(thread_control_block& tcb) noexcept
    {
+      CYROS_ASSERT_OP(tcb.state, ==, thread_state::created);
+      CYROS_ASSERT(!tcb.is_enqueued());
+
       active_threads.fetch_add(1, std::memory_order_seq_cst);
 
       {
@@ -157,11 +160,7 @@ public:
          return;
       }
 
-      // Thread state should be freshly constructed
-      CYROS_ASSERT_OP(tcb.state, ==, thread_state::created);
-      CYROS_ASSERT(!tcb.is_enqueued());
-
-      if (set_thread_ready(tcb) == schedule_hint::warranted) {
+      if (request_thread_ready(tcb) == schedule_hint::warranted) {
          // Weak request: Registering the thread is not itself blocking, it is
          // only flagging that a higher-priority thread became ready.
          cyros_port_pend_reschedule();
@@ -187,7 +186,7 @@ public:
    *         core and has higher priority than the running thread, indicating
    *         the caller should request a local reschedule.
    */
-   schedule_hint set_thread_ready(thread_control_block& tcb) noexcept
+   schedule_hint request_thread_ready(thread_control_block& tcb) noexcept
    {
       // Fast path: if the thread is already terminated. Can happen with stale remote-ready-requests
       // A thread that terminates AFTER this check is handled by the scheduler-level guard when the request is drained.
@@ -277,9 +276,9 @@ void idle_task()
    }
 }
 
-schedule_hint kernel_set_thread_ready(thread_control_block& tcb)
+schedule_hint kernel_request_thread_ready(thread_control_block& tcb)
 {
-   return kernel_instance.set_thread_ready(tcb);
+   return kernel_instance.request_thread_ready(tcb);
 }
 
 /**** public ****/
@@ -388,7 +387,7 @@ void yield()
       // Lowest-index wins on ties
       for (std::size_t i = 0; waitable& waitable : waitables) {
          if (waitable.is_satisfied(*tcb->public_thread_handle)) {
-            scheduler.set_thread_running(*tcb);
+            tcb->disposition = thread_disposition::none;
             return i;
          }
          ++i;

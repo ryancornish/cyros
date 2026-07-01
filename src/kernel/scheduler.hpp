@@ -23,7 +23,7 @@ enum class schedule_hint
 };
 
 // Implemented by the kernel
-schedule_hint kernel_set_thread_ready(thread_control_block& tcb);
+schedule_hint kernel_request_thread_ready(thread_control_block& tcb);
 
 // Implemented by the kernel
 void idle_task();

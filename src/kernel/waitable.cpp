@@ -106,31 +106,39 @@ void waitable::wait_queue::wake_one(reschedule_policy policy) noexcept
       node->next = nullptr;
    }
 
-   schedule_hint hint = kernel_set_thread_ready(*woken);
+   schedule_hint hint = kernel_request_thread_ready(*woken);
    apply_reschedule_policy(policy, hint);
 }
 
 void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
 {
-   wait_node* batch = nullptr;
-   {
-      spinlock_guard guard(lock);
-      batch = head;
-      head = nullptr;
-   }
-
+   // Atomic batch admit. Preemption is held off for the entire batch so
+   // every waiter lands on the ready matrix before any of them can run on this
+   // core.
    schedule_hint aggregate_hint = schedule_hint::unwarranted;
-   for (wait_node* node = batch; node != nullptr; ) {
-      wait_node* next = node->next;
-      node->next = nullptr;
-      schedule_hint hint = kernel_set_thread_ready(*node->owner);
+
+   cyros_port_preempt_disable();
+
+   while (true) {
+      thread_control_block* woken = nullptr;
+      {
+         spinlock_guard guard(lock);
+
+         if (head == nullptr) break;
+         wait_node* node = head;
+         woken = node->owner;
+         head = node->next;
+         node->next = nullptr;
+      }
+      schedule_hint hint = kernel_request_thread_ready(*woken);
       if (hint == schedule_hint::warranted) {
          aggregate_hint = schedule_hint::warranted;
       }
-      node = next;
    }
 
    apply_reschedule_policy(policy, aggregate_hint);
+
+   cyros_port_preempt_enable();
 }
 
 /* ============================================================================
