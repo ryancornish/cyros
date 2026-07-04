@@ -33,7 +33,7 @@ targets.
 
 ```
         +-------------------------------------------------+
-        |  userlib  (libcyros)                           |
+        |  userlib                                        |
         |  Mutex, and other opt-in primitives & features  |
         +-------------------------------------------------+
                  |                          |
@@ -113,7 +113,7 @@ I ship a few time driver implementations to pick between:
 - a **tickless** driver, and
 - a **simulation** driver for deterministic host-side testing.
 
-### userlib layer (`libcyros`)
+### userlib layer
 
 userlib is where the convenient, user-facing primitives live - the things built
 *on top of* the kernel primitives (thread creation and `waitable` blocking).
@@ -153,7 +153,7 @@ Cyros is in early development. Roughly where things stand:
   (`wait_for`, `wait_for_any`).
 - Linux / Boost.Context simulation port.
 - Time driver implementations (periodic, tickless, simulation).
-- A `Mutex` in `libcyros`.
+- A `Mutex` in `userlib`.
 
 **In flux / being redesigned**
 
@@ -166,7 +166,7 @@ Cyros is in early development. Roughly where things stand:
 **Planned**
 
 - A bare-metal port (ARM Cortex-M first).
-- More `libcyros` features - additional sync primitives, an optional heap, and
+- More `userlib` features - additional sync primitives, an optional heap, and
   so on.
 - Example projects, including on-device demos.
 
