@@ -73,11 +73,6 @@ public:
       return scheduler_for_core(cyros_port_get_core_id());
    }
 
-   [[nodiscard]] scheduler& scheduler_for_time_core() noexcept
-   {
-      return scheduler_for_core(config::time_core_id);
-   }
-
    [[nodiscard]] std::uint32_t generate_thread_id()
    {
       return thread_id_generator.fetch_add(1, std::memory_order_relaxed);

@@ -24,11 +24,6 @@ inline constexpr std::size_t max_wait_nodes = 8;
 /**
  * @brief TODO
  */
-inline constexpr std::uint32_t time_core_id = 0;
-
-/**
- * @brief TODO
- */
 inline constexpr std::size_t max_priorities = 31;
 
 }  // namespace cyros::config
