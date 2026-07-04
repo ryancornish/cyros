@@ -350,8 +350,8 @@ uint32_t cyros_port_get_core_id(void)
    CYROS_ASSERT(current_core.core != nullptr);
    return current_core.core->core_id;
 }
-
 void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
+
 {
    CYROS_ASSERT(cores_to_use > 0); // Invoking with 0 cores_to_use is invalid
    CYROS_ASSERT(cores_to_use <= CYROS_PORT_CORE_COUNT);

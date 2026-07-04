@@ -12,7 +12,9 @@ port = "linux_preempt"
 time_driver = "simulation"
 
 [features]
-enable = []
+enable = [
+   "round_robin",
+]
 
 [output]
 archive = "libcyros.a"

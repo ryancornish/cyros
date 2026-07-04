@@ -1,0 +1,14 @@
+[test]
+name   = "test_round_robin"
+source = "test_round_robin.cpp"
+config = "test_round_robin_config.hpp"
+
+# Round-robin slices non-yielding spinners, which only a real asynchronous timer
+# can preempt
+[components]
+port        = "linux_preempt"
+time_driver = "tickless"
+features    = ["round_robin"]
+
+[link]
+system_libraries = ["gtest", "gtest_main", "pthread"]
