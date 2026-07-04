@@ -1,0 +1,11 @@
+[test]
+name   = "test_time_driver_periodic_preempt"
+source = "test_time_driver_periodic_preempt.cpp"
+config = "test_time_driver_periodic_preempt_config.hpp"
+
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

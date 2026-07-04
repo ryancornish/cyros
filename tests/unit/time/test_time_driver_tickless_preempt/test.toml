@@ -1,0 +1,11 @@
+[test]
+name   = "test_time_driver_tickless_preempt"
+source = "test_time_driver_tickless_preempt.cpp"
+config = "test_time_driver_tickless_preempt_config.hpp"
+
+[components]
+port = "linux_preempt"
+time_driver = "tickless"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

@@ -205,6 +205,15 @@ void cyros_port_time_setup(uint32_t tick_hz)
    ensure_signal_handler_installed();
 
    core_timer& ct = this_core_timer();
+
+   // Idempotent: a repeated setup (e.g. a fresh test's start() after a prior
+   // finalise()) deletes the previous timer before creating a new one, so timers
+   // do not leak across init/finalise cycles.
+   if (ct.timer_created) {
+      timer_delete(ct.timer);
+      ct.timer_created = false;
+   }
+
    ct.tick_hz = tick_hz;
    ct.tid     = static_cast<pid_t>(syscall(SYS_gettid));
 
