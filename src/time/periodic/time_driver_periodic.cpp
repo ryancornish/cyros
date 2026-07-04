@@ -46,6 +46,13 @@ struct irq_guard
    irq_guard& operator=(irq_guard const&) = delete;
 };
 
+/**
+ * @brief Per-core scheduled callbacks.
+ *
+ * Each core owns an independent set of timer slots, scheduled into and serviced
+ * from that core alone. A schedule call lands in the calling core's slots and
+ * fires from that core's timer interrupt. See this_core_state().
+ */
 struct driver_state
 {
    bool initialised{false};
@@ -54,31 +61,37 @@ struct driver_state
    bool started{false};
    std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
 };
-constinit driver_state driver_instance{};
+constinit std::array<driver_state, cyros::config::cores> driver_instances{};
+
+/// @brief The scheduled-callback state for the calling core.
+driver_state& this_core_state() noexcept
+{
+   return driver_instances[cyros_port_get_core_id()];
+}
 
 /**
- * @brief Claim the next non-zero handle id.
+ * @brief Claim the next non-zero handle id within a core's state.
  */
-uint32_t next_handle_id() noexcept
+uint32_t next_handle_id(driver_state& ds) noexcept
 {
-   uint32_t id = driver_instance.next_id++;
+   uint32_t id = ds.next_id++;
    if (id == 0) {
-      id = driver_instance.next_id++; // skip the invalid id
+      id = ds.next_id++; // skip the invalid id
    }
    return id;
 }
 
 /**
- * @brief Fire every due slot. One-shots are freed before invoking. Recurring
- *        slots advance on a fixed grid from their scheduled deadline so cadence
- *        does not drift, skipping whole periods missed during a stall so a lag
- *        yields one fire and not a catch-up burst.
+ * @brief Fire every due slot for a core. One-shots are freed before invoking.
+ *        Recurring slots advance on a fixed grid from their scheduled deadline
+ *        so cadence does not drift, skipping whole periods missed during a stall
+ *        so a lag yields one fire and not a catch-up burst.
  *
  * ISR context.
  */
-void fire_due_isr(uint64_t now_ticks) noexcept
+void fire_due_isr(driver_state& ds, uint64_t now_ticks) noexcept
 {
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id != 0 && slot.when <= now_ticks) {
          auto callback = slot.cb;
          auto* arg = slot.arg;
@@ -118,15 +131,17 @@ namespace cyros::time
 
 void initialise(uint32_t frequency_hz)
 {
-   CYROS_ASSERT(!driver_instance.initialised);
-   driver_instance.initialised = true;
-   driver_instance.tick_frequency_hz = frequency_hz;
+   auto& ds = this_core_state();
+   CYROS_ASSERT(!ds.initialised);
+   ds.initialised = true;
+   ds.tick_frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CYROS_ASSERT(driver_instance.initialised);
-   driver_instance = {};
+   auto& ds = this_core_state();
+   CYROS_ASSERT(ds.initialised);
+   ds = driver_state{};
 }
 
 [[nodiscard]] time_point now() noexcept
@@ -140,13 +155,12 @@ void finalise()
       return {};
    }
 
-   // SMP note: this assumes schedule_at() is called on the time core. Future
-   // work can enqueue requests to the time core and poke it via IPI.
    irq_guard guard;
+   auto& ds = this_core_state();
 
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id == 0) {
-         slot.id     = next_handle_id();
+         slot.id     = next_handle_id(ds);
          slot.when   = tp.value;
          slot.period = 0;
          slot.cb     = cb;
@@ -167,10 +181,11 @@ void finalise()
    }
 
    irq_guard guard;
+   auto& ds = this_core_state();
 
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id == 0) {
-         slot.id     = next_handle_id();
+         slot.id     = next_handle_id(ds);
          slot.when   = cyros_port_time_now() + interval.value;
          slot.period = interval.value;
          slot.cb     = cb;
@@ -190,10 +205,12 @@ bool cancel(handle h) noexcept
    }
 
    // Clears the slot by id under the guard, so a recurring slot cannot re-arm
-   // in the ISR concurrently with this cancel.
+   // in the ISR concurrently with this cancel. The handle is scoped to the core
+   // that created it, so cancel operates on the calling core's slots.
    irq_guard guard;
+   auto& ds = this_core_state();
 
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id == h.id) {
          slot = ::slot{};
          return true;
@@ -219,32 +236,34 @@ bool cancel(handle h) noexcept
 
 void start() noexcept
 {
-   if (driver_instance.started) {
+   auto& ds = this_core_state();
+   if (ds.started) {
       return;
    }
 
-   CYROS_ASSERT(driver_instance.tick_frequency_hz > 0);
+   CYROS_ASSERT(ds.tick_frequency_hz > 0);
 
    cyros_port_time_register_isr_handler(&isr_trampoline, nullptr);
-   cyros_port_time_setup(driver_instance.tick_frequency_hz);
+   cyros_port_time_setup(ds.tick_frequency_hz);
    cyros_port_time_irq_enable();
 
-   driver_instance.started = true;
+   ds.started = true;
 }
 
 void stop() noexcept
 {
-   if (!driver_instance.started) {
+   auto& ds = this_core_state();
+   if (!ds.started) {
       return;
    }
 
    cyros_port_time_irq_disable();
-   driver_instance.started = false;
+   ds.started = false;
 }
 
 void on_timer_isr() noexcept
 {
-   fire_due_isr(cyros_port_time_now());
+   fire_due_isr(this_core_state(), cyros_port_time_now());
 }
 
 } // namespace cyros::time

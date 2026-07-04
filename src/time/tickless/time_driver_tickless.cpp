@@ -1,5 +1,6 @@
 #include <cyros/time/time.hpp>
 
+#include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
 #include <cyros/port/port_time.h>
 
@@ -46,6 +47,13 @@ struct irq_guard
    irq_guard& operator=(irq_guard const&) = delete;
 };
 
+/**
+ * @brief Per-core scheduled callbacks.
+ *
+ * Each core owns an independent set of timer slots and its own hardware one-shot.
+ * A schedule call lands in the calling core's slots and arms that core's one-shot
+ * to the earliest deadline. See this_core_state(), and the arm/disarm note below.
+ */
 struct driver_state
 {
    bool initialised{false};
@@ -54,29 +62,39 @@ struct driver_state
    bool started{false};
    std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
 };
-constinit driver_state driver_instance{};
+constinit std::array<driver_state, cyros::config::cores> driver_instances{};
+
+/// @brief The scheduled-callback state for the calling core.
+driver_state& this_core_state() noexcept
+{
+   return driver_instances[cyros_port_get_core_id()];
+}
 
 /**
- * @brief Claim the next non-zero handle id.
+ * @brief Claim the next non-zero handle id within a core's state.
  */
-uint32_t next_handle_id() noexcept
+uint32_t next_handle_id(driver_state& ds) noexcept
 {
-   uint32_t id = driver_instance.next_id++;
+   uint32_t id = ds.next_id++;
    if (id == 0) {
-      id = driver_instance.next_id++; // skip the invalid id
+      id = ds.next_id++; // skip the invalid id
    }
    return id;
 }
 
 /**
- * @brief Program the port one-shot to the earliest live deadline, or disarm it
- *        when nothing is scheduled. Call with interrupts already masked.
+ * @brief Program the calling core's one-shot to its earliest live deadline, or
+ *        disarm it when nothing is scheduled. Call with interrupts masked.
+ *
+ * Port contract: cyros_port_time_arm()/disarm() act on the CALLING core's
+ * one-shot. rearm_locked() always runs on the core whose state it reads, so a
+ * schedule on core K arms core K's timer and core K's ISR re-arms core K's timer.
  */
-void rearm_locked() noexcept
+void rearm_locked(driver_state& ds) noexcept
 {
    uint64_t earliest = std::numeric_limits<uint64_t>::max();
 
-   for (auto const& slot : driver_instance.slots) {
+   for (auto const& slot : ds.slots) {
       if (slot.id != 0 && slot.when < earliest) {
          earliest = slot.when;
       }
@@ -92,17 +110,17 @@ void rearm_locked() noexcept
 }
 
 /**
- * @brief Fire every due slot. One-shots are freed before invoking. Recurring
- *        slots advance on a fixed grid from their scheduled deadline so cadence
- *        does not drift, skipping whole periods missed during a stall so a lag
- *        yields one fire and not a catch-up burst. The caller re-arms the port
- *        one-shot afterward, so an advanced recurring deadline is picked up.
+ * @brief Fire every due slot for a core. One-shots are freed before invoking.
+ *        Recurring slots advance on a fixed grid from their scheduled deadline
+ *        so cadence does not drift, skipping whole periods missed during a stall
+ *        so a lag yields one fire and not a catch-up burst. The caller re-arms
+ *        the one-shot afterward, so an advanced recurring deadline is picked up.
  *
  * ISR context.
  */
-void fire_due_isr(uint64_t now_ticks) noexcept
+void fire_due_isr(driver_state& ds, uint64_t now_ticks) noexcept
 {
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id != 0 && slot.when <= now_ticks) {
          auto callback = slot.cb;
          auto* arg = slot.arg;
@@ -142,17 +160,17 @@ namespace cyros::time
 
 void initialise(uint32_t frequency_hz)
 {
-   CYROS_ASSERT(!driver_instance.initialised);
-
-   driver_instance.initialised = true;
-   driver_instance.frequency_hz = frequency_hz;
+   auto& ds = this_core_state();
+   CYROS_ASSERT(!ds.initialised);
+   ds.initialised = true;
+   ds.frequency_hz = frequency_hz;
 }
 
 void finalise()
 {
-   CYROS_ASSERT(driver_instance.initialised);
-
-   driver_instance = driver_state{};
+   auto& ds = this_core_state();
+   CYROS_ASSERT(ds.initialised);
+   ds = driver_state{};
 }
 
 [[nodiscard]] time_point now() noexcept
@@ -167,10 +185,11 @@ void finalise()
    }
 
    irq_guard guard;
+   auto& ds = this_core_state();
 
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id == 0) {
-         slot.id     = next_handle_id();
+         slot.id     = next_handle_id(ds);
          slot.when   = tp.value;
          slot.period = 0;
          slot.cb     = cb;
@@ -178,7 +197,7 @@ void finalise()
 
          // Do not invoke inline while masked even if already due. Re-arm to the
          // earliest deadline and let the ISR path consume it.
-         rearm_locked();
+         rearm_locked(ds);
 
          return handle{slot.id};
       }
@@ -194,16 +213,17 @@ void finalise()
    }
 
    irq_guard guard;
+   auto& ds = this_core_state();
 
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id == 0) {
-         slot.id     = next_handle_id();
+         slot.id     = next_handle_id(ds);
          slot.when   = cyros_port_time_now() + interval.value;
          slot.period = interval.value;
          slot.cb     = cb;
          slot.arg    = arg;
 
-         rearm_locked();
+         rearm_locked(ds);
 
          return handle{slot.id};
       }
@@ -218,12 +238,15 @@ bool cancel(handle h) noexcept
       return false;
    }
 
+   // The handle is scoped to the core that created it, so cancel operates on the
+   // calling core's slots and re-arms that core's one-shot.
    irq_guard guard;
+   auto& ds = this_core_state();
 
-   for (auto& slot : driver_instance.slots) {
+   for (auto& slot : ds.slots) {
       if (slot.id == h.id) {
-         slot = {};
-         rearm_locked();
+         slot = ::slot{};
+         rearm_locked(ds);
          return true;
       }
    }
@@ -233,19 +256,22 @@ bool cancel(handle h) noexcept
 
 [[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
 {
-   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(ms) * driver_instance.frequency_hz, 1000ULL);
+   auto& ds = this_core_state();
+   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(ms) * ds.frequency_hz, 1000ULL);
    return duration{ticks};
 }
 
 [[nodiscard]] duration from_microseconds(uint32_t us) noexcept
 {
-   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(us) * driver_instance.frequency_hz, 1'000'000ULL);
+   auto& ds = this_core_state();
+   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(us) * ds.frequency_hz, 1'000'000ULL);
    return duration{ticks};
 }
 
 void start() noexcept
 {
-   if (driver_instance.started) {
+   auto& ds = this_core_state();
+   if (ds.started) {
       return;
    }
 
@@ -256,32 +282,34 @@ void start() noexcept
 
    {
       irq_guard guard;
-      rearm_locked();
+      rearm_locked(ds);
    }
 
    cyros_port_time_irq_enable();
-   driver_instance.started = true;
+   ds.started = true;
 }
 
 void stop() noexcept
 {
-   if (!driver_instance.started) {
+   auto& ds = this_core_state();
+   if (!ds.started) {
       return;
    }
 
    cyros_port_time_irq_disable();
    cyros_port_time_disarm();
-   driver_instance.started = false;
+   ds.started = false;
 }
 
 void on_timer_isr() noexcept
 {
+   auto& ds = this_core_state();
    uint64_t const now_ticks = cyros_port_time_now();
 
-   fire_due_isr(now_ticks);
+   fire_due_isr(ds, now_ticks);
 
    irq_guard guard;
-   rearm_locked();
+   rearm_locked(ds);
 }
 
 } // namespace cyros::time

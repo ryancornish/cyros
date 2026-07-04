@@ -1,9 +1,11 @@
 #include <cyros/time/time.hpp>
 #include <cyros/time/simulation.hpp>
 
+#include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -38,15 +40,31 @@ struct event
    bool cancelled{false};
 };
 
+/**
+ * @brief Per-core scheduled callbacks.
+ *
+ * Each core schedules into its own list. A handle is scoped to the core that
+ * created it, so cancel operates on the calling core's list.
+ */
+struct per_core_state
+{
+   std::mutex mutex;
+   std::vector<event> events;
+   std::atomic<uint32_t> next_id{1};
+};
+
+/**
+ * @brief Simulation driver state.
+ *
+ * The clock and mode are driver-wide: simulation time is a single shared source
+ * every core reads, matching a monotonic hardware counter. Only the scheduled
+ * callbacks are per-core.
+ */
 struct driver_state
 {
    mode active_mode{mode::virtual_time};
 
    uint32_t tick_frequency_hz{1000};
-   std::atomic<uint32_t> next_id{1};
-
-   std::mutex mutex;
-   std::vector<event> events;
 
    std::atomic<bool> running{false};
    std::thread realtime_thread;
@@ -55,55 +73,70 @@ struct driver_state
    std::chrono::steady_clock::time_point realtime_epoch{};
 
    std::atomic<bool> started{false};
+
+   std::array<per_core_state, cyros::config::cores> per_core{};
 };
 
 driver_state* driver_instance = nullptr;
 
-/**
- * @brief Claim the next non-zero handle id.
- */
-uint32_t next_handle_id() noexcept
+/// @brief The scheduled-callback state for the calling core.
+per_core_state& this_core() noexcept
 {
-   uint32_t id = driver_instance->next_id.fetch_add(1, std::memory_order_relaxed);
+   return driver_instance->per_core[cyros_port_get_core_id()];
+}
+
+/**
+ * @brief Claim the next non-zero handle id within a core's state.
+ */
+uint32_t next_handle_id(per_core_state& pc) noexcept
+{
+   uint32_t id = pc.next_id.fetch_add(1, std::memory_order_relaxed);
    if (id == 0) {
-      id = driver_instance->next_id.fetch_add(1, std::memory_order_relaxed);
+      id = pc.next_id.fetch_add(1, std::memory_order_relaxed);
    }
    return id;
 }
 
 /**
- * @brief Fire every due event outside the lock. One-shots are consumed and
- *        erased. Recurring events advance on a fixed grid from their scheduled
- *        deadline so cadence does not drift, skipping whole periods missed so a
- *        lag yields one fire and not a catch-up burst.
+ * @brief Fire every due event across all cores outside their locks. One-shots
+ *        are consumed and erased. Recurring events advance on a fixed grid from
+ *        their scheduled deadline so cadence does not drift, skipping whole
+ *        periods missed so a lag yields one fire and not a catch-up burst.
+ *
+ * Unlike the hardware drivers, where a core's own interrupt services only that
+ * core, simulation owns global time and pumps it centrally, so one advance fires
+ * every now-due timer regardless of which core scheduled it. Callbacks run in
+ * the pump / caller context.
  */
 void fire_due_callbacks(uint64_t now_ticks) noexcept
 {
-   std::vector<event> due;
+   for (auto& pc : driver_instance->per_core) {
+      std::vector<event> due;
 
-   {
-      std::lock_guard lk(driver_instance->mutex);
+      {
+         std::lock_guard lk(pc.mutex);
 
-      for (auto& e : driver_instance->events) {
-         if (e.id != 0 && !e.cancelled && e.when <= now_ticks) {
-            due.push_back(e);
+         for (auto& e : pc.events) {
+            if (e.id != 0 && !e.cancelled && e.when <= now_ticks) {
+               due.push_back(e);
 
-            if (e.period == 0) {
-               e.cancelled = true;
-            } else {
-               do {
-                  e.when += e.period;
-               } while (e.when <= now_ticks);
+               if (e.period == 0) {
+                  e.cancelled = true;
+               } else {
+                  do {
+                     e.when += e.period;
+                  } while (e.when <= now_ticks);
+               }
             }
          }
+
+         std::erase_if(pc.events, [](event const& e) { return e.cancelled; });
       }
 
-      std::erase_if(driver_instance->events, [](event const& e) { return e.cancelled; });
-   }
-
-   for (auto& e : due) {
-      if (e.cb) {
-         e.cb(e.arg);
+      for (auto& e : due) {
+         if (e.cb) {
+            e.cb(e.arg);
+         }
       }
    }
 }
@@ -177,11 +210,12 @@ void finalise()
       return {};
    }
 
-   uint32_t id = next_handle_id();
+   auto& pc = this_core();
+   uint32_t id = next_handle_id(pc);
 
    {
-      std::lock_guard lk(driver_instance->mutex);
-      driver_instance->events.push_back(event{
+      std::lock_guard lk(pc.mutex);
+      pc.events.push_back(event{
          .id        = id,
          .when      = tp.value,
          .period    = 0,
@@ -202,11 +236,12 @@ void finalise()
       return {};
    }
 
-   uint32_t id = next_handle_id();
+   auto& pc = this_core();
+   uint32_t id = next_handle_id(pc);
 
    {
-      std::lock_guard lk(driver_instance->mutex);
-      driver_instance->events.push_back(event{
+      std::lock_guard lk(pc.mutex);
+      pc.events.push_back(event{
          .id        = id,
          .when      = now().value + interval.value,
          .period    = interval.value,
@@ -227,9 +262,10 @@ bool cancel(handle h) noexcept
       return false;
    }
 
-   std::lock_guard lk(driver_instance->mutex);
+   auto& pc = this_core();
+   std::lock_guard lk(pc.mutex);
 
-   for (auto& event : driver_instance->events) {
+   for (auto& event : pc.events) {
       if (event.id == h.id && !event.cancelled) {
          event.cancelled = true;
          return true;
@@ -327,12 +363,12 @@ void reset(time_point tp) noexcept
    CYROS_ASSERT(driver_instance != nullptr);
    CYROS_ASSERT(!driver_instance->running.load(std::memory_order_acquire));
 
-   {
-      std::lock_guard lock(driver_instance->mutex);
-      driver_instance->events.clear();
+   for (auto& pc : driver_instance->per_core) {
+      std::lock_guard lock(pc.mutex);
+      pc.events.clear();
+      pc.next_id.store(1, std::memory_order_relaxed);
    }
 
-   driver_instance->next_id.store(1, std::memory_order_relaxed);
    driver_instance->virtual_now.store(tp.value, std::memory_order_relaxed);
    driver_instance->started.store(false, std::memory_order_relaxed);
    driver_instance->realtime_epoch = std::chrono::steady_clock::time_point{};
