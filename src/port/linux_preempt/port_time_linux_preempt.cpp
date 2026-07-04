@@ -3,10 +3,24 @@
  * @brief Linux timer-driver port for the preemptive (sigctx) backend.
  *
  * Unlike the boost time port, which is a passive counter that tests pump by
- * hand, this one is a real asynchronous interrupt source. A POSIX timer fires a
- * dedicated signal at the time core, and the signal handler invokes the ISR the
- * time driver registered. That is what lets a timer preempt a running thread the
- * way real hardware does.
+ * hand, this one is a real asynchronous interrupt source. Each core owns a POSIX
+ * timer that fires a dedicated signal at that core's own thread, and the signal
+ * handler invokes the ISR the time driver registered. That is what lets a timer
+ * preempt a running thread the way real hardware does.
+ *
+ * Per-core model
+ * --------------
+ * Every core has its own timer, created by that core when it calls time::start().
+ * A core's timer is delivered via SIGEV_THREAD_ID to that core's own kernel TID,
+ * so the ISR runs on the core the timer belongs to. cyros_port_get_core_id()
+ * inside the ISR therefore returns that core, and the driver services that core's
+ * own domain. Per-core delivery and the driver's per-core indexing compose with
+ * no core id threaded through the signal: it falls out of which thread the signal
+ * lands on.
+ *
+ * The clock is shared. now() is one CLOCK_MONOTONIC source every core reads. Only
+ * the timer hardware (comparator deadline, tick rate) is per-core, which mirrors
+ * a per-core comparator over a shared monotonic counter.
  *
  * Signal model
  * ------------
@@ -20,7 +34,8 @@
  * The timer handler runs with the reschedule signal masked (set in sa_mask
  * below), so a reschedule cannot nest into the middle of the ISR. Any wake the
  * ISR performs pends a reschedule that the kernel delivers when the handler
- * returns.
+ * returns. The process-wide sigaction is installed once, the first time any core
+ * calls setup(); the timers themselves are per-core.
  *
  * The reverse direction is closed symmetrically by the main port. Its reschedule
  * interceptor is installed with sigctx's block_extra set to timer_signo, so the
@@ -28,28 +43,22 @@
  * timer can therefore never land on the shared handler stack mid-reschedule, and
  * the two signals can never nest into each other in either order.
  *
- * Targeting
- * ---------
- * The timer is delivered via SIGEV_THREAD_ID to a specific kernel TID, which
- * is whichever thread called setup() (recorded there). The port makes no
- * assumption about which core that is and has no dependency on config: "the
- * time core" is simply defined as whoever set the timer up. A higher layer
- * that cares which core that ends up being controls it by controlling who
- * calls time::start().
- *
  * now() is backed by CLOCK_MONOTONIC, so time advances on its own. The
  * deterministic cyros_port_time_advance() hook the periodic and tickless driver
  * tests rely on is therefore unsupported here. Those suites stay on the boost
  * port.
  */
 
+#include <cyros/port/port.h>
 #include <cyros/port/port_time.h>
 
+#include <array>
 #include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <mutex>
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -73,21 +82,34 @@ const int reschedule_signo = SIGURG;
 /** 1 tick == 1 microsecond, matching the boost port's convention. */
 constexpr uint64_t tick_freq_hz = 1'000'000;
 
+/**
+ * @brief One core's timer hardware.
+ *
+ * Created by the owning core in setup() and armed/disarmed only by that core, so
+ * the fields need no cross-core synchronisation beyond the atomic deadline the
+ * ISR and thread context both touch.
+ */
+struct core_timer
+{
+   std::atomic<uint64_t> armed_deadline{UINT64_MAX};
+   timer_t  timer{};
+   bool     timer_created{false};
+   uint32_t tick_hz{0};    // 0 means tickless one-shot
+   pid_t    tid{0};        // owning core's kernel TID, target of its timer signal
+};
+
 struct time_state
 {
+   // Shared: one handler (the driver's trampoline) for every core's timer.
    std::atomic<cyros_port_isr_handler_t> isr{nullptr};
    std::atomic<void*>                    isr_arg{nullptr};
 
-   // now() == base_ticks + (CLOCK_MONOTONIC now - epoch_ns) scaled to ticks.
+   // Shared clock. now() == base_ticks + (CLOCK_MONOTONIC now - epoch) in ticks.
    std::atomic<uint64_t> base_ticks{0};
    std::atomic<uint64_t> epoch_ns{0};
 
-   std::atomic<uint64_t> armed_deadline{UINT64_MAX};
-
-   timer_t  timer{};
-   bool     timer_created{false};
-   uint32_t tick_hz{0};        // 0 means tickless one-shot
-   pid_t    time_core_tid{0};
+   // Per-core timer hardware.
+   std::array<core_timer, CYROS_PORT_CORE_COUNT> core{};
 };
 time_state ts;
 
@@ -108,9 +130,15 @@ uint64_t ticks_to_ns(uint64_t ticks)
    return ticks * (1'000'000'000ull / tick_freq_hz);
 }
 
-void program_oneshot_ns(uint64_t rel_ns)
+/// @brief The calling core's timer hardware.
+core_timer& this_core_timer()
 {
-   if (!ts.timer_created) return;
+   return ts.core[cyros_port_get_core_id()];
+}
+
+void program_oneshot_ns(core_timer& ct, uint64_t rel_ns)
+{
+   if (!ct.timer_created) return;
    if (rel_ns == 0) rel_ns = 1; // 0 would disarm, so fire as soon as possible instead
 
    struct itimerspec its;
@@ -118,30 +146,48 @@ void program_oneshot_ns(uint64_t rel_ns)
    its.it_value.tv_nsec    = static_cast<long>(rel_ns % 1'000'000'000ull);
    its.it_interval.tv_sec  = 0;
    its.it_interval.tv_nsec = 0;
-   timer_settime(ts.timer, 0, &its, nullptr);
+   timer_settime(ct.timer, 0, &its, nullptr);
 }
 
-void interceptor_disarm()
+void interceptor_disarm(core_timer& ct)
 {
-   if (!ts.timer_created) return;
+   if (!ct.timer_created) return;
    struct itimerspec its;
    its.it_value.tv_sec     = 0;
    its.it_value.tv_nsec    = 0;
    its.it_interval.tv_sec  = 0;
    its.it_interval.tv_nsec = 0;
-   timer_settime(ts.timer, 0, &its, nullptr);
+   timer_settime(ct.timer, 0, &its, nullptr);
 }
 
 void on_timer_signal(int, siginfo_t*, void*)
 {
-   // Runs on the time core with the reschedule signal masked, so a reschedule
-   // cannot nest in here. Invoke the driver's ISR, which fires due callbacks and
-   // may ready threads. Any reschedule that readying requests is pended and
-   // delivered once this handler returns.
+   // Runs on the core whose timer fired (SIGEV_THREAD_ID targeted this thread),
+   // with the reschedule signal masked so a reschedule cannot nest in here.
+   // Invoke the driver's ISR, which reads cyros_port_get_core_id() and so
+   // services this core's domain. Any reschedule that readying requests is
+   // pended and delivered once this handler returns.
    auto handler = ts.isr.load(std::memory_order_acquire);
    if (handler) {
       handler(ts.isr_arg.load(std::memory_order_acquire));
    }
+}
+
+/// @brief Install the process-wide timer signal handler exactly once.
+void ensure_signal_handler_installed()
+{
+   static std::once_flag once;
+   std::call_once(once, [] {
+      // The timer ISR runs with the reschedule signal masked so a switch cannot
+      // nest into it, on the altstack to keep off the interrupted thread's stack.
+      struct sigaction sa;
+      memset(&sa, 0, sizeof(sa));
+      sa.sa_sigaction = on_timer_signal;
+      sigemptyset(&sa.sa_mask);
+      sigaddset(&sa.sa_mask, reschedule_signo);
+      sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
+      sigaction(timer_signo, &sa, nullptr);
+   });
 }
 
 } // namespace
@@ -153,25 +199,15 @@ void on_timer_signal(int, siginfo_t*, void*)
 
 void cyros_port_time_setup(uint32_t tick_hz)
 {
-   // Whichever thread calls this becomes the time core, full stop. No port-layer
-   // assumption about which core that is, and nothing to keep in sync with a
-   // higher layer's config: this TID is just recorded, not validated against it.
-   ts.time_core_tid = static_cast<pid_t>(syscall(SYS_gettid));
-   ts.tick_hz = tick_hz;
+   // Called by the calling core during its time::start(). Installs the shared
+   // signal handler once, then creates THIS core's timer targeting THIS core's
+   // thread, so its ISR runs here and services this core's domain.
+   ensure_signal_handler_installed();
 
-   // The timer ISR runs with the reschedule signal masked so a switch cannot
-   // nest into it. It runs on the altstack to keep off the interrupted thread's
-   // stack.
-   struct sigaction sa;
-   memset(&sa, 0, sizeof(sa));
-   sa.sa_sigaction = on_timer_signal;
-   sigemptyset(&sa.sa_mask);
-   sigaddset(&sa.sa_mask, reschedule_signo);
-   sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
-   sigaction(timer_signo, &sa, nullptr);
+   core_timer& ct = this_core_timer();
+   ct.tick_hz = tick_hz;
+   ct.tid     = static_cast<pid_t>(syscall(SYS_gettid));
 
-   // Deliver only to the time core, so the ISR never runs on a thread the kernel
-   // cannot place.
    struct sigevent sev;
    memset(&sev, 0, sizeof(sev));
    sev.sigev_notify = SIGEV_THREAD_ID;
@@ -181,10 +217,10 @@ void cyros_port_time_setup(uint32_t tick_hz)
    // in the translation unit. That's a transitive, include-order-dependent
    // condition this file cannot guarantee given upstream port/config headers, so
    // write the union member directly instead of relying on the macro existing.
-   sev._sigev_un._tid = ts.time_core_tid;
+   sev._sigev_un._tid = ct.tid;
 
-   if (timer_create(CLOCK_MONOTONIC, &sev, &ts.timer) == 0) {
-      ts.timer_created = true;
+   if (timer_create(CLOCK_MONOTONIC, &sev, &ct.timer) == 0) {
+      ct.timer_created = true;
    }
 }
 
@@ -204,9 +240,14 @@ uint64_t cyros_port_time_freq_hz(void)
 
 void cyros_port_time_reset(uint64_t t)
 {
+   // Resets the shared clock, and clears every core's armed deadline. Intended
+   // for deterministic startup in tests.
    ts.epoch_ns.store(monotonic_ns(), std::memory_order_release);
    ts.base_ticks.store(t, std::memory_order_release);
-   ts.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+
+   for (auto& ct : ts.core) {
+      ct.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+   }
 }
 
 void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t h, void* arg)
@@ -217,51 +258,55 @@ void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t h, void* arg)
 
 void cyros_port_time_irq_enable(void)
 {
-   if (!ts.timer_created) return;
+   core_timer& ct = this_core_timer();
+   if (!ct.timer_created) return;
 
-   if (ts.tick_hz > 0) {
-      // Periodic tick.
-      uint64_t period_ns = 1'000'000'000ull / ts.tick_hz;
+   if (ct.tick_hz > 0) {
+      // Periodic tick on this core's timer.
+      uint64_t period_ns = 1'000'000'000ull / ct.tick_hz;
       struct itimerspec its;
       its.it_value.tv_sec     = static_cast<time_t>(period_ns / 1'000'000'000ull);
       its.it_value.tv_nsec    = static_cast<long>(period_ns % 1'000'000'000ull);
       its.it_interval         = its.it_value;
-      timer_settime(ts.timer, 0, &its, nullptr);
+      timer_settime(ct.timer, 0, &its, nullptr);
    } else {
-      // Tickless: nothing to start until a deadline is armed.
-      uint64_t deadline = ts.armed_deadline.load(std::memory_order_acquire);
+      // Tickless: nothing to start until a deadline is armed on this core.
+      uint64_t deadline = ct.armed_deadline.load(std::memory_order_acquire);
       if (deadline != UINT64_MAX) {
          uint64_t now = cyros_port_time_now();
          uint64_t rel = (deadline > now) ? (deadline - now) : 0;
-         program_oneshot_ns(ticks_to_ns(rel));
+         program_oneshot_ns(ct, ticks_to_ns(rel));
       }
    }
 }
 
 void cyros_port_time_irq_disable(void)
 {
-   interceptor_disarm();
+   interceptor_disarm(this_core_timer());
 }
 
 void cyros_port_time_arm(uint64_t deadline)
 {
-   // Keep the earliest deadline.
-   uint64_t cur = ts.armed_deadline.load(std::memory_order_relaxed);
+   core_timer& ct = this_core_timer();
+
+   // Keep the earliest deadline for this core.
+   uint64_t cur = ct.armed_deadline.load(std::memory_order_relaxed);
    while (deadline < cur &&
-          !ts.armed_deadline.compare_exchange_weak(cur, deadline,
+          !ct.armed_deadline.compare_exchange_weak(cur, deadline,
                                                    std::memory_order_release,
                                                    std::memory_order_relaxed))
    {}
 
    uint64_t now = cyros_port_time_now();
    uint64_t rel = (deadline > now) ? (deadline - now) : 0;
-   program_oneshot_ns(ticks_to_ns(rel));
+   program_oneshot_ns(ct, ticks_to_ns(rel));
 }
 
 void cyros_port_time_disarm(void)
 {
-   ts.armed_deadline.store(UINT64_MAX, std::memory_order_release);
-   interceptor_disarm();
+   core_timer& ct = this_core_timer();
+   ct.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+   interceptor_disarm(ct);
 }
 
 // Linux-only test hook. The preempt port is backed by a real monotonic clock,
@@ -272,10 +317,12 @@ extern void cyros_port_time_advance(uint64_t delta)
    (void)delta;
 }
 
-void cyros_port_send_time_ipi(uint32_t /*core_id*/)
+void cyros_port_send_time_ipi(uint32_t core_id)
 {
-   // Nudge the time core to do time work by raising its timer signal directly.
-   if (ts.time_core_tid != 0) {
-      syscall(SYS_tgkill, getpid(), ts.time_core_tid, timer_signo);
+   // Nudge the given core to do time work by raising its timer signal. Its ISR
+   // runs on that core and services that core's domain.
+   pid_t tid = ts.core[core_id].tid;
+   if (tid != 0) {
+      syscall(SYS_tgkill, getpid(), tid, timer_signo);
    }
 }

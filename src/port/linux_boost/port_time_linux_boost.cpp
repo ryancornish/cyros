@@ -19,7 +19,7 @@
  *
  * Note:
  * - The simulation time driver owns time and does NOT use this.
- * - Periodic and tickless driver unit tests pump the ISR via cyros_port_time_fire_isr()
+ * - Periodic driver unit tests call on_timer_isr() directly.
  * ========================================================================= */
 
 struct time_state
