@@ -141,13 +141,25 @@ void fire_due_callbacks(uint64_t now_ticks) noexcept
    }
 }
 
+/**
+ * @brief Fire all cores' due callbacks at the current time.
+ *
+ * The internal pump for simulation. Driven by advance_to()/advance_by() in
+ * virtual_time mode and by the background thread in real_time mode. Simulation
+ * owns time, so unlike the hardware drivers there is no port ISR entry here.
+ */
+void pump_due() noexcept
+{
+   fire_due_callbacks(cyros::time::now().value);
+}
+
 void realtime_thread_main() noexcept
 {
    using namespace std::chrono_literals;
 
    while (driver_instance->running.load(std::memory_order_acquire)) {
       std::this_thread::sleep_for(1ms);
-      cyros::time::on_timer_isr();
+      pump_due();
    }
 }
 
@@ -326,13 +338,6 @@ void stop() noexcept
    }
 }
 
-void on_timer_isr() noexcept
-{
-   CYROS_ASSERT(driver_instance != nullptr);
-
-   fire_due_callbacks(now().value);
-}
-
 } // namespace cyros::time
 
 
@@ -383,7 +388,7 @@ void advance_to(time_point tp) noexcept
    uint64_t target = std::max(tp.value, cur); // monotonic clamp
 
    driver_instance->virtual_now.store(target, std::memory_order_release);
-   cyros::time::on_timer_isr();
+   pump_due();
 }
 
 void advance_by(duration d) noexcept

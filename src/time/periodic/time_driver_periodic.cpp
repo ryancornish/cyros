@@ -109,9 +109,9 @@ void fire_due_isr(driver_state& ds, uint64_t now_ticks) noexcept
    }
 }
 
-void isr_trampoline(void*) noexcept
+void on_timer_isr(void*) noexcept
 {
-   cyros::time::on_timer_isr();
+   fire_due_isr(this_core_state(), cyros_port_time_now());
 }
 
 uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
@@ -243,7 +243,7 @@ void start() noexcept
 
    CYROS_ASSERT(ds.tick_frequency_hz > 0);
 
-   cyros_port_time_register_isr_handler(&isr_trampoline, nullptr);
+   cyros_port_time_register_isr_handler(&on_timer_isr, nullptr);
    cyros_port_time_setup(ds.tick_frequency_hz);
    cyros_port_time_irq_enable();
 
@@ -259,11 +259,6 @@ void stop() noexcept
 
    cyros_port_time_irq_disable();
    ds.started = false;
-}
-
-void on_timer_isr() noexcept
-{
-   fire_due_isr(this_core_state(), cyros_port_time_now());
 }
 
 } // namespace cyros::time

@@ -19,7 +19,7 @@
  *
  * Note:
  * - The simulation time driver owns time and does NOT use this.
- * - Periodic driver unit tests call on_timer_isr() directly.
+ * - Periodic and tickless driver unit tests pump the ISR via cyros_port_time_fire_isr()
  * ========================================================================= */
 
 struct time_state
@@ -83,6 +83,14 @@ void cyros_port_time_disarm(void)
 extern void cyros_port_time_advance(uint64_t delta)
 {
    time_instance.now.fetch_add(delta, std::memory_order_release);
+}
+
+extern void cyros_port_time_fire_isr(void)
+{
+   auto handler = time_instance.isr.load(std::memory_order_acquire);
+   if (handler) {
+      handler(time_instance.isr_arg.load(std::memory_order_acquire));
+   }
 }
 
 void cyros_port_send_time_ipi(uint32_t /*core_id*/)

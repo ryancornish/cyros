@@ -138,9 +138,15 @@ void fire_due_isr(driver_state& ds, uint64_t now_ticks) noexcept
    }
 }
 
-void isr_trampoline(void*) noexcept
+void on_timer_isr(void*) noexcept
 {
-   cyros::time::on_timer_isr();
+   auto& ds = this_core_state();
+   uint64_t const now_ticks = cyros_port_time_now();
+
+   fire_due_isr(ds, now_ticks);
+
+   irq_guard guard;
+   rearm_locked(ds);
 }
 
 uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
@@ -275,7 +281,7 @@ void start() noexcept
       return;
    }
 
-   cyros_port_time_register_isr_handler(&isr_trampoline, nullptr);
+   cyros_port_time_register_isr_handler(&on_timer_isr, nullptr);
 
    // tick_hz == 0 selects tickless / one-shot mode.
    cyros_port_time_setup(0);
@@ -299,17 +305,6 @@ void stop() noexcept
    cyros_port_time_irq_disable();
    cyros_port_time_disarm();
    ds.started = false;
-}
-
-void on_timer_isr() noexcept
-{
-   auto& ds = this_core_state();
-   uint64_t const now_ticks = cyros_port_time_now();
-
-   fire_due_isr(ds, now_ticks);
-
-   irq_guard guard;
-   rearm_locked(ds);
 }
 
 } // namespace cyros::time

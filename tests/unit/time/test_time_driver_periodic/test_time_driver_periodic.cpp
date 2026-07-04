@@ -36,6 +36,7 @@ using namespace cyros;
 
 // Linux-only deterministic test hook, implemented in the linux_boost port.
 extern void cyros_port_time_advance(uint64_t delta);
+extern void cyros_port_time_fire_isr(void);
 
 namespace
 {
@@ -74,13 +75,13 @@ protected:
    static void advance_and_pump(uint64_t delta_ticks)
    {
       cyros_port_time_advance(delta_ticks);
-      cyros::time::on_timer_isr();
+      cyros_port_time_fire_isr();
    }
 
    // Deliver an ISR without advancing time.
    static void pump()
    {
-      cyros::time::on_timer_isr();
+      cyros_port_time_fire_isr();
    }
 };
 

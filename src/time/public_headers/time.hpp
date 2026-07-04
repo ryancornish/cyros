@@ -201,13 +201,6 @@ void start() noexcept;
  */
 void stop() noexcept;
 
-/**
- * @brief Timer interrupt handler entry point for the active driver.
- *
- * Called by the port layer when a timer event occurs.
- */
-void on_timer_isr() noexcept;
-
 } // namespace cyros::time
 
 #endif // CYROS_TIME_HPP

@@ -520,8 +520,8 @@ TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
    std::atomic<int> count{0};
    ASSERT_NE(cyros::time::schedule_at(time::time_point{0}, counting_callback, &count).id, 0u);
 
-   // Deadline 0 with virtual time already at 0: a direct ISR fires it.
-   cyros::time::on_timer_isr();
+   // Deadline 0 with virtual time already at 0: a zero-length pump fires it.
+   cyros::time::simulation::advance_by(time::duration{0});
    EXPECT_EQ(count.load(), 1);
 }
 
