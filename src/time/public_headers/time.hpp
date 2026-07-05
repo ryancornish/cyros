@@ -187,6 +187,20 @@ bool cancel(handle h) noexcept;
 [[nodiscard]] duration from_microseconds(uint32_t us) noexcept;
 
 /**
+ * @brief Convert a driver duration to milliseconds.
+ *
+ * Conversion is rounded to the nearest millisecond.
+ */
+[[nodiscard]] uint64_t to_milliseconds(duration d) noexcept;
+
+/**
+ * @brief Convert a driver duration to microseconds.
+ *
+ * Conversion is rounded to the nearest microsecond.
+ */
+[[nodiscard]] uint64_t to_microseconds(duration d) noexcept;
+
+/**
  * @brief Start the time driver.
  *
  * Enables time progression and any required timer interrupt or background

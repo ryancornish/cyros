@@ -331,6 +331,16 @@ bool cancel(handle h) noexcept
    return duration{ticks};
 }
 
+[[nodiscard]] uint64_t to_milliseconds(duration d) noexcept
+{
+   return ((d.value * 1000ULL) + (tconfig.frequency_hz / 2)) / tconfig.frequency_hz;
+}
+
+[[nodiscard]] uint64_t to_microseconds(duration d) noexcept
+{
+   return ((d.value * 1'000'000ULL) + (tconfig.frequency_hz / 2)) / tconfig.frequency_hz;
+}
+
 void start() noexcept
 {
    // Per-core. Creates this core's one-shot, anchors everything pended to this

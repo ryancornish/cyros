@@ -284,6 +284,18 @@ bool cancel(handle h) noexcept
    return duration{ticks};
 }
 
+[[nodiscard]] uint64_t to_milliseconds(duration d) noexcept
+{
+   uint64_t const hz = cyros_port_time_freq_hz();
+   return (d.value * 1000ULL + hz / 2) / hz;
+}
+
+[[nodiscard]] uint64_t to_microseconds(duration d) noexcept
+{
+   uint64_t const hz = cyros_port_time_freq_hz();
+   return (d.value * 1'000'000ULL + hz / 2) / hz;
+}
+
 void start() noexcept
 {
    // Per-core. Runs after kernel::start() in this core's context. Creates this

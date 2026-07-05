@@ -305,6 +305,24 @@ bool cancel(handle h) noexcept
    return duration{ticks};
 }
 
+[[nodiscard]] uint64_t to_milliseconds(duration d) noexcept
+{
+   CYROS_ASSERT(driver_instance != nullptr);
+
+   uint64_t const hz = driver_instance->tick_frequency_hz;
+
+   return (d.value * 1000ULL + hz / 2) / hz;
+}
+
+[[nodiscard]] uint64_t to_microseconds(duration d) noexcept
+{
+   CYROS_ASSERT(driver_instance != nullptr);
+
+   uint64_t const hz = driver_instance->tick_frequency_hz;
+
+   return (d.value * 1'000'000ULL + hz / 2) / hz;
+}
+
 void start() noexcept
 {
    CYROS_ASSERT(driver_instance != nullptr);
