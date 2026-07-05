@@ -1,0 +1,20 @@
+name = "gcc-toolchain"
+
+[tools]
+cc = "gcc-15"
+cxx = "g++-15"
+ar = "gcc-ar-15"
+asm = "gcc-15"
+
+[flags]
+common = ["-g3", "-O0"]
+c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic"]
+cxx = ["-std=gnu++23", "-Wall", "-Werror", "-Wextra", "-Wpedantic"]
+asm = []
+link = []
+
+[settings]
+family = "gcc"
+debug = true
+optimization = "0"
+warnings_as_errors = false

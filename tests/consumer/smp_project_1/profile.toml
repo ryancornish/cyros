@@ -1,0 +1,20 @@
+[profile]
+name = "smp_project_1"
+toolchain = "./gcc-toolchain.toml"
+config_header = "./config.hpp"
+
+[layout]
+source_root = "../../../src"
+output_root = "./out"
+
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+
+[features]
+enable = [
+   "round_robin",
+]
+
+[output]
+archive = "libcyros.a"
