@@ -89,8 +89,8 @@ void scheduler::set_thread_running(thread_control_block& tcb) noexcept
 void scheduler::set_thread_blocked(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
-   CYROS_ASSERT(tcb.state == thread_state::running);
-   CYROS_ASSERT(tcb.disposition == thread_disposition::committed);
+   CYROS_ASSERT_OP(tcb.state, ==, thread_state::running);
+   CYROS_ASSERT_OP(tcb.disposition, ==, thread_disposition::committed);
    CYROS_ASSERT(!tcb.is_enqueued());
 
    tcb.disposition = thread_disposition::none;
@@ -100,6 +100,8 @@ void scheduler::set_thread_blocked(thread_control_block& tcb) noexcept
 void scheduler::set_thread_terminated(thread_control_block& tcb) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+   CYROS_ASSERT_OP(tcb.state, ==, thread_state::running);
+   CYROS_ASSERT(!tcb.is_enqueued());
 
    tcb.state = thread_state::terminated;
    tcb.termination.terminate(); // signal joiners

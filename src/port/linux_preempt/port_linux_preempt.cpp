@@ -576,22 +576,43 @@ bool cyros_port_interrupts_enabled(void)
 
 uint32_t cyros_port_irq_save(void)
 {
-   uint32_t prev_enabled = (current_core.interrupt_disable_depth == 0) ? 1u : 0u;
-   block_signals({preempt_signo, timer_signo}); // block first, then raise the depth
+   // Capture the true prior mask in the same call that blocks. The depth
+   // counters cannot stand in for it because a signal handler's sa_mask layer
+   // is invisible to them, and restoring against the counters would unmask
+   // signals the kernel masked for the handler's duration.
+   sigset_t block;
+   sigemptyset(&block);
+   sigaddset(&block, preempt_signo);
+   sigaddset(&block, timer_signo);
+
+   sigset_t old;
+   pthread_sigmask(SIG_BLOCK, &block, &old);
    current_core.interrupt_disable_depth++;
-   return prev_enabled;
+
+   uint32_t state = 0;
+   if (!sigismember(&old, preempt_signo)) state |= 0x1; // was deliverable
+   if (!sigismember(&old, timer_signo))   state |= 0x2; // was deliverable
+   return state;
 }
 
 void cyros_port_irq_restore(uint32_t state)
 {
-   (void)state;
-   if (current_core.interrupt_disable_depth > 0) {
-      current_core.interrupt_disable_depth--;
-      // Reaching interrupt depth 0 is a safe point. Re-open whatever the
-      // remaining preempt depth allows, which delivers anything pended while
-      // masked.
-      reopen_signal_mask();
+   CYROS_ASSERT(current_core.interrupt_disable_depth > 0); // unbalanced restore
+   current_core.interrupt_disable_depth--;
+
+   if (current_core.interrupt_disable_depth != 0) return;
+
+   // Reaching interrupt depth 0 is a safe point. Re-open only what was open at
+   // the matching save, so a guard taken inside a signal handler leaves the
+   // handler's own masking intact and any pended reschedule stays deferred
+   // until the handler unwinds, mirroring PendSV on ARM.
+   sigset_t unblock;
+   sigemptyset(&unblock);
+   if (state & 0x2) sigaddset(&unblock, timer_signo);
+   if ((state & 0x1) && current_core.preempt_disable_depth == 0) {
+      sigaddset(&unblock, preempt_signo);
    }
+   pthread_sigmask(SIG_UNBLOCK, &unblock, nullptr);
 }
 
 
