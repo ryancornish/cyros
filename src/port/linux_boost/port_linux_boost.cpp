@@ -684,6 +684,16 @@ void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char cons
    std::terminate();
 }
 
+void cyros_port_wait_for_debugger(void)
+{
+   volatile int pause = 1;
+   printf("Attach GDB for PID: %d\n'set var pause = 0' to continue\n", getpid());
+
+   while (pause) {
+      usleep(1000);
+   }
+}
+
 void cyros_port_breakpoint(void)
 {
 #if defined(__x86_64__) || defined(__i386__)

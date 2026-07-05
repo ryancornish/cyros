@@ -807,10 +807,25 @@ void cyros_port_idle(void)
 
 void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
 {
+   cyros_port_disable_interrupts();
    std::printf("KERNEL PANIC at %s:%d\n", file_optional, line_optional);
    print_formatted_context(file_optional, line_optional);
    std::printf("└ AUX1: 0x%lX, AUX2: 0x%lX\n", auxilary1, auxilary2);
+   cyros_port_wait_for_debugger();
    std::terminate();
+}
+
+void cyros_port_wait_for_debugger(void)
+{
+   cyros_port_disable_interrupts();
+
+   volatile int pause = 1;
+   printf("Attach GDB for PID: %d\n'set var pause = 0' to continue\n", getpid());
+
+   while (pause) {
+      usleep(1000);
+   }
+   cyros_port_enable_interrupts();
 }
 
 void cyros_port_breakpoint(void)

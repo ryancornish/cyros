@@ -519,6 +519,14 @@ void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char cons
 #define CYROS_ASSERT_NULL(pointer)           CYROS_ASSERT2(!(pointer), pointer, 0);
 
 /**
+ * @brief hold the current core until GDB is attached
+ *
+ * This may be implemented as a spin-loop, and resumption may
+ * require GDB commands (e.g. resetting the value of a local)
+ */
+void cyros_port_wait_for_debugger(void);
+
+/**
  * @brief Trigger a breakpoint (for debugging)
  */
 void cyros_port_breakpoint(void);
