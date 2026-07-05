@@ -185,7 +185,7 @@ static void thread_defer_probe(void* varg)
       a->harness->enqueue(a->peer_ctx);
    }
 
-   cyros_port_preempt_disable();
+   cyros_mask_token_t t = cyros_port_preempt_disable();
    defer_record(a, 100 + a->id);
 
    cyros_port_pend_reschedule();          // deferred - no switch yet
@@ -196,8 +196,8 @@ static void thread_defer_probe(void* varg)
    // to run again must be on the ready queue before it yields control.)
    a->harness->enqueue(a->self_ctx);
 
-   cyros_port_preempt_enable();           // deferred reschedule resolves here
-   defer_record(a, 300 + a->id);           // resumed after peer ran
+   cyros_port_preempt_enable(t);          // deferred reschedule resolves here
+   defer_record(a, 300 + a->id);
 }
 
 // A peer that simply stamps the trace and exits.
@@ -232,19 +232,20 @@ TEST_F(PortTest, GivenIrqSaveRestore_WhenNested_ThenRestoreReturnsToPriorState)
 {
    EXPECT_TRUE(cyros_port_interrupts_enabled());
 
-   uint32_t s0 = cyros_port_irq_save();
-   EXPECT_EQ(s0, 1u);
+   // The token is opaque: obtained from save, handed back to the matching
+   // restore, never inspected. Correctness is observed via interrupts_enabled(),
+   // not the token's value.
+   cyros_mask_token_t s0 = cyros_port_irq_save();
    EXPECT_FALSE(cyros_port_interrupts_enabled());
 
-   uint32_t s1 = cyros_port_irq_save();
-   EXPECT_EQ(s1, 0u);
+   cyros_mask_token_t s1 = cyros_port_irq_save();
    EXPECT_FALSE(cyros_port_interrupts_enabled());
 
-   // Restore one level (still disabled)
+   // Restore the inner level: still disabled, because the outer save holds it.
    cyros_port_irq_restore(s1);
    EXPECT_FALSE(cyros_port_interrupts_enabled());
 
-   // Restore to original enabled state
+   // Restore the outer level: now back to the original enabled state.
    cyros_port_irq_restore(s0);
    EXPECT_TRUE(cyros_port_interrupts_enabled());
 }
@@ -441,18 +442,18 @@ TEST_F(PortTest, GivenNestedPreemptDisable_WhenPendReschedule_ThenResolvesOnlyAt
       auto* a = static_cast<DeferArg*>(varg);
       a->harness->enqueue(a->peer_ctx);
 
-      cyros_port_preempt_disable();          // depth 1
-      cyros_port_preempt_disable();          // depth 2
+      cyros_mask_token_t t1 = cyros_port_preempt_disable();  // depth 1
+      cyros_mask_token_t t2 = cyros_port_preempt_disable();  // depth 2
       defer_record(a, 100 + a->id);
 
       cyros_port_pend_reschedule();          // deferred
 
-      cyros_port_preempt_enable();           // depth 1 - still masked, no switch
-      defer_record(a, 200 + a->id);           // must still be running
+      cyros_port_preempt_enable(t2);         // depth 1 - still masked, no switch
+      defer_record(a, 200 + a->id);
 
       a->harness->enqueue(a->self_ctx);
 
-      cyros_port_preempt_enable();           // depth 0 - switch resolves here
+      cyros_port_preempt_enable(t1);         // depth 0 - switch resolves here
       defer_record(a, 300 + a->id);
    };
 
