@@ -133,6 +133,16 @@ typedef void (*cyros_port_entry_t)(void* arg);
  */
 typedef void (*cyros_port_core_entry_t)(void);
 
+/**
+ * @brief Opaque token to represent a nested interrupt state
+ *
+ * Its bits are assigned by the active port and are
+ * meaningful only to that port's matching enable/restore. Obtain one from a
+ * *_disable() / *_save() call and hand it back to the paired enable/restore,
+ * and nowhere else.
+ */
+typedef uint32_t cyros_mask_token_t;
+
 
 /* ============================================================================
  * Port Contract API
@@ -210,18 +220,6 @@ void cyros_port_send_reschedule_ipi(uint32_t core_id);
  * ------------------------------------------------------------------------- */
 
 /**
- * @brief Disable interrupts
- *
- * In simulation, this may be a no-op or track nesting depth.
- */
-void cyros_port_disable_interrupts(void);
-
-/**
- * @brief Enable interrupts
- */
-void cyros_port_enable_interrupts(void);
-
-/**
  * @brief Check if interrupts are currently enabled
  * @return true if interrupts are enabled, false otherwise
  */
@@ -231,17 +229,17 @@ bool cyros_port_interrupts_enabled(void);
  * @brief Save interrupt state and disable interrupts
  * @return Previous interrupt state
  */
-uint32_t cyros_port_irq_save(void);
+cyros_mask_token_t cyros_port_irq_save(void);
 
 /**
  * @brief Restore interrupt state
- * @param state Previous state returned by cyros_port_irq_save()
+ * @param token Previous state returned by cyros_port_irq_save()
  *
  * When this restores interrupts to fully unmasked AND preemption is also
  * enabled, the calling core is at baseline priority; if a reschedule was
  * pended while masked it is resolved at that point (see Reschedule Requests).
  */
-void cyros_port_irq_restore(uint32_t state);
+void cyros_port_irq_restore(cyros_mask_token_t token);
 
 
 /* ----------------------------------------------------------------------------
@@ -279,7 +277,7 @@ void cyros_port_irq_restore(uint32_t state);
  * reschedule they request via cyros_port_pend_reschedule() is recorded and
  * deferred.
  */
-void cyros_port_preempt_disable(void);
+cyros_mask_token_t cyros_port_preempt_disable(void);
 
 /**
  * @brief Enable preemption on the calling core (nestable).
@@ -291,7 +289,7 @@ void cyros_port_preempt_disable(void);
  *
  * Must be balanced against cyros_port_preempt_disable().
  */
-void cyros_port_preempt_enable(void);
+void cyros_port_preempt_enable(cyros_mask_token_t token);
 
 
 /* ----------------------------------------------------------------------------
@@ -456,7 +454,7 @@ void cyros_port_pend_reschedule(void);
  * Called when a thread's entry function returns.
  * Should never return.
  */
-void cyros_port_thread_exit(void);// __attribute__((noreturn));
+void cyros_port_thread_exit(cyros_mask_token_t token);// __attribute__((noreturn));
 
 
 /* ----------------------------------------------------------------------------

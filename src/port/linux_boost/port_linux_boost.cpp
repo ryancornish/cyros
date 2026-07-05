@@ -425,34 +425,20 @@ void cyros_port_send_reschedule_ipi(uint32_t core_id)
  * non-zero, (simulated) interrupts cannot be delivered.
  * ------------------------------------------------------------------------- */
 
-void cyros_port_disable_interrupts(void)
-{
-   current_core.interrupt_disable_depth++;
-}
-
-void cyros_port_enable_interrupts(void)
-{
-   if (current_core.interrupt_disable_depth > 0) {
-      current_core.interrupt_disable_depth--;
-   }
-}
-
 bool cyros_port_interrupts_enabled(void)
 {
    return current_core.interrupt_disable_depth == 0;
 }
 
-uint32_t cyros_port_irq_save(void)
+cyros_mask_token_t cyros_port_irq_save(void)
 {
-   // Return previous enabled-state as 1/0 (simple)
-   uint32_t prev_enabled = (current_core.interrupt_disable_depth == 0) ? 1u : 0u;
    current_core.interrupt_disable_depth++;
-   return prev_enabled;
+   return 0; // cooperative port: no real mask state, token is inert
 }
 
-void cyros_port_irq_restore(uint32_t state)
+void cyros_port_irq_restore(cyros_mask_token_t token)
 {
-   (void)state;
+   (void)token;
    // Unwind one nesting level
    if (current_core.interrupt_disable_depth > 0) {
       current_core.interrupt_disable_depth--;
@@ -473,13 +459,15 @@ void cyros_port_irq_restore(uint32_t state)
  * unaffected.
  * ------------------------------------------------------------------------- */
 
-void cyros_port_preempt_disable(void)
+cyros_mask_token_t cyros_port_preempt_disable(void)
 {
    current_core.preempt_disable_depth++;
+   return 0; // cooperative port: token is inert
 }
 
-void cyros_port_preempt_enable(void)
+void cyros_port_preempt_enable(cyros_mask_token_t token)
 {
+   (void)token;
    CYROS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
    current_core.preempt_disable_depth--;
 
@@ -488,7 +476,6 @@ void cyros_port_preempt_enable(void)
    // fires if interrupts are also unmasked).
    resolve_pending_reschedule_if_baseline();
 }
-
 
 /* ----------------------------------------------------------------------------
  * Context Management & Switching
@@ -612,13 +599,13 @@ void cyros_port_pend_reschedule(void)
    }
 }
 
-void cyros_port_thread_exit(void)
+void cyros_port_thread_exit(cyros_mask_token_t token)
 {
-   CYROS_ASSERT(current_core.preempt_disable_depth > 0); // coop port doesnt care if this is disabled, but it is asset a kernel contract
+   CYROS_ASSERT(current_core.preempt_disable_depth > 0); // coop port doesnt care if this is disabled, but it is asserting a kernel contract
    CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
    global.active_contexts.fetch_sub(1, std::memory_order_seq_cst);
 
-   cyros_port_preempt_enable();
+   cyros_port_preempt_enable(token);
 }
 
 

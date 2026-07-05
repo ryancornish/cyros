@@ -72,6 +72,7 @@ public:
 
 private:
    std::atomic_flag flag;
+   std::uint32_t token{0};
 };
 
 /**

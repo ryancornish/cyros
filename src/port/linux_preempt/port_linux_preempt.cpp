@@ -260,52 +260,25 @@ static thread_local constinit current_core_state current_core;
  * ========================================================================= */
 
 /* ----------------------------------------------------------------------------
- * Signal masking
- * ------------------------------------------------------------------------- */
-
-/**
- * @brief Block a set of signals on the calling core. Blocking an already-blocked
- *        signal is a no-op, so this nests safely.
- */
-static void block_signals(std::initializer_list<int> signos)
-{
-   sigset_t s;
-   sigemptyset(&s);
-   for (int signo : signos) {
-      sigaddset(&s, signo);
-   }
-   pthread_sigmask(SIG_BLOCK, &s, nullptr);
-}
-
-static void unblock_signal(int signo)
-{
-   sigset_t s;
-   sigemptyset(&s);
-   sigaddset(&s, signo);
-   pthread_sigmask(SIG_UNBLOCK, &s, nullptr);
-}
-
-/**
- * @brief Re-open whatever the current depths now allow. Called on every enable
- *        path after a depth has been lowered.
+ * Mask tokens
  *
- * This only ever unblocks, and only when the gate is open, so it cannot race the
- * disable paths, which block before they raise a depth. The asymmetry is the
- * interrupt-versus-preempt distinction made concrete: the timer is gated by
- * interrupt-disable alone, so it runs again the moment interrupts are unmasked
- * even while preemption stays disabled. The reschedule signal needs BOTH depths
- * clear. Unmasking delivers anything that pended while masked before returning.
- */
-static void reopen_signal_mask(void)
+ * A disable returns a token recording which signals IT newly closed, and the
+ * matching enable reopens exactly those, and only when no sibling region still
+ * holds them. This mirrors the ARM save-restore idiom directly: PRIMASK for
+ * interrupt-disable, BASEPRI for preempt-disable, where the disable hands back
+ * the prior state and the enable writes it back. The depth counters alone are
+ * not enough, because a signal handler's sa_mask blocks these signals without
+ * touching any depth, so an unconditional reopen inside a handler would tear
+ * down the handler's own masking and let a reschedule nest into an ISR.
+ * ------------------------------------------------------------------------- */
+enum : cyros_mask_token_t
 {
-   if (current_core.interrupt_disable_depth != 0) return;
+   mask_token_reschedule = 0x1u, // reschedule (PendSV analogue) was deliverable at disable
+   mask_token_timer      = 0x2u, // timer interrupt was deliverable at disable
+   // A future interrupt source claims the next bit here, and joins the block set
+   // in cyros_port_irq_save() and the reopen set in cyros_port_irq_restore().
+};
 
-   unblock_signal(timer_signo);
-
-   if (current_core.preempt_disable_depth == 0) {
-      unblock_signal(preempt_signo);
-   }
-}
 
 /* ----------------------------------------------------------------------------
  * Reschedule handler (the scheduler context for this port)
@@ -555,89 +528,86 @@ void cyros_port_send_reschedule_ipi(uint32_t core_id)
  * signal can be delivered to this core.
  * ------------------------------------------------------------------------- */
 
-void cyros_port_disable_interrupts(void)
-{
-   block_signals({preempt_signo, timer_signo}); // block first, then raise the depth
-   current_core.interrupt_disable_depth++;
-}
-
-void cyros_port_enable_interrupts(void)
-{
-   if (current_core.interrupt_disable_depth > 0) {
-      current_core.interrupt_disable_depth--;
-      reopen_signal_mask();
-   }
-}
-
 bool cyros_port_interrupts_enabled(void)
 {
    return current_core.interrupt_disable_depth == 0;
 }
 
-uint32_t cyros_port_irq_save(void)
+cyros_mask_token_t cyros_port_irq_save(void)
 {
-   // Capture the true prior mask in the same call that blocks. The depth
-   // counters cannot stand in for it because a signal handler's sa_mask layer
-   // is invisible to them, and restoring against the counters would unmask
-   // signals the kernel masked for the handler's duration.
    sigset_t block;
    sigemptyset(&block);
    sigaddset(&block, preempt_signo);
    sigaddset(&block, timer_signo);
 
    sigset_t old;
-   pthread_sigmask(SIG_BLOCK, &block, &old);
+   pthread_sigmask(SIG_BLOCK, &block, &old); // block AND capture prior mask in one call
    current_core.interrupt_disable_depth++;
 
-   uint32_t state = 0;
-   if (!sigismember(&old, preempt_signo)) state |= 0x1; // was deliverable
-   if (!sigismember(&old, timer_signo))   state |= 0x2; // was deliverable
-   return state;
+   cyros_mask_token_t token = 0;
+   if (!sigismember(&old, preempt_signo)) token |= mask_token_reschedule;
+   if (!sigismember(&old, timer_signo))   token |= mask_token_timer;
+   return token;
 }
 
-void cyros_port_irq_restore(uint32_t state)
+void cyros_port_irq_restore(cyros_mask_token_t token)
 {
    CYROS_ASSERT(current_core.interrupt_disable_depth > 0); // unbalanced restore
-   current_core.interrupt_disable_depth--;
+   if (--current_core.interrupt_disable_depth != 0) {
+      return; // inner region: the outermost restore owns the reopen
+   }
 
-   if (current_core.interrupt_disable_depth != 0) return;
-
-   // Reaching interrupt depth 0 is a safe point. Re-open only what was open at
-   // the matching save, so a guard taken inside a signal handler leaves the
-   // handler's own masking intact and any pended reschedule stays deferred
-   // until the handler unwinds, mirroring PendSV on ARM.
    sigset_t unblock;
    sigemptyset(&unblock);
-   if (state & 0x2) sigaddset(&unblock, timer_signo);
-   if ((state & 0x1) && current_core.preempt_disable_depth == 0) {
+   if (token & mask_token_timer) {
+      sigaddset(&unblock, timer_signo);
+   }
+   // The reschedule signal is also held by preempt-disable, and interrupt-disable
+   // is the superset, so only reopen it when no preempt region still wants it down.
+   if ((token & mask_token_reschedule) && current_core.preempt_disable_depth == 0) {
       sigaddset(&unblock, preempt_signo);
    }
-   pthread_sigmask(SIG_UNBLOCK, &unblock, nullptr);
+   pthread_sigmask(SIG_UNBLOCK, &unblock, nullptr); // reopen delivers anything pended
 }
 
 
 /* ----------------------------------------------------------------------------
  * Preemption Control
  *
- * Blocks the switch but leaves the timer ISR free to run. Preempt-disable masks
- * only the reschedule signal, so a timer interrupt still fires under it and only
- * the reschedule that interrupt requests is deferred. That is the difference
- * from interrupt control, which masks both.
+ * Blocks the switch but leaves interrupt signals free to run. Preempt-disable
+ * masks only the reschedule signal, so a timer (or any interrupt) still fires
+ * under it and only the reschedule that interrupt requests is deferred. That is
+ * the difference from interrupt control, which masks both.
  * ------------------------------------------------------------------------- */
 
-void cyros_port_preempt_disable(void)
+cyros_mask_token_t cyros_port_preempt_disable(void)
 {
-   block_signals({preempt_signo}); // block first, then raise the depth
+   sigset_t block;
+   sigemptyset(&block);
+   sigaddset(&block, preempt_signo);
+
+   sigset_t old;
+   pthread_sigmask(SIG_BLOCK, &block, &old);
    current_core.preempt_disable_depth++;
+
+   return sigismember(&old, preempt_signo) ? 0u : mask_token_reschedule;
 }
 
-void cyros_port_preempt_enable(void)
+void cyros_port_preempt_enable(cyros_mask_token_t token)
 {
    CYROS_ASSERT(current_core.preempt_disable_depth > 0); // unbalanced enable
-   current_core.preempt_disable_depth--;
-   // Reaching preempt depth 0 is a safe point. Re-open the reschedule signal if
-   // interrupts are also unmasked. The timer is unaffected by preempt depth.
-   reopen_signal_mask();
+   if (--current_core.preempt_disable_depth != 0) {
+      return; // inner region: the outermost enable owns the reopen
+   }
+
+   // Reopen only if this region closed it, and only when interrupt-disable is not
+   // also holding it down (interrupt-disable masks the reschedule too).
+   if ((token & mask_token_reschedule) && current_core.interrupt_disable_depth == 0) {
+      sigset_t unblock;
+      sigemptyset(&unblock);
+      sigaddset(&unblock, preempt_signo);
+      pthread_sigmask(SIG_UNBLOCK, &unblock, nullptr);
+   }
 }
 
 
@@ -751,7 +721,7 @@ void cyros_port_pend_reschedule(void)
    pthread_kill(pthread_self(), preempt_signo);
 }
 
-void cyros_port_thread_exit(void)
+void cyros_port_thread_exit(cyros_mask_token_t token)
 {
    CYROS_ASSERT(current_core.preempt_disable_depth > 0); // thread_exit routine must be uninterruptible!
    CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
@@ -777,7 +747,7 @@ void cyros_port_thread_exit(void)
    // this context and resumes either the next thread or, under shutdown, the
    // bring-up context. We do not return.
    pthread_kill(pthread_self(), preempt_signo);
-   cyros_port_preempt_enable(); // Depth 1 -> 0, reopens preempt_signo, pended kill fires
+   cyros_port_preempt_enable(token);
    __builtin_unreachable();
 }
 
@@ -828,7 +798,6 @@ void cyros_port_idle(void)
 
 void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
 {
-   cyros_port_disable_interrupts();
    std::printf("KERNEL PANIC at %s:%d\n", file_optional, line_optional);
    print_formatted_context(file_optional, line_optional);
    std::printf("└ AUX1: 0x%lX, AUX2: 0x%lX\n", auxilary1, auxilary2);
@@ -838,7 +807,7 @@ void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char cons
 
 void cyros_port_wait_for_debugger(void)
 {
-   cyros_port_disable_interrupts();
+   auto irq_mask = cyros_port_irq_save();
 
    volatile int pause = 1;
    printf("Attach GDB for PID: %d\n'set var pause = 0' to continue\n", getpid());
@@ -846,7 +815,7 @@ void cyros_port_wait_for_debugger(void)
    while (pause) {
       usleep(1000);
    }
-   cyros_port_enable_interrupts();
+   cyros_port_irq_restore(irq_mask);
 }
 
 void cyros_port_breakpoint(void)

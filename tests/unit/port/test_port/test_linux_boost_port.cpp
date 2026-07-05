@@ -228,25 +228,6 @@ protected:
 
 
 
-
-
-TEST_F(PortTest, GivenInterrupts_WhenDisableEnableNested_ThenInterruptsEnabledTracksDepth)
-{
-   EXPECT_TRUE(cyros_port_interrupts_enabled());
-
-   cyros_port_disable_interrupts();
-   EXPECT_FALSE(cyros_port_interrupts_enabled());
-
-   cyros_port_disable_interrupts();
-   EXPECT_FALSE(cyros_port_interrupts_enabled());
-
-   cyros_port_enable_interrupts();
-   EXPECT_FALSE(cyros_port_interrupts_enabled());
-
-   cyros_port_enable_interrupts();
-   EXPECT_TRUE(cyros_port_interrupts_enabled());
-}
-
 TEST_F(PortTest, GivenIrqSaveRestore_WhenNested_ThenRestoreReturnsToPriorState)
 {
    EXPECT_TRUE(cyros_port_interrupts_enabled());

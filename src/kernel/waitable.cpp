@@ -117,7 +117,7 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
    // core.
    schedule_hint aggregate_hint = schedule_hint::unwarranted;
 
-   cyros_port_preempt_disable();
+   auto token = cyros_port_preempt_disable();
 
    while (true) {
       thread_control_block* woken = nullptr;
@@ -138,7 +138,7 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
 
    apply_reschedule_policy(policy, aggregate_hint);
 
-   cyros_port_preempt_enable();
+   cyros_port_preempt_enable(token);
 }
 
 /* ============================================================================

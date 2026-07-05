@@ -248,12 +248,12 @@ void thread_launcher(void* tcb_ptr)
    // Bookkeeping and port exit mechanics must be made
    // atomically. It is up to the port exit routine to
    // return us to the reschedule routine.
-   cyros_port_preempt_disable();
+   auto token = cyros_port_preempt_disable();
 
    scheduler.set_thread_terminated(*tcb);
    kernel_instance.unregister_thread();
 
-   cyros_port_thread_exit();
+   cyros_port_thread_exit(token);
 }
 
 void idle_task()
@@ -388,13 +388,13 @@ void yield()
          ++i;
       }
 
-      cyros_port_preempt_disable();
+      auto token = cyros_port_preempt_disable();
       if (tcb->disposition == thread_disposition::prepared) {
          // Condition unsatisfied AND no wake came after arming, block until woken
          tcb->disposition = thread_disposition::committed;
          cyros_port_pend_reschedule(); // Delayed until preempt_enable()
       }
-      cyros_port_preempt_enable();
+      cyros_port_preempt_enable(token);
    }
 }
 
