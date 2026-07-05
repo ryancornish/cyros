@@ -103,5 +103,157 @@ TEST(RoundRobin_Test,
    EXPECT_EQ(b_count.load(), target);
    EXPECT_TRUE(a_saw_b.load());
 
+   time::finalise();
    kernel::finalise();
 }
+
+class RoundRobinCpuMeasure : public ::testing::TestWithParam<uint32_t>
+{
+private:
+   static constexpr std::uint32_t total_work_base = 10'000;
+
+protected:
+   static constexpr std::uint32_t frequency = 1'000'000; // 1 MHz, matches the port clock
+
+   uint32_t quantum_us{0};
+   uint32_t total_work{0};
+
+   void SetUp() override
+   {
+      quantum_us = GetParam();
+      // Scale work done with infrequency of rotates to witness similar amounts of rotates
+      total_work = total_work_base * quantum_us;
+      kernel::initialise();
+      time::initialise(frequency);
+   }
+
+   void TearDown() override
+   {
+      time::finalise();
+      kernel::finalise();
+   }
+};
+
+TEST_P(RoundRobinCpuMeasure,
+       GivenTwoEqualPriorityThreads_WhenRoundRobinEnabled_ThenCpuShareIsFair)
+{
+   std::atomic<std::uint64_t> work{0};
+
+   std::atomic<std::uint64_t> a_count{0};
+   std::atomic<std::uint64_t> b_count{0};
+
+   // -1 = nobody yet
+   //  0 = A last executed
+   //  1 = B last executed
+   std::atomic<int> last_thread{-1};
+
+   std::atomic<std::uint64_t> switches_to_a{0};
+   std::atomic<std::uint64_t> switches_to_b{0};
+
+   thread bootstrap(
+      [&]()
+      {
+         rr::enable_round_robin(time::from_microseconds(quantum_us));
+         time::start();
+      },
+      bootstrap_stack,
+      thread::priority(0),
+      core0
+   );
+
+   auto worker =
+      [&](int id,
+          std::atomic<std::uint64_t>& my_count,
+          std::atomic<std::uint64_t>& my_switches)
+   {
+      while (true)
+      {
+         // Detect that the other thread ran since we last executed.
+         if (last_thread.exchange(id, std::memory_order_relaxed) != id)
+         {
+            ++my_switches;
+         }
+
+         auto index = work.fetch_add(1, std::memory_order_relaxed);
+
+         if (index >= total_work)
+         {
+            break;
+         }
+
+         ++my_count;
+      }
+   };
+
+   thread a(
+      [&]
+      {
+         worker(0, a_count, switches_to_a);
+      },
+      a_stack,
+      thread::priority(1),
+      core0
+   );
+
+   thread b(
+      [&]
+      {
+         worker(1, b_count, switches_to_b);
+      },
+      b_stack,
+      thread::priority(1),
+      core0
+   );
+
+   auto const start = time::now();
+   kernel::start();
+   auto const elapsed = duration_between(time::now(), start);
+
+   auto const a_res = a_count.load();
+   auto const b_res = b_count.load();
+
+   double const a_share = 100.0 * double(a_res) / double(total_work);
+   double const b_share = 100.0 * double(b_res) / double(total_work);
+
+   auto const total_switches = switches_to_a.load() + switches_to_b.load();
+   auto const elapsed_ms = time::to_milliseconds(elapsed);
+
+   auto const expected_switches = elapsed.value / time::from_microseconds(quantum_us).value;
+
+   std::cout << "\n";
+   std::cout << "Test parameters:\n";
+   std::cout << "- Frequency      : " << frequency << " hz\n";
+   std::cout << "- Quantum        : " << quantum_us << " us\n";
+   std::cout << "- Work           : " << total_work << " counts\n";
+   std::cout << "Test results   :\n";
+   std::cout << "- Elapsed        : " << elapsed_ms << " ms\n";
+   std::cout << "- A count        : " << a_res << "\n";
+   std::cout << "- B count        : " << b_res << "\n";
+   std::cout << "- A share        : " << a_share << "%\n";
+   std::cout << "- B share        : " << b_share << "%\n";
+   std::cout << "- Switches -> A  : " << switches_to_a.load() << "\n";
+   std::cout << "- Switches -> B  : " << switches_to_b.load() << "\n";
+   std::cout << "- Total switches : " << total_switches << "\n";
+   std::cout << "- Expected ~     : " << expected_switches << "\n";
+
+   EXPECT_EQ(a_res + b_res, total_work);
+
+   // Adjust tolerance to suit your platform.
+   EXPECT_NEAR(a_share, 50.0, 5.0);
+   EXPECT_NEAR(b_share, 50.0, 5.0);
+
+   // Sanity check that RR actually occurred.
+   EXPECT_GT(total_switches, 10u);
+}
+
+std::string QuantumName(testing::TestParamInfo<uint32_t> const& info)
+{
+   return std::to_string(info.param) + "us";
+}
+
+INSTANTIATE_TEST_SUITE_P(
+   QuantumTests,
+   RoundRobinCpuMeasure,
+   ::testing::Values(100, 500, 1000, 5000, 10'000),
+   QuantumName
+);
