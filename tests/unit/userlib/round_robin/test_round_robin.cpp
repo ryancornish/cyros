@@ -24,6 +24,10 @@ alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> bootstrap_stac
 alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> a_stack{};
 alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, STACK_SIZE> b_stack{};
 
+constexpr std::size_t num_workers = 5;
+struct alignas(CYROS_PORT_STACK_ALIGN) worker_stack { std::array<std::byte, STACK_SIZE> bytes; };
+std::array<worker_stack, num_workers> worker_stacks{};
+
 }  // namespace
 
 /*
@@ -257,3 +261,144 @@ INSTANTIATE_TEST_SUITE_P(
    ::testing::Values(100, 500, 1000, 5000, 10'000),
    QuantumName
 );
+
+
+
+/*
+ * Round-robin fair-share across FIVE equal-priority threads.
+ *
+ * The two-thread sweep proves rotation happens and is even in aggregate, but with
+ * two threads "rotate behind peers" and "alternate A/B" are the same motion, so a
+ * FIFO bug and a correct rotation look identical. With five, they diverge: correct
+ * round-robin must cycle through all of them (A->B->C->D->E->A), and a bug that
+ * ping-pongs a subset while starving the rest shows up as skew in BOTH per-thread
+ * CPU share and per-thread schedule count.
+ *
+ * This test is a WITNESS, not a strict gate. It prints the per-thread breakdown
+ * and hard-asserts only the robust invariants: all work is accounted for,
+ * rotation actually occurred, and no thread is grossly starved. Read the report
+ * to see how even the split really is; the tight fairness numbers are for the eye,
+ * not the CI threshold, because five-way splitting plus the finishing tail makes
+ * strict bounds inappropriate.
+ */
+TEST(RoundRobin_Test,
+     GivenFiveEqualPriorityThreads_WhenRoundRobinEnabled_ThenCpuShareIsFair)
+{
+   constexpr std::uint32_t frequency  = 1'000'000; // 1 MHz, matches the port clock
+   constexpr std::uint32_t quantum_us = 1'000;     // 1 ms slice
+   constexpr std::uint64_t total_work = 10'000'000;
+
+   kernel::initialise();
+   time::initialise(frequency);
+
+   std::atomic<std::uint64_t> work{0};
+
+   std::array<std::atomic<std::uint64_t>, num_workers> counts{};
+   std::array<std::atomic<std::uint64_t>, num_workers> schedules{};
+
+   // Which worker ran most recently. A worker seeing a value other than its own
+   // id means it was just rotated in, i.e. a schedule-in for that worker.
+   std::atomic<int> last_thread{-1};
+
+   thread bootstrap(
+      [&]()
+      {
+         rr::enable_round_robin(time::from_microseconds(quantum_us));
+         time::start();
+      },
+      bootstrap_stack,
+      thread::priority(0),
+      core0
+   );
+
+   auto worker = [&](int id)
+   {
+      auto const me = static_cast<std::size_t>(id);
+      while (true)
+      {
+         // A transition into us (someone else ran since our last turn) counts as
+         // a schedule-in. Summed over workers this is total switches; per worker
+         // it is how often each was rotated in, which is the rotation-evenness
+         // witness the two-thread test could not provide.
+         if (last_thread.exchange(id, std::memory_order_relaxed) != id)
+         {
+            schedules[me].fetch_add(1, std::memory_order_relaxed);
+         }
+
+         auto const index = work.fetch_add(1, std::memory_order_relaxed);
+         if (index >= total_work)
+         {
+            break;
+         }
+
+         counts[me].fetch_add(1, std::memory_order_relaxed);
+      }
+   };
+
+   std::vector<thread> workers;
+   workers.reserve(num_workers);
+   for (std::size_t i = 0; i < num_workers; ++i)
+   {
+      workers.emplace_back(
+         [&worker, i]{ worker(static_cast<int>(i)); },
+         worker_stacks[i].bytes,
+         thread::priority(1),
+         core0
+      );
+   }
+
+   auto const start = time::now();
+   kernel::start();
+   auto const elapsed = duration_between(time::now(), start);
+
+   // ---- gather ----
+   std::uint64_t total_counted  = 0;
+   std::uint64_t total_switches = 0;
+   for (std::size_t i = 0; i < num_workers; ++i)
+   {
+      total_counted  += counts[i].load();
+      total_switches += schedules[i].load();
+   }
+
+   auto const elapsed_ms         = time::to_milliseconds(elapsed);
+   auto const expected_switches  = elapsed.value / time::from_microseconds(quantum_us).value;
+   double const fair_share       = 100.0 / double(num_workers);
+
+   // ---- report ----
+   std::cout << "\n";
+   std::cout << "Test parameters:\n";
+   std::cout << "- Frequency      : " << frequency << " hz\n";
+   std::cout << "- Quantum        : " << quantum_us << " us\n";
+   std::cout << "- Workers        : " << num_workers << "\n";
+   std::cout << "- Work           : " << total_work << " counts\n";
+   std::cout << "Test results   :\n";
+   std::cout << "- Elapsed        : " << elapsed_ms << " ms\n";
+   for (std::size_t i = 0; i < num_workers; ++i)
+   {
+      double const share = 100.0 * double(counts[i].load()) / double(total_work);
+      std::cout << "- Thread " << i << "        : "
+                << counts[i].load() << " counts, "
+                << share << "% share, "
+                << schedules[i].load() << " schedules\n";
+   }
+   std::cout << "- Total switches : " << total_switches << "\n";
+   std::cout << "- Expected ~     : " << expected_switches << "\n";
+   std::cout << "- Fair share     : " << fair_share << "% each\n";
+
+   // ---- hard invariants ----
+   EXPECT_EQ(total_counted, total_work);   // all work accounted for
+   EXPECT_GT(total_switches, 20u);         // rotation actually happened
+
+   // ---- soft fairness witness: catch only gross starvation ----
+   // Generous band on purpose. This guards against one thread being starved or
+   // hogging the core, not against normal five-way variance.
+   for (std::size_t i = 0; i < num_workers; ++i)
+   {
+      double const share = 100.0 * double(counts[i].load()) / double(total_work);
+      EXPECT_NEAR(share, fair_share, 10.0)
+         << "thread " << i << " share is far from fair - possible starvation";
+   }
+
+   time::finalise();
+   kernel::finalise();
+}
