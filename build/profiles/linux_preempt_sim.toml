@@ -14,6 +14,7 @@ time_driver = "simulation"
 [features]
 enable = [
    "round_robin",
+   "sync",
 ]
 
 [output]

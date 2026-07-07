@@ -16,6 +16,7 @@ port = "linux_preempt"
 [features]
 enable = [
    "round_robin",
+   "sync",
 ]
 
 [output]

@@ -188,6 +188,22 @@ private:
    friend std::size_t this_thread::wait_on_any(std::span<waitable_ref> waitables) noexcept;
 };
 
+
+/**
+ * @brief waitable type that NEVER blocks the thread
+ *
+ * This allows wait_for_any({target, non_blocking_token});
+ * patterns.
+ */
+class non_blocking_token : public waitable
+{
+protected:
+   bool is_satisfied(thread&) noexcept override
+   {
+      return true;
+   }
+};
+
 } // namespace cyros
 
 #endif // CYROS_WAITABLE_HPP
