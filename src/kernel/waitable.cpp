@@ -95,18 +95,18 @@ void waitable::wait_queue::disarm(wait_node& node) noexcept
 
 void waitable::wait_queue::wake_one(reschedule_policy policy) noexcept
 {
-   thread_control_block* woken = nullptr;
+   thread_control_block* chosen = nullptr;
    {
       spinlock_guard guard(lock);
 
       if (head == nullptr) return;
       wait_node* node = head;
-      woken = node->owner;
+      chosen = node->owner;
       head = node->next;
       node->next = nullptr;
    }
 
-   schedule_hint hint = kernel_request_thread_ready(*woken);
+   schedule_hint hint = kernel_request_thread_ready(*chosen);
    apply_reschedule_policy(policy, hint);
 }
 
@@ -120,17 +120,17 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
    auto token = cyros_port_preempt_disable();
 
    while (true) {
-      thread_control_block* woken = nullptr;
+      thread_control_block* chosen = nullptr;
       {
          spinlock_guard guard(lock);
 
          if (head == nullptr) break;
          wait_node* node = head;
-         woken = node->owner;
+         chosen = node->owner;
          head = node->next;
          node->next = nullptr;
       }
-      schedule_hint hint = kernel_request_thread_ready(*woken);
+      schedule_hint hint = kernel_request_thread_ready(*chosen);
       if (hint == schedule_hint::warranted) {
          aggregate_hint = schedule_hint::warranted;
       }
@@ -140,6 +140,41 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
 
    cyros_port_preempt_enable(token);
 }
+
+bool waitable::wait_queue::wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy) noexcept
+{
+   thread_control_block* chosen = nullptr;
+   {
+      spinlock_guard guard(lock);
+
+      if (head != nullptr) {
+         wait_node* node = head;
+         chosen = node->owner;
+         head = node->next;
+         node->next = nullptr;
+      }
+      CYROS_ASSERT(chosen == nullptr || chosen->id != 0);
+
+      // The transfer commit for BOTH outcomes happens under the lock. Deciding
+      // the empty case outside it would let a waiter arm, poll the still-held
+      // resource, and park just before this release frees it, a lost wakeup
+      // with no future wake to recover it.
+      transfer(chosen != nullptr ? chosen->id : 0);
+   }
+
+   if (chosen == nullptr) {
+      return false;
+   }
+
+   // The transfer is already committed, so readying outside the lock is pure
+   // delivery. Only the TCB is touched out here. The wait_node lives on the
+   // waiter's stack and is only dereferenced under the lock, matching the
+   // wake_one discipline.
+   schedule_hint hint = kernel_request_thread_ready(*chosen);
+   apply_reschedule_policy(policy, hint);
+   return true;
+}
+
 
 /* ============================================================================
  * waitable - public surface
@@ -159,6 +194,11 @@ void waitable::wake_one(reschedule_policy policy) noexcept
 void waitable::wake_all(reschedule_policy policy) noexcept
 {
    queue.wake_all(policy);
+}
+
+bool waitable::wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy) noexcept
+{
+   return queue.wake_one_and_transfer(transfer, policy);
 }
 
 } // namespace cyros

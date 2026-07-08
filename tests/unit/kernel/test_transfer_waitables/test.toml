@@ -1,0 +1,7 @@
+[test]
+name   = "test_transfer_waitables"
+source = "test_transfer_waitables.cpp"
+config = "test_transfer_waitables_config.hpp"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

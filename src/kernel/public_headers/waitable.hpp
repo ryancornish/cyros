@@ -99,6 +99,8 @@ public:
    waitable& operator=(waitable const&) = delete;
 
 protected:
+   using transfer_fn = function<void(uint32_t), 32, heap_policy::no_heap>;
+
    waitable() noexcept = default;
 
    /**
@@ -121,23 +123,54 @@ protected:
    virtual bool is_satisfied(thread& caller) noexcept = 0;
 
    /**
-    * @brief Wake the single highest-priority parked thread, if any.
+    * @brief Wake the single highest-priority waiting thread (if any).
     *
-    * No-op if no waiters. Safe from ISR context. Use this for primitives
-    * where at most one waiter can proceed per signal (mutex unlock,
-    * semaphore release of one permit).
+    * @param policy After waking a waiting thread, apply this reschedule policy.
+    *
+    * No-op if no waiters. Safe within ISR context.
+    * Woken thread may be barged by another thread. This reduces latency
+    * at the cost of waiter fairness.
     */
    void wake_one(reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
    /**
-    * @brief Wake ALL parked threads.
+    * @brief Wake ALL waiting threads (if any).
     *
-    * Use only when the signalled condition can genuinely satisfy every
-    * waiter (manual-reset event, barrier release, broadcast of thread
-    * termination to all joiners). Using wake_all where wake_one suffices is
-    * the classic thundering-herd mistake. Safe from ISR context.
+    * @param policy After waking a waiting thread, apply this reschedule policy.
+    *
+    * No-op if no waiters. Safe from ISR context.
+    * Threads are woken as a batch with preemption disabled
+    * before releasing all at once.
     */
    void wake_all(reschedule_policy policy = reschedule_policy::automatic) noexcept;
+
+   /**
+    * @brief Wake-and-handover to the single highest-priority waiting thread (if any).
+    *
+    * @param transfer Callable that hands over resource ownership to woken thread.
+    * @param policy After waking a waiting thread, apply this reschedule policy.
+    * @return true when a waiter was chosen and readied, false when the
+    *         queue was empty and transfer received 0.
+    *
+    * No-op if no waiters. Safe from ISR context.
+    * The barge-free sibling of wake_one(). Pops the best waiter and invokes
+    * transfer exactly once under the queue lock, passing the waiter's thread
+    * id, or 0 when no thread is parked. transfer must record the resource
+    * state for BOTH outcomes, e.g. owner = next_owner_id. Committing the
+    * empty case under the same lock is what closes the lost wakeup where a
+    * waiter arms, polls the still-held resource, and parks just before this
+    * release frees it.
+    *
+    * A woken thread finds the resource already assigned to it, so the
+    * derived is_satisfied() must recognise ownership by id in addition to
+    * taking the resource when free. No fresh caller can interpose between
+    * the release and the woken thread running, which is the barge-free
+    * guarantee.
+    *
+    * transfer runs under a spinlock. It must be tiny, must not block, must
+    * not wake, and must not touch this waitable's queue.
+    */
+   [[nodiscard]] bool wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
 private:
    /**
@@ -151,29 +184,24 @@ private:
       thread_control_block* owner{nullptr};
       wait_node*            next {nullptr};
 
-      // For block_on_any: which waitable does this slot in the call's source
+      // For wait_on_any: which waitable does this slot in the call's source
       // array correspond to. Unused (and zero) in single-wait blocks.
       uint8_t source_index{0};
    };
    friend class wait_node_vector;
 
    /**
-    * @brief Private intrusive priority-ordered list of parked threads.
-    *
-    * Nested inside waitable specifically so derived primitives cannot grab
-    * a reference to one. There is no public API that returns or accepts a
-    * wait_queue&. All access goes through waitable's own methods (or the
-    * friend free function block_on_any).
+    * @brief Private intrusive priority-ordered list of waiting threads.
     */
    class wait_queue
    {
    public:
-      // Three-phase primitives - internal only. See class doc for protocol.
       void arm   (wait_node& n) noexcept;
       void disarm(wait_node& n) noexcept;
 
       void wake_one(reschedule_policy) noexcept;
       void wake_all(reschedule_policy) noexcept;
+      bool wake_one_and_transfer(transfer_fn const&, reschedule_policy) noexcept;
 
       [[nodiscard]] bool empty() const noexcept;
 
