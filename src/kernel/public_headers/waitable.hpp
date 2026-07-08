@@ -142,7 +142,7 @@ protected:
     * @param transfer Callable that hands over resource ownership to woken thread.
     * @param policy After waking a waiting thread, apply this reschedule policy.
     * @return true when a waiter was chosen and readied, false when the
-    *         queue was empty and transfer received 0.
+    *         queue was empty and transfer received 0. Discardable.
     *
     * No-op if no waiters. Safe from ISR context.
     * The barge-free sibling of wake_one(). Pops the best waiter and invokes
@@ -162,7 +162,7 @@ protected:
     * transfer runs under a spinlock. It must be tiny, must not block, must
     * not wake, and must not touch this waitable's queue.
     */
-   [[nodiscard]] bool wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy = reschedule_policy::automatic) noexcept;
+   bool wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
 private:
    /**

@@ -8,7 +8,8 @@
 
 namespace cyros::time
 {
-   struct time_point;
+struct time_point;
+struct duration;
 }
 
 namespace cyros::sync
@@ -25,14 +26,13 @@ public:
 
    bool try_lock_for(time::time_point tp) noexcept;
 
-   bool try_lock_until(unsigned ms) noexcept;
+   bool try_lock_until(time::duration d) noexcept;
 
 protected:
    bool wait_condition(thread& caller) noexcept override;
 
 private:
    std::atomic<thread::id> owner{0};
-   non_blocking_token nbt;
 };
 
 }  // namespace cyros::sync

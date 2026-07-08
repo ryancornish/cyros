@@ -60,7 +60,7 @@ public:
    // the resource if none is parked. Mirrors priority_mutex::unlock().
    void release() noexcept
    {
-      (void)wake_one_and_transfer([this](std::uint32_t next_owner_id) {
+      wake_one_and_transfer([this](std::uint32_t next_owner_id) {
          owner.store(next_owner_id, std::memory_order_release);
       });
    }
