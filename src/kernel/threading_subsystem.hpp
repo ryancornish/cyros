@@ -18,7 +18,7 @@ class thread_termination final : public waitable
    std::atomic<bool> terminated{false};
 
 protected:
-   bool is_satisfied(thread& caller) noexcept override
+   bool wait_condition(thread& caller) noexcept override
    {
       (void)caller;
       return terminated.load(std::memory_order_acquire);

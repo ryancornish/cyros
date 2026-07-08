@@ -104,23 +104,15 @@ protected:
    waitable() noexcept = default;
 
    /**
-    * @brief Override in derived primitives so block_on_any can poll them.
-    *
-    * Called under the waitable's queue lock during block_on_any prepare /
-    * recheck. Must not block. Side-effects ARE permitted if and only if they
-    * are atomic with returning true (e.g. "take the lock if free, return
-    * true; else return false unchanged"); see mutex::is_satisfied for the
-    * canonical example.
-    *
-    * The default implementation returns false. A pure notification waitable
-    * (no associated state) MAY leave the default and rely on callers using
-    * block(); such an waitable cannot participate meaningfully in
-    * block_on_any.
+    * @brief Override in derived primitives so wait_on_any can poll them.
     *
     * @param caller The thread evaluating the predicate (always the currently
     *               running thread on this core).
+    *
+    * @return true if waiter will not block (e.g. because it acquired the resource)
+    *         false if it will block.
     */
-   virtual bool is_satisfied(thread& caller) noexcept = 0;
+   virtual bool wait_condition(thread& caller) noexcept = 0;
 
    /**
     * @brief Wake the single highest-priority waiting thread (if any).
@@ -226,7 +218,7 @@ private:
 class non_blocking_token : public waitable
 {
 protected:
-   bool is_satisfied(thread&) noexcept override
+   bool wait_condition(thread&) noexcept override
    {
       return true;
    }

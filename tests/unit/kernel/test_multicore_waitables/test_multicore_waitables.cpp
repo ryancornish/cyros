@@ -64,7 +64,7 @@ public:
    void wake_all_no_set() noexcept { wake_all(); }
 
 protected:
-   bool is_satisfied(thread& /*caller*/) noexcept override
+   bool wait_condition(thread& /*caller*/) noexcept override
    {
       return condition.load(std::memory_order_acquire);
    }

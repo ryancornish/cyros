@@ -5,7 +5,7 @@
 namespace cyros::sync
 {
 
-bool mutex::is_satisfied(thread& caller) noexcept
+bool mutex::wait_condition(thread& caller) noexcept
 {
    thread::id expected = 0;
    return owner.compare_exchange_strong(expected, caller.get_id());

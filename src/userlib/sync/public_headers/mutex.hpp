@@ -28,7 +28,7 @@ public:
    bool try_lock_until(unsigned ms) noexcept;
 
 protected:
-   bool is_satisfied(thread& caller) noexcept override;
+   bool wait_condition(thread& caller) noexcept override;
 
 private:
    std::atomic<thread::id> owner{0};

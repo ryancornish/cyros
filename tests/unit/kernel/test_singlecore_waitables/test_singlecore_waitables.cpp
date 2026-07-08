@@ -58,7 +58,7 @@ public:
    void wake_all_no_set() noexcept { wake_all(); }
 
 protected:
-   bool is_satisfied(thread& caller) noexcept override
+   bool wait_condition(thread& caller) noexcept override
    {
       (void)caller;
       return condition.load(std::memory_order_acquire);
@@ -379,7 +379,7 @@ public:
    }
 
 protected:
-   bool is_satisfied(thread& caller) noexcept override
+   bool wait_condition(thread& caller) noexcept override
    {
       // Record the caller's id every time we're polled. The last write wins;
       // for a single waiter that's exactly its id.
