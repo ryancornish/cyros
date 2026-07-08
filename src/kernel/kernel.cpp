@@ -1,5 +1,3 @@
-// todo split up the implementation!
-
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/port/port.h>
 #include <cyros/port/port_traits.h>
@@ -13,13 +11,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-
-// invariants list:
-// only core x mutates scheduler[x].ready_matrix, current_thread, blocked lists, etc.
-// cross-core ops must go through scheduler::post_to_inbox() + cyros_port_send_reschedule_ipi(core).
-// spinlocks disable preemption for the duration of the lock (via the port's
-// preemption control); they do not mask interrupts.
-
 
 namespace cyros
 {
@@ -267,7 +258,7 @@ void idle_task()
       cyros_port_idle();
       // Weak request: idle never blocks, it only asks the scheduler to
       // re-check whether any thread has become ready.
-      kernel::pend_reschedule();
+      this_core::pend_reschedule();
    }
 }
 
@@ -312,11 +303,6 @@ void finalise()
    kernel_instance.finalise();
 }
 
-void pend_reschedule()
-{
-   cyros_port_pend_reschedule();
-}
-
 std::uint32_t core_count() noexcept
 {
    return config::cores;
@@ -329,6 +315,31 @@ std::uint32_t active_threads() noexcept
 
 } // namespace kernel
 
+namespace this_core
+{
+
+[[nodiscard]] std::uint32_t id() noexcept
+{
+   return cyros_port_get_core_id();
+}
+
+void pend_reschedule() noexcept
+{
+   cyros_port_pend_reschedule();
+}
+
+preemption_token disable_preemption() noexcept
+{
+   return { .v = cyros_port_preempt_disable() };
+}
+
+void enable_preemption(preemption_token token) noexcept
+{
+   cyros_port_preempt_enable(token.v);
+}
+
+} // namespace this_core
+
 namespace this_thread
 {
 
@@ -340,11 +351,6 @@ namespace this_thread
 [[nodiscard]] thread::priority priority()
 {
    return kernel_instance.scheduler_for_this_core().current_thread_priority();
-}
-
-[[nodiscard]] std::uint32_t core_id() noexcept
-{
-   return cyros_port_get_core_id();
 }
 
 [[noreturn]] void thread_exit()

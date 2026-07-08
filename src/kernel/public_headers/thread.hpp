@@ -124,11 +124,6 @@ namespace this_thread
 [[nodiscard]] thread::priority priority();
 
 /**
-   * @brief Get current CPU core ID (0-based)
-   */
-[[nodiscard]] std::uint32_t core_id() noexcept;
-
-/**
    * @brief Exit current thread
    *
    * Marks current thread as terminated. thread never runs again.

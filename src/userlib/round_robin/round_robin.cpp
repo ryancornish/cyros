@@ -1,6 +1,6 @@
 #include <cyros/rr/round_robin.hpp>
 
-#include <cyros/kernel/kernel.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/time/time.hpp>
 
 namespace cyros::rr
@@ -16,7 +16,7 @@ namespace cyros::rr
  */
 static void rotate(void*) noexcept
 {
-   kernel::pend_reschedule();
+   this_core::pend_reschedule();
 }
 
 void enable_round_robin(time::duration slice)

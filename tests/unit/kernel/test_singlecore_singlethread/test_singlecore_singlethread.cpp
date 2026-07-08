@@ -70,7 +70,7 @@ TEST(SingleCoreSingleThread_Test,
    uint32_t thread_executed_on_core = std::numeric_limits<uint32_t>::max();
 
    thread thread(
-      [&thread_executed_on_core]{ thread_executed_on_core = this_thread::core_id(); },
+      [&thread_executed_on_core]{ thread_executed_on_core = this_core::id(); },
       stack,
       thread::priority(0),
       core0

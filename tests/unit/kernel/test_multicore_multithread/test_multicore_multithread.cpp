@@ -57,7 +57,7 @@ TEST_F(MultiCoreMultiThread_Test,
 
    thread t0(
       [&]{
-         seen_core0 = this_thread::core_id();
+         seen_core0 = this_core::id();
          ran0 = true;
       },
       s0,
@@ -67,7 +67,7 @@ TEST_F(MultiCoreMultiThread_Test,
 
    thread t1(
       [&]{
-         seen_core1 = this_thread::core_id();
+         seen_core1 = this_core::id();
          ran1 = true;
       },
       s1,
@@ -107,11 +107,11 @@ TEST_F(MultiCoreMultiThread_Test,
 
    thread creator(
       [&]{
-         EXPECT_EQ(this_thread::core_id(), 0u);
+         EXPECT_EQ(this_core::id(), 0u);
 
          remote_thread = thread(
             [&]{
-               remote_seen_core = this_thread::core_id();
+               remote_seen_core = this_core::id();
                remote_ran = true;
             },
             s_remote,
@@ -208,7 +208,7 @@ TEST_F(MultiCoreMultiThread_Test,
    // core1 will start in idle unless/until it receives inbox work + IPI.
    thread core0_thread(
       [&]{
-         EXPECT_EQ(this_thread::core_id(), 0u);
+         EXPECT_EQ(this_core::id(), 0u);
 
          // Give core1 a chance to enter idle first (cooperative).
          for (int i = 0; i < 3; ++i) this_thread::yield();

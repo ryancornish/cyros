@@ -1,6 +1,8 @@
 #ifndef CYROS_SPINLOCK_HPP
 #define CYROS_SPINLOCK_HPP
 
+#include <cyros/kernel/core.hpp>
+
 #include <atomic>
 
 namespace cyros
@@ -72,7 +74,7 @@ public:
 
 private:
    std::atomic_flag flag;
-   std::uint32_t token{0};
+   this_core::preemption_token token{};
 };
 
 /**
