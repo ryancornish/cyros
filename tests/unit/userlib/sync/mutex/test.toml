@@ -1,0 +1,12 @@
+[test]
+name   = "test_sync_mutex"
+source = "test_sync_mutex.cpp"
+config = "test_sync_mutex_config.hpp"
+
+[components]
+port        = "linux_preempt"
+time_driver = "tickless"
+features    = ["sync"]
+
+[link]
+system_libraries = ["gtest", "gtest_main"]
