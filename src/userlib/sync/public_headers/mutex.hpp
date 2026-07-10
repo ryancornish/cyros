@@ -6,11 +6,7 @@
 
 #include <atomic>
 
-namespace cyros::time
-{
-struct time_point;
-struct duration;
-}
+namespace cyros::time { struct time_point; struct duration; }
 
 namespace cyros::sync
 {
@@ -18,18 +14,18 @@ namespace cyros::sync
 class mutex : public waitable
 {
 public:
-   [[nodiscard]] bool try_lock() noexcept;
+   void unlock() noexcept;
 
    void lock() noexcept;
 
-   void unlock() noexcept;
+   [[nodiscard]] bool try_lock() noexcept;
 
-   bool try_lock_for(time::time_point tp) noexcept;
+   [[nodiscard]] bool try_lock_for(time::time_point tp) noexcept;
 
-   bool try_lock_until(time::duration d) noexcept;
+   [[nodiscard]] bool try_lock_until(time::duration d) noexcept;
 
 protected:
-   bool wait_condition(thread& caller) noexcept override;
+   bool wait_condition(thread&) noexcept override;
 
 private:
    std::atomic<thread::id> owner{0};
@@ -37,7 +33,6 @@ private:
 
 }  // namespace cyros::sync
 
-
-
+namespace cyros { using sync::mutex; }
 
 #endif // CYROS_MUTEX_HPP

@@ -7,9 +7,11 @@ dependencies = [
 
 sources = [
   "mutex.cpp",
+  "semaphore.cpp",
 ]
 
 public_headers = [
   "public_headers/mutex.hpp -> cyros/sync/mutex.hpp",
+  "public_headers/semaphore.hpp -> cyros/sync/semaphore.hpp",
 ]
 
