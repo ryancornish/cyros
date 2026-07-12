@@ -379,7 +379,7 @@ void kernel_request_priority_recompute(thread_control_block& tcb, std::uint32_t 
             if (node.source == nullptr) continue;
             if (!node.source->queue.reslot(node)) continue;
 
-            std::uint32_t chase_id = 0;
+            thread::id chase_id = 0;
             auto* next = node.source->donation_target(chase_id);
             if (next == nullptr) continue;
 

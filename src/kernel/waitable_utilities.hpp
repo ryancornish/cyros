@@ -6,6 +6,7 @@
 #include <cyros/port/port.h>
 
 #include "threading_subsystem.hpp"
+#include "scheduler.hpp"
 
 #include <array>
 
@@ -100,8 +101,8 @@ public:
    {
       for (std::size_t i = 0; i < waitables.size(); ++i) {
          auto& waitable = waitables[i].get();
-         waitable.queue.arm(nodes[i]);
          nodes[i].source = &waitable;
+         waitable.queue.arm(nodes[i]);
       }
    }
 
@@ -120,7 +121,7 @@ public:
          // waiter de-boosts on its way out. On the ordinary re-arm cycle of
          // the block loop this causes a transient dip that the next poll's
          // donation immediately restores.
-         std::uint32_t expected_id = 0;
+         thread::id expected_id = 0;
          if (auto* target = waitable.donation_target(expected_id)) {
             kernel_request_priority_recompute(*target, expected_id);
          }

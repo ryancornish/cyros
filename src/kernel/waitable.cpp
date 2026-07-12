@@ -61,6 +61,36 @@ bool waitable::wait_queue::empty() const noexcept
    return head == nullptr;
 }
 
+/**
+ * @brief Priority-ordered insert (best at head).
+ */
+void waitable::wait_queue::link(wait_node& node) noexcept
+{
+   wait_node** slot = &head;
+   while (*slot && (*slot)->owner->priority() <= node.owner->priority()) {
+      slot = &(*slot)->next;
+   }
+   node.next = *slot;
+   *slot  = &node;
+}
+
+/**
+ * @brief Unlink node from wait_queue if present.
+ * Idempotent if node not present.
+ */
+bool waitable::wait_queue::unlink(wait_node& node) noexcept
+{
+   wait_node** slot = &head;
+   while (*slot && *slot != &node) {
+      slot = &(*slot)->next;
+   }
+   if (*slot != &node) {
+      return false;
+   }
+   *slot = node.next;
+   node.next = nullptr;
+}
+
 void waitable::wait_queue::arm(wait_node& node) noexcept
 {
    spinlock_guard guard(lock);
@@ -68,13 +98,7 @@ void waitable::wait_queue::arm(wait_node& node) noexcept
    CYROS_ASSERT(node.owner != nullptr);
    CYROS_ASSERT(node.next  == nullptr); // node must not already be on a list
 
-   // Priority-ordered insert (best at head).
-   wait_node** slot = &head;
-   while (*slot && (*slot)->owner->priority() <= node.owner->priority()) {
-      slot = &(*slot)->next;
-   }
-   node.next = *slot;
-   *slot  = &node;
+   link(node);
    refresh_top();
 }
 
@@ -88,17 +112,7 @@ bool waitable::wait_queue::disarm(wait_node& node) noexcept
 {
    spinlock_guard guard(lock);
 
-   // Unlink n if still present. A wake may have already removed it;
-   // idempotent unlink makes that safe (no-op if not found).
-   wait_node** slot = &head;
-   while (*slot && *slot != &node) {
-      slot = &(*slot)->next;
-   }
-   if (*slot != &node) {
-      return false;
-   }
-   *slot = node.next;
-   node.next = nullptr;
+   if (!unlink(node)) return false;
 
    std::uint8_t const old_top = top_priority.load(std::memory_order_relaxed);
    refresh_top();
@@ -118,27 +132,8 @@ bool waitable::wait_queue::reslot(wait_node& node) noexcept
 {
    spinlock_guard guard(lock);
 
-   // Unlink if present. The node may have been popped by a wake between the
-   // caller deciding to re-slot and this lock being taken, in which case the
-   // wake's choice stands and there is nothing to re-order.
-   wait_node** slot = &head;
-   while (*slot && *slot != &node) {
-      slot = &(*slot)->next;
-   }
-   if (*slot != &node) {
-      return false;
-   }
-   *slot = node.next;
-   node.next = nullptr;
-
-   // Re-insert where the owner's CURRENT effective priority earns.
-   std::uint8_t const node_priority = node.owner->priority();
-   slot = &head;
-   while (*slot && (*slot)->owner->priority() <= node_priority) {
-      slot = &(*slot)->next;
-   }
-   node.next = *slot;
-   *slot = &node;
+   if (!unlink(node)) return false;
+   link(node);
 
    std::uint8_t const old_top = top_priority.load(std::memory_order_relaxed);
    refresh_top();
@@ -195,7 +190,7 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
    cyros_port_preempt_enable(token);
 }
 
-bool waitable::wait_queue::wake_one_and_commit(commit_fn commit, reschedule_policy policy) noexcept
+bool waitable::wait_queue::wake_one_and_commit(commit_fn const& commit, reschedule_policy policy) noexcept
 {
    thread_control_block* chosen = nullptr;
    {
@@ -428,7 +423,7 @@ void pi_waitable::renounce_if_assigned(thread::id const thread_id) noexcept
    hand_over(reschedule_policy::automatic);
 }
 
-thread_control_block* pi_waitable::donation_target(std::uint32_t& expected_id) noexcept
+thread_control_block* pi_waitable::donation_target(thread::id& expected_id) noexcept
 {
    // Racy by design: the holder can change or vanish between this load and
    // the recompute acting on it. The doorbell's id check plus the value-free

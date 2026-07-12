@@ -11,12 +11,14 @@ namespace cyros::sync
 void semaphore::release(std::size_t n) noexcept
 {
    counter.fetch_add(n, std::memory_order_release);
-   wake_all(); // Don't think this is optimal... n = 2 with 10 waiters means 8 spurious wakes
+   for (std::size_t i = 0; i < n; ++i) {
+      wake_one();
+   }
 }
 
 void semaphore::acquire() noexcept
 {
-   counter.fetch_sub(1, std::memory_order_acquire);
+   this_thread::wait_on(*this);
 }
 
 [[nodiscard]] bool semaphore::try_acquire() noexcept

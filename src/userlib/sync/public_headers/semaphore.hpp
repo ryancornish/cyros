@@ -25,9 +25,9 @@ public:
 
    [[nodiscard]] bool try_acquire() noexcept;
 
-   [[nodiscard]] bool try_lock_for(time::time_point tp) noexcept;
+   [[nodiscard]] bool try_acquire_for(time::time_point tp) noexcept;
 
-   [[nodiscard]] bool try_lock_until(time::duration d) noexcept;
+   [[nodiscard]] bool try_acquire_until(time::duration d) noexcept;
 
 protected:
    bool wait_condition(thread&) noexcept override;

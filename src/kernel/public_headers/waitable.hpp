@@ -178,7 +178,7 @@ protected:
     * The id written through expected_id validates the returned TCB against
     * recycling before it is acted on. Called without any pi_lock held.
     */
-   virtual thread_control_block* donation_target(std::uint32_t& expected_id) noexcept
+   virtual thread_control_block* donation_target(thread::id& expected_id) noexcept
    {
       (void)expected_id;
       return nullptr;
@@ -235,13 +235,15 @@ private:
       void wake_one(reschedule_policy) noexcept;
       void wake_all(reschedule_policy) noexcept;
       bool wake_one_and_transfer(transfer_fn const&, reschedule_policy) noexcept;
-      bool wake_one_and_commit(commit_fn commit, reschedule_policy policy) noexcept;
+      bool wake_one_and_commit(commit_fn const& commit, reschedule_policy policy) noexcept;
 
       [[nodiscard]] bool empty() const noexcept;
       [[nodiscard]] std::uint8_t top() const noexcept { return top_priority.load(std::memory_order_acquire); }
 
    private:
-      void refresh_top() noexcept;
+      void link  (wait_node&) noexcept;
+      bool unlink(wait_node&) noexcept;
+      void refresh_top()      noexcept;
 
       spinlock   lock;
       wait_node* head{nullptr}; // priority-ordered, best at head
@@ -337,12 +339,12 @@ protected:
     */
    void pi_release(reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
-   thread_control_block* donation_target(std::uint32_t& expected_id) noexcept override;
+   thread_control_block* donation_target(thread::id& expected_id) noexcept override;
 
    void renounce_if_assigned(thread::id thread_id) noexcept override;
 
 private:
-   std::atomic<std::uint32_t> owner_id{0}; // 0 when free, otherwise owner's thread id
+   std::atomic<thread::id> owner_id{0}; // 0 when free, otherwise owner's thread id
    std::atomic<thread_control_block*> holder{nullptr}; // The owner's TCB for donation targeting
    pi_waitable* next_held{this}; // Intrusive link in the owner's list. Self == not-linked
 
