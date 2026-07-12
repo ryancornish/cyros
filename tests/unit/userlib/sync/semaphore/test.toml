@@ -1,7 +1,7 @@
 [test]
-name   = "test_sync_mutex"
-source = "test_sync_mutex_pi.cpp"
-config = "test_sync_mutex_config.hpp"
+name   = "test_sync_semaphore"
+source = "test_sync_semaphore.cpp"
+config = "test_sync_semaphore_config.hpp"
 
 [components]
 port        = "linux_preempt"

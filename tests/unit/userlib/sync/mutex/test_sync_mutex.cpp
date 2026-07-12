@@ -13,7 +13,6 @@
 #include <string>
 
 using namespace cyros;
-using cyros::sync::mutex;
 
 static_assert(config::cores >= 4, "Test suite is designed for (at least) quad-core configuration");
 

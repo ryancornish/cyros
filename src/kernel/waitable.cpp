@@ -89,6 +89,7 @@ bool waitable::wait_queue::unlink(wait_node& node) noexcept
    }
    *slot = node.next;
    node.next = nullptr;
+   return true;
 }
 
 void waitable::wait_queue::arm(wait_node& node) noexcept
