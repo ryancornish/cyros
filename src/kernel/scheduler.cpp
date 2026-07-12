@@ -102,9 +102,63 @@ void scheduler::set_thread_terminated(thread_control_block& tcb) noexcept
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
    CYROS_ASSERT_OP(tcb.state, ==, thread_state::running);
    CYROS_ASSERT(!tcb.is_enqueued());
+   CYROS_ASSERT(tcb.held_head == nullptr); // Thread cannot own a pi_waitable on termination
 
    tcb.state = thread_state::terminated;
    tcb.termination.terminate(); // signal joiners
+}
+
+schedule_hint scheduler::reprioritize_thread(thread_control_block& tcb, uint8_t const new_effective) noexcept
+{
+   CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+   CYROS_ASSERT_OP(new_effective, <, config::max_priorities);
+
+   switch (tcb.state) {
+      case thread_state::running:
+         // A running thread is this core's current thread and lives outside
+         // the matrix, so only the field moves. It re-enqueues at the new
+         // value on its next rotation. A drop below a ready peer means the
+         // scheduler now prefers that peer, which is exactly the restore
+         // case ending an inversion, so flag it.
+         CYROS_ASSERT(&tcb == current_thread);
+         tcb.set_priority(new_effective);
+         {
+            auto const best = ready_matrix.best_priority();
+            if (best >= 0 && static_cast<uint8_t>(best) < new_effective) {
+               return schedule_hint::warranted;
+            }
+         }
+         return schedule_hint::unwarranted;
+
+      case thread_state::ready:
+         if (tcb.is_enqueued()) {
+            // Removal is keyed on the current field value, so the order here
+            // is load-bearing: remove at old, write, re-enqueue at new.
+            ready_matrix.remove_thread(tcb);
+            tcb.set_priority(new_effective);
+            ready_matrix.enqueue_thread(tcb);
+            if (tcb.is_higher_priority_than(current_thread_priority())) {
+               return schedule_hint::warranted;
+            }
+         } else {
+            // Readied but not yet admitted (in-flight inbox request, or the
+            // idle thread). The eventual enqueue reads the new value.
+            tcb.set_priority(new_effective);
+         }
+         return schedule_hint::unwarranted;
+
+      case thread_state::blocked:
+      case thread_state::created:
+         // Position in any wait queues is the caller's (the recompute walk's)
+         // responsibility, only the field moves here.
+         tcb.set_priority(new_effective);
+         return schedule_hint::unwarranted;
+
+      case thread_state::terminated:
+         return schedule_hint::unwarranted;
+   }
+
+   return schedule_hint::unwarranted;
 }
 
 void scheduler::drain_inbox() noexcept
@@ -118,6 +172,15 @@ void scheduler::drain_inbox() noexcept
             request.tcb->disposition = thread_disposition::none;
             // Drain inbox happens during a reschedule. No need to acknowledge the hint
             (void)set_thread_ready(*request.tcb);
+            break;
+
+         case cross_core_request::recompute_priority:
+            // Value-free doorbell: re-derive from current truth. The id check
+            // filters TCB recycling, every other form of staleness degrades
+            // to a redundant recompute inside the walk itself.
+            if (request.tcb->id == request.expected_thread_id) {
+               kernel_request_priority_recompute(*request.tcb, request.expected_thread_id);
+            }
             break;
       }
    }

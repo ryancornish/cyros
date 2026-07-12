@@ -24,20 +24,27 @@ enum class schedule_hint
 
 // Implemented by the kernel
 schedule_hint kernel_request_thread_ready(thread_control_block& tcb);
-
-// Implemented by the kernel
+void kernel_request_priority_recompute(thread_control_block& tcb, std::uint32_t expected_id) noexcept;
+thread_control_block& kernel_current_thread() noexcept;
 void idle_task();
 
 struct cross_core_request
 {
    enum class request_type : uint8_t
    {
-      set_thread_ready, // Enqueue a TCB into this core's ready queue
+      set_thread_ready,   // Enqueue a TCB into this core's ready queue
+      recompute_priority, // Re-derive a TCB's effective priority from current truth
    };
-   static constexpr auto set_thread_ready = request_type::set_thread_ready;
+   static constexpr auto set_thread_ready   = request_type::set_thread_ready;
+   static constexpr auto recompute_priority = request_type::recompute_priority;
 
    request_type type{};
    thread_control_block* tcb{nullptr};
+   // For recompute_priority: the thread id the requester believed tcb had.
+   // Recompute is idempotent against every staleness EXCEPT the TCB memory
+   // being recycled by a new thread, which this id check filters, ids are
+   // never reused within a kernel session.
+   uint32_t expected_thread_id{0};
 };
 
 class scheduler
@@ -73,7 +80,7 @@ public:
 
    [[nodiscard]] constexpr uint8_t current_thread_priority() const noexcept
    {
-      return current_thread ? current_thread->effective_priority : 0;
+      return current_thread ? current_thread->priority() : 0;
    }
 
    [[nodiscard]] constexpr thread_control_block* current_thread_reference() const noexcept
@@ -105,6 +112,22 @@ public:
    void set_thread_blocked(thread_control_block& tcb) noexcept;
 
    void set_thread_terminated(thread_control_block& tcb) noexcept;
+
+   /**
+    * @brief Move a thread on this core to a new effective priority.
+    *
+    * The one place the effective_priority field and the thread's scheduling
+    * position change together. The matrix keys removal on the CURRENT field
+    * value, so an already-enqueued thread is removed at the old value,
+    * rewritten, and re-enqueued at the new. Must run on the owning core, the
+    * caller holds the thread's pi_lock, which also holds off preemption for
+    * the matrix surgery.
+    *
+    * @return warranted when the change makes a reschedule worthwhile: a ready
+    *         thread was raised above the running one, or the running one
+    *         dropped below a ready peer.
+    */
+   [[nodiscard]] schedule_hint reprioritize_thread(thread_control_block& tcb, uint8_t new_effective) noexcept;
 
    void drain_inbox() noexcept;
 

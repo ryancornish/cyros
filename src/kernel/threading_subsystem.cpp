@@ -40,7 +40,7 @@ thread& thread::operator=(thread&& other) noexcept
 {
    CYROS_ASSERT(tcb != nullptr);
 
-   return tcb->effective_priority;
+   return tcb->priority();
 }
 
 void thread::join() noexcept
@@ -130,11 +130,12 @@ void thread_ready_queue::remove(thread_control_block& tcb) noexcept
 
 void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexcept
 {
-   CYROS_ASSERT_OP(tcb.effective_priority, <, config::max_priorities);
+   auto const priority = tcb.priority();
+   CYROS_ASSERT_OP(priority, <, config::max_priorities);
    CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
 
-   matrix[tcb.effective_priority].push_back(tcb);
-   bitmap |= (1u << tcb.effective_priority);
+   matrix[priority].push_back(tcb);
+   bitmap |= (1u << priority);
 }
 
 thread_control_block* thread_ready_matrix::pop_best_thread() noexcept
@@ -148,7 +149,7 @@ thread_control_block* thread_ready_matrix::pop_best_thread() noexcept
 
 void thread_ready_matrix::remove_thread(thread_control_block& tcb) noexcept
 {
-   auto const priority = tcb.effective_priority;
+   auto const priority = tcb.priority();
    matrix[priority].remove(tcb);
    if (matrix[priority].empty()) bitmap &= ~(1u << priority);
 }

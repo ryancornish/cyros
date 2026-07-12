@@ -7,18 +7,12 @@ namespace cyros::sync
 
 bool mutex::wait_condition(thread& caller) noexcept
 {
-   thread::id expected = 0;
-   if (owner.compare_exchange_strong(expected, caller.get_id(), std::memory_order_acq_rel)) {
-      return true; // free, uncontended take
-   }
-   // ownership may already have been handed to us by a racing release().
-   return expected == caller.get_id();
+   return pi_acquire_condition(caller);
 }
 
 bool mutex::try_lock() noexcept
 {
-   thread::id expected = 0;
-   return owner.compare_exchange_strong(expected, this_thread::id());
+   return pi_try_acquire();
 }
 
 void mutex::lock() noexcept
@@ -28,10 +22,7 @@ void mutex::lock() noexcept
 
 void mutex::unlock() noexcept
 {
-   wake_one_and_transfer([this](thread::id next_owner_id)
-   {
-      owner.store(next_owner_id, std::memory_order_release);
-   });
+   pi_release();
 }
 
 } // namespace cyros::sync

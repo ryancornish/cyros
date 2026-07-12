@@ -4,14 +4,12 @@
 #include <cyros/kernel/waitable.hpp>
 #include <cyros/kernel/thread.hpp>
 
-#include <atomic>
-
 namespace cyros::time { struct time_point; struct duration; }
 
 namespace cyros::sync
 {
 
-class mutex : public waitable
+class mutex : public pi_waitable
 {
 public:
    void unlock() noexcept;
@@ -26,9 +24,6 @@ public:
 
 protected:
    bool wait_condition(thread&) noexcept override;
-
-private:
-   std::atomic<thread::id> owner{0};
 };
 
 }  // namespace cyros::sync

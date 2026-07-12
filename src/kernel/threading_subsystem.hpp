@@ -5,11 +5,14 @@
 #include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
 
+#include <atomic>
 #include <bitset>
 #include <limits>
 
 namespace cyros
 {
+
+class wait_node_vector;
 
 void thread_launcher(void* tcb_ptr);
 
@@ -67,12 +70,21 @@ struct thread_control_block
 
    uint32_t id;
    uint8_t base_priority;
-   uint8_t effective_priority; // Can change dynamically
+   std::atomic<uint8_t> effective_priority; // Can change dynamically
    thread* public_thread_handle;
 
    // Core pinning
    std::uint32_t pinned_core{0};
    core_affinity  affinity;
+
+   /* Priority inheritance ---------------------------------------------------
+    * pi_lock protects the held list and the active_waits registration. It is
+    * the OUTER lock of the pi_lock -> queue-lock ordering, nothing holding a
+    * wait_queue lock may take it. */
+   spinlock pi_lock;
+   pi_waitable* held_head{nullptr}; // Intrusive list of owned pi_waitables
+   wait_node_vector* active_waits{nullptr};
+
 
    std::span<std::byte> stack;
    thread::entry_fn entry;
@@ -90,13 +102,24 @@ struct thread_control_block
       return next != this;
    }
 
-   [[nodiscard]] constexpr bool is_higher_priority_than(thread_control_block& rhs)  const noexcept
+   [[nodiscard]] constexpr uint8_t priority() const
    {
-      return effective_priority < rhs.effective_priority;
+      return effective_priority.load(std::memory_order_relaxed);
    }
+
+   [[nodiscard]] bool is_higher_priority_than(thread_control_block& rhs) const noexcept
+   {
+      return priority() < rhs.priority();
+   }
+
    [[nodiscard]] constexpr bool is_higher_priority_than(uint8_t priority_level) const noexcept
    {
-      return effective_priority < priority_level;
+      return priority() < priority_level;
+   }
+
+   constexpr void set_priority(uint8_t p)
+   {
+      effective_priority.store(p, std::memory_order_relaxed);
    }
 
    thread_control_block(uint32_t id,

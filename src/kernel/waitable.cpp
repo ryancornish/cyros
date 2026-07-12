@@ -70,14 +70,21 @@ void waitable::wait_queue::arm(wait_node& node) noexcept
 
    // Priority-ordered insert (best at head).
    wait_node** slot = &head;
-   while (*slot && (*slot)->owner->effective_priority <= node.owner->effective_priority) {
+   while (*slot && (*slot)->owner->priority() <= node.owner->priority()) {
       slot = &(*slot)->next;
    }
    node.next = *slot;
    *slot  = &node;
+   refresh_top();
 }
 
-void waitable::wait_queue::disarm(wait_node& node) noexcept
+/**
+ * @brief Remove an armed node, idempotent against a racing wake.
+ * @return true when the queue's best-waiter priority changed, meaning a
+ *         holder's inheritance is now stale and must be re-derived. The
+ *         caller chases that, disarm itself takes no pi_lock.
+ */
+bool waitable::wait_queue::disarm(wait_node& node) noexcept
 {
    spinlock_guard guard(lock);
 
@@ -87,10 +94,55 @@ void waitable::wait_queue::disarm(wait_node& node) noexcept
    while (*slot && *slot != &node) {
       slot = &(*slot)->next;
    }
-   if (*slot == &node) {
-      *slot = node.next;
-      node.next = nullptr;
+   if (*slot != &node) {
+      return false;
    }
+   *slot = node.next;
+   node.next = nullptr;
+
+   std::uint8_t const old_top = top_priority.load(std::memory_order_relaxed);
+   refresh_top();
+   return top_priority.load(std::memory_order_relaxed) != old_top;
+}
+
+void waitable::wait_queue::refresh_top() noexcept
+{
+   // Requires the queue lock held. Release pairs with the acquire in top() so
+   // a recompute that learns of a queue change (via a doorbell or its own
+   // reslot return) observes the value that change produced.
+   top_priority.store(head != nullptr ? head->owner->priority() : no_waiter,
+                      std::memory_order_release);
+}
+
+bool waitable::wait_queue::reslot(wait_node& node) noexcept
+{
+   spinlock_guard guard(lock);
+
+   // Unlink if present. The node may have been popped by a wake between the
+   // caller deciding to re-slot and this lock being taken, in which case the
+   // wake's choice stands and there is nothing to re-order.
+   wait_node** slot = &head;
+   while (*slot && *slot != &node) {
+      slot = &(*slot)->next;
+   }
+   if (*slot != &node) {
+      return false;
+   }
+   *slot = node.next;
+   node.next = nullptr;
+
+   // Re-insert where the owner's CURRENT effective priority earns.
+   std::uint8_t const node_priority = node.owner->priority();
+   slot = &head;
+   while (*slot && (*slot)->owner->priority() <= node_priority) {
+      slot = &(*slot)->next;
+   }
+   node.next = *slot;
+   *slot = &node;
+
+   std::uint8_t const old_top = top_priority.load(std::memory_order_relaxed);
+   refresh_top();
+   return top_priority.load(std::memory_order_relaxed) != old_top;
 }
 
 void waitable::wait_queue::wake_one(reschedule_policy policy) noexcept
@@ -104,6 +156,7 @@ void waitable::wait_queue::wake_one(reschedule_policy policy) noexcept
       chosen = node->owner;
       head = node->next;
       node->next = nullptr;
+      refresh_top();
    }
 
    schedule_hint hint = kernel_request_thread_ready(*chosen);
@@ -129,6 +182,7 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
          chosen = node->owner;
          head = node->next;
          node->next = nullptr;
+         refresh_top();
       }
       schedule_hint hint = kernel_request_thread_ready(*chosen);
       if (hint == schedule_hint::warranted) {
@@ -141,7 +195,7 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
    cyros_port_preempt_enable(token);
 }
 
-bool waitable::wait_queue::wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy) noexcept
+bool waitable::wait_queue::wake_one_and_commit(commit_fn commit, reschedule_policy policy) noexcept
 {
    thread_control_block* chosen = nullptr;
    {
@@ -152,21 +206,22 @@ bool waitable::wait_queue::wake_one_and_transfer(transfer_fn const& transfer, re
          chosen = node->owner;
          head = node->next;
          node->next = nullptr;
+         refresh_top();
       }
       CYROS_ASSERT(chosen == nullptr || chosen->id != 0);
 
-      // The transfer commit for BOTH outcomes happens under the lock. Deciding
-      // the empty case outside it would let a waiter arm, poll the still-held
+      // The commit for BOTH outcomes happens under the lock. Deciding the
+      // empty case outside it would let a waiter arm, poll the still-held
       // resource, and park just before this release frees it, a lost wakeup
       // with no future wake to recover it.
-      transfer(chosen != nullptr ? chosen->id : 0);
+      commit(chosen);
    }
 
    if (chosen == nullptr) {
       return false;
    }
 
-   // The transfer is already committed, so readying outside the lock is pure
+   // The commit is already done, so readying outside the lock is pure
    // delivery. Only the TCB is touched out here. The wait_node lives on the
    // waiter's stack and is only dereferenced under the lock, matching the
    // wake_one discipline.
@@ -175,6 +230,14 @@ bool waitable::wait_queue::wake_one_and_transfer(transfer_fn const& transfer, re
    return true;
 }
 
+bool waitable::wait_queue::wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy) noexcept
+{
+   return wake_one_and_commit(
+      [&transfer](thread_control_block* chosen) {
+         transfer(chosen != nullptr ? chosen->id : 0);
+      },
+      policy);
+}
 
 /* ============================================================================
  * waitable - public surface
@@ -200,5 +263,182 @@ bool waitable::wake_one_and_transfer(transfer_fn const& transfer, reschedule_pol
 {
    return queue.wake_one_and_transfer(transfer, policy);
 }
+
+
+/* ============================================================================
+ * pi_waitable
+ * ========================================================================= */
+
+pi_waitable::~pi_waitable()
+{
+   CYROS_ASSERT(owner_id.load(std::memory_order_relaxed) == 0); // Resource still owned by a thread
+}
+
+void pi_waitable::register_held(thread_control_block& tcb) noexcept
+{
+   {
+      spinlock_guard guard(tcb.pi_lock);
+
+      // Idempotent by the not-linked sentinel: a wait_condition re-poll after
+      // a spurious wake can land here for a resource the earlier round
+      // already registered, and must not double-link it.
+      if (next_held != this) {
+         return;
+      }
+      next_held = tcb.held_head;
+      tcb.held_head = this;
+   }
+
+   // Inherit from waiters that were already queued at acquisition time: the
+   // uncontended CAS can win while others are parked (they armed but had not
+   // polled yet), and a transferred owner can have waiters remaining behind
+   // it. Those waiters donated to the PREVIOUS holder, so the boost is
+   // re-derived here for the new one. Never nested inside the pi_lock above,
+   // the recompute takes it again itself.
+   kernel_request_priority_recompute(tcb, tcb.id);
+}
+
+bool pi_waitable::pi_try_acquire() noexcept
+{
+   auto& tcb = kernel_current_thread();
+
+   std::uint32_t expected = 0;
+   if (!owner_id.compare_exchange_strong(expected, tcb.id, std::memory_order_acq_rel)) {
+      return false;
+   }
+   holder.store(&tcb, std::memory_order_release);
+   register_held(tcb);
+   return true;
+}
+
+bool pi_waitable::pi_acquire_condition(thread& caller) noexcept
+{
+   // The wait_condition contract guarantees caller is the running thread on
+   // this core, and the kernel's view of it carries the TCB the public
+   // handle cannot expose.
+   (void)caller;
+   auto& tcb = kernel_current_thread();
+
+   std::uint32_t expected = 0;
+   if (owner_id.compare_exchange_strong(expected, tcb.id, std::memory_order_acq_rel)) {
+      holder.store(&tcb, std::memory_order_release);
+      register_held(tcb);
+      return true; // free, taken uncontended
+   }
+
+   if (expected == tcb.id) {
+      // Ownership was transferred to us while parked. The releaser committed
+      // owner_id and holder under the queue lock but deliberately did NOT
+      // touch our held list: linkage takes our pi_lock, and queue-lock ->
+      // pi_lock nesting is forbidden because the recompute nests them the
+      // other way round. The handover is completed here, in our own context.
+      // Any inversion this defers is nil, the transfer chose the BEST waiter,
+      // so no remaining waiter is more urgent than us in the gap.
+      register_held(tcb);
+      return true;
+   }
+
+   // About to park behind a live owner: donate. The doorbell carries no
+   // priority value, only "recompute from current truth", so a ring that goes
+   // stale in flight (the owner released, or another donor got there first)
+   // degrades to a redundant recompute rather than a wrong answer. Our own
+   // urgency is visible to that recompute because we armed before polling,
+   // the queue's top already includes us.
+   //
+   // The id read races the holder terminating, but a holder must not
+   // terminate while owning a pi resource (asserted at teardown), so a live
+   // read here is part of that same contract.
+   if (auto* h = holder.load(std::memory_order_acquire)) {
+      kernel_request_priority_recompute(*h, h->id);
+   }
+   return false;
+}
+
+void pi_waitable::pi_release(reschedule_policy policy) noexcept
+{
+   auto& tcb = kernel_current_thread();
+   CYROS_ASSERT_OP(owner_id.load(std::memory_order_relaxed), ==, tcb.id); // release by non-owner
+
+   // Retire from the held list FIRST, so the restore recompute below no
+   // longer counts this resource's waiters against us. A donor ringing in
+   // this window recomputes us without this resource, which is correct, we
+   // are giving it up and its waiters' urgency is about to become the next
+   // owner's concern.
+   {
+      spinlock_guard guard(tcb.pi_lock);
+
+      pi_waitable** slot = &tcb.held_head;
+      while (*slot != nullptr && *slot != this) {
+         slot = &(*slot)->next_held;
+      }
+      CYROS_ASSERT(*slot == this); // resource missing from its owner's held list
+      *slot = next_held;
+      next_held = this;
+   }
+
+   // Hand over (or free) with the commit under the queue lock, closing the
+   // lost-wakeup window exactly as wake_one_and_transfer documents.
+   hand_over(policy);
+
+   // Restore: re-derive from base and whatever we still hold, ending any
+   // donation this resource justified. Runs on our own core, so this is the
+   // synchronous local path, no doorbell latency on the restore side.
+   kernel_request_priority_recompute(tcb, tcb.id);
+}
+
+void pi_waitable::hand_over(reschedule_policy policy) noexcept
+{
+   // The commit touches only this object's own atomics: held-list linkage for
+   // the new owner is completed by the new owner itself in its next
+   // wait_condition poll, keeping every pi_lock acquisition outside every
+   // queue lock. holder is written before owner_id so a donor that observed
+   // the new owner id cannot then read the previous holder.
+   queue.wake_one_and_commit(
+      [this](thread_control_block* chosen) {
+         holder.store(chosen, std::memory_order_relaxed);
+         owner_id.store(chosen != nullptr ? chosen->id : 0, std::memory_order_release);
+      },
+      policy);
+}
+
+void pi_waitable::renounce_if_assigned(thread::id const thread_id) noexcept
+{
+   if (owner_id.load(std::memory_order_acquire) != thread_id) {
+      return; // never assigned to us, nothing to hand back
+   }
+
+   // Assigned versus already-owned is the load-bearing distinction here. The
+   // ownership word alone cannot make it: a caller that held this resource
+   // BEFORE entering the group wait also reads its own id. What separates
+   // them is registration, an earlier acquisition linked us into the
+   // caller's held list, an in-flight assignment did not (linkage happens in
+   // the wait_condition poll the group wait never reached). Renouncing
+   // registered ownership would put two threads in one critical section, so
+   // it is kept.
+   //
+   // The sentinel read is safe unlocked: held-list linkage mutates only in
+   // the owner's own context, and we ARE the owner's context.
+   if (next_held != this) {
+      return; // registered ownership from before the wait, the caller keeps it
+   }
+
+   // No unlink (never linked) and no restore recompute (an unregistered
+   // resource never contributed to our priority). Waiters parked behind the
+   // assignment are honoured by the same barge-free commit as a release.
+   hand_over(reschedule_policy::automatic);
+}
+
+thread_control_block* pi_waitable::donation_target(std::uint32_t& expected_id) noexcept
+{
+   // Racy by design: the holder can change or vanish between this load and
+   // the recompute acting on it. The doorbell's id check plus the value-free
+   // recompute make a stale answer harmless.
+   auto* h = holder.load(std::memory_order_acquire);
+   if (h != nullptr) {
+      expected_id = h->id;
+   }
+   return h;
+}
+
 
 } // namespace cyros

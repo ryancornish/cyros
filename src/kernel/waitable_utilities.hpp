@@ -5,6 +5,8 @@
 #include <cyros/kernel/waitable.hpp>
 #include <cyros/port/port.h>
 
+#include "threading_subsystem.hpp"
+
 #include <array>
 
 namespace cyros
@@ -99,6 +101,7 @@ public:
       for (std::size_t i = 0; i < waitables.size(); ++i) {
          auto& waitable = waitables[i].get();
          waitable.queue.arm(nodes[i]);
+         nodes[i].source = &waitable;
       }
    }
 
@@ -106,7 +109,21 @@ public:
    {
       for (std::size_t i = 0; i < waitables.size(); ++i) {
          auto& waitable = waitables[i].get();
-         waitable.queue.disarm(nodes[i]);
+         if (!waitable.queue.disarm(nodes[i])) {
+            continue;
+         }
+         // Leaving a queue without acquiring (a wait_on_any that won on a
+         // different index, or a future timed wait expiring) can lower the
+         // queue's best-waiter priority, at which point the holder's
+         // inheritance is stale. Nothing else would ring it, the fail-path
+         // donation only fires when someone new parks, so the departing
+         // waiter de-boosts on its way out. On the ordinary re-arm cycle of
+         // the block loop this causes a transient dip that the next poll's
+         // donation immediately restores.
+         std::uint32_t expected_id = 0;
+         if (auto* target = waitable.donation_target(expected_id)) {
+            kernel_request_priority_recompute(*target, expected_id);
+         }
       }
    }
 
@@ -114,6 +131,35 @@ public:
    waitable_arm_guard(waitable_arm_guard const&) = delete;
    waitable_arm_guard& operator=(waitable_arm_guard&&) = delete;
    waitable_arm_guard& operator=(waitable_arm_guard const&) = delete;
+};
+
+// Publish the nodes for priority inheritance: a recompute on this core
+// must be able to find and re-slot our armed nodes while we are blocked
+// (or preempted mid-block). Registered for the whole attempt and cleared
+// before the stack-resident vector dies. Guarded by pi_lock because a
+// recompute dereferences the vector under that lock, and destruction
+// ordering keeps the final disarm (arm_guard, constructed later inside the
+// loop, destroyed earlier) ahead of this deregistration.
+class active_wait_registration
+{
+   thread_control_block* tcb;
+
+public:
+   active_wait_registration(thread_control_block* tcb, wait_node_vector* nodes) : tcb(tcb)
+   {
+      spinlock_guard guard(tcb->pi_lock);
+      tcb->active_waits = nodes;
+   }
+   ~active_wait_registration()
+   {
+      spinlock_guard guard(tcb->pi_lock);
+      tcb->active_waits = nullptr;
+   }
+
+   active_wait_registration(active_wait_registration&&) = delete;
+   active_wait_registration(active_wait_registration const&) = delete;
+   active_wait_registration& operator=(active_wait_registration&&) = delete;
+   active_wait_registration& operator=(active_wait_registration const&) = delete;
 };
 
 } // namespace cyros
