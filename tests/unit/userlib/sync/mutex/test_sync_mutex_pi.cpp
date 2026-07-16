@@ -45,8 +45,10 @@ namespace
 
 // Bounded budget for conductor polls that a PI failure would otherwise turn
 // into an infinite spin. Generous by orders of magnitude against IPI plus
-// reschedule latency, tiny against the framework timeout.
-constexpr std::uint64_t poll_budget = 100'000'000;
+// reschedule latency, but sized remembering that debug builds do not inline
+// cyros_port_cpu_relax, so every iteration is a real call and a failed stage
+// should still report within a couple of seconds rather than minutes.
+constexpr std::uint64_t poll_budget = 20'000'000;
 
 // Extra spins the boosted holder burns after the exit signal before checking
 // that the medium thread never started. Dwarfs the ready-request IPI latency,
@@ -139,7 +141,7 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
          std::atomic<bool> boost_observed{false};
          std::atomic<bool> spinner_preempted_cs{false};
          std::atomic<std::uint8_t> l_priority_seen_by_h{0xFF};
-         std::atomic<bool> poll_failed{false};
+         std::atomic<std::uint8_t> failed_stage{0}; // 0 means all stages passed
       } s;
 
       thread l(
@@ -197,9 +199,19 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
 
       thread mid(
          [&s]{
-            // First observable action. If this flips while the boosted L is
-            // inside its critical section, inheritance failed to prevent the
-            // preemption and the CS check above records it.
+            while (!s.conductor_ready.load(std::memory_order_acquire)) {
+               cyros_port_cpu_relax();
+            }
+            // Parked here until the conductor stages the inversion. Without
+            // this gate Mid monopolises core0 from the first schedule and
+            // starves L before it can even take the mutex, wedging the
+            // choreography instead of testing the kernel.
+            s.g_mid.lock();
+            s.g_mid.unlock();
+
+            // First observable action after release. If this flips while the
+            // boosted L is inside its critical section, inheritance failed to
+            // prevent the preemption and the CS check above records it.
             s.mid_started.store(true, std::memory_order_release);
             while (!s.mid_stop.load(std::memory_order_acquire)) {
                cyros_port_cpu_relax(); // the starvation threat, defanged by PI
@@ -218,30 +230,44 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
             CYROS_ASSERT(gh && gm);
             s.conductor_ready.store(true, std::memory_order_release);
 
-            // Stage 1: wait for the holder to own the mutex.
+            bool g_h_released   = false;
+            bool g_mid_released = false;
+
+            // Record the dead stage, then blow open everything still gated so
+            // the actors unwind and the kernel quiesces for the assertions.
+            // Order matters: mid_stop before g_mid so a released Mid exits
+            // its spin immediately instead of starving L again.
+            auto bail = [&](std::uint8_t stage) {
+               s.failed_stage.store(stage, std::memory_order_relaxed);
+               s.mid_stop.store(true, std::memory_order_release);
+               s.exit_cs.store(true, std::memory_order_release);
+               if (!g_h_released)   s.g_h.unlock();
+               if (!g_mid_released) s.g_mid.unlock();
+            };
+
+            // Stage 1: the holder owns the mutex.
             if (!bounded_poll([&]{ return s.l_locked.load(std::memory_order_acquire); })) {
-               s.poll_failed.store(true, std::memory_order_relaxed);
+               return bail(1);
             }
 
             // Stage 2: unleash H, then prove donation landed via the public
             // priority. This poll IS the boost assertion.
             s.g_h.unlock();
-            if (bounded_poll([&]{ return s.l->get_priority() == 1; })) {
-               s.boost_observed.store(true, std::memory_order_release);
-            } else {
-               s.poll_failed.store(true, std::memory_order_relaxed);
+            g_h_released = true;
+            if (!bounded_poll([&]{ return s.l->get_priority() == 1; })) {
+               return bail(2);
             }
+            s.boost_observed.store(true, std::memory_order_release);
 
             // Stage 3: unleash Mid. On return the transfer is committed and
-            // Mid's ready request is in flight to core0. Without inheritance
-            // Mid would now preempt L and the system would wedge, which the
-            // bail below converts into a recorded failure where possible.
+            // Mid's ready request is in flight to core0, where the boosted
+            // holder must keep the core regardless.
             s.g_mid.unlock();
+            g_mid_released = true;
             s.exit_cs.store(true, std::memory_order_release);
 
             if (!bounded_poll([&]{ return s.h_done.load(std::memory_order_acquire); })) {
-               s.poll_failed.store(true, std::memory_order_relaxed);
-               s.mid_stop.store(true, std::memory_order_release); // unwedge Mid
+               return bail(3);
             }
          },
          stacks[3].bytes,
@@ -253,7 +279,9 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
 
       kernel::start();
 
-      EXPECT_FALSE(s.poll_failed.load())          << "a choreography stage timed out (PI likely absent)";
+      EXPECT_EQ(s.failed_stage.load(), 0)
+         << "inversion choreography failed at stage " << int(s.failed_stage.load())
+         << " (1: holder never locked, 2: donation never observed, 3: chain never drained)";
       EXPECT_TRUE(s.boost_observed.load())        << "holder never observed at donated priority 1";
       EXPECT_FALSE(s.spinner_preempted_cs.load()) << "medium spinner preempted the boosted holder inside its CS";
       EXPECT_EQ(s.l_priority_seen_by_h.load(), 5) << "holder not restored to base priority after unlock";
