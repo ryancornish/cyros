@@ -1,6 +1,9 @@
 [test]
 name   = "test_sync_mutex"
-source = "test_sync_mutex_pi.cpp"
+source = [
+   "test_sync_mutex.cpp",
+   "test_sync_mutex_pi.cpp"
+]
 config = "test_sync_mutex_config.hpp"
 
 [components]
