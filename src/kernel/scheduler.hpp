@@ -16,16 +16,12 @@ namespace cyros
 /**
  * @brief TODO
  */
-enum class schedule_hint
+enum class [[nodiscard]] schedule_hint
 {
    unwarranted, ///< TODO
    warranted,   ///< TODO
 };
 
-// Implemented by the kernel
-schedule_hint kernel_request_thread_ready(thread_control_block& tcb);
-void kernel_request_priority_recompute(thread_control_block& tcb, std::uint32_t expected_id) noexcept;
-thread_control_block& kernel_current_thread() noexcept;
 void idle_task();
 
 struct cross_core_request
@@ -83,9 +79,9 @@ public:
       return current_thread ? current_thread->priority() : 0;
    }
 
-   [[nodiscard]] constexpr thread_control_block* current_thread_reference() const noexcept
+   [[nodiscard]] constexpr thread_control_block& get_current_thread() const noexcept
    {
-      return current_thread;
+      return *current_thread;
    }
 
    [[nodiscard]] uint32_t pinned_thread_count() const noexcept
@@ -105,7 +101,7 @@ public:
    // Core-local operations (only called on owning core)
    void start() noexcept;
 
-   [[nodiscard]] schedule_hint set_thread_ready(thread_control_block& tcb) noexcept;
+   schedule_hint set_thread_ready(thread_control_block& tcb) noexcept;
 
    void set_thread_running(thread_control_block& tcb) noexcept;
 
@@ -127,7 +123,7 @@ public:
     *         thread was raised above the running one, or the running one
     *         dropped below a ready peer.
     */
-   [[nodiscard]] schedule_hint reprioritize_thread(thread_control_block& tcb, uint8_t new_effective) noexcept;
+   schedule_hint reprioritize_thread(thread_control_block& tcb, uint8_t new_effective) noexcept;
 
    void drain_inbox() noexcept;
 

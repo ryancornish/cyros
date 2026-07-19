@@ -5,8 +5,8 @@
 #include <cyros/kernel/waitable.hpp>
 #include <cyros/port/port.h>
 
+#include "thread_action.hpp"
 #include "threading_subsystem.hpp"
-#include "scheduler.hpp"
 
 #include <array>
 
@@ -23,11 +23,11 @@ private:
 
 public:
    constexpr wait_node_vector() = default;
-   constexpr wait_node_vector(std::size_t node_count, thread_control_block* tcb)
+   constexpr wait_node_vector(std::size_t node_count, thread_control_block& tcb)
    {
       for (std::size_t i = 0; i < node_count; ++i) {
          push({
-            .owner = tcb,
+            .owner = &tcb,
             .next = nullptr,
             .source_index = static_cast<uint8_t>(i),
          });
@@ -123,7 +123,7 @@ public:
          // donation immediately restores.
          thread::id expected_id = 0;
          if (auto* target = waitable.donation_target(expected_id)) {
-            kernel_request_priority_recompute(*target, expected_id);
+            thread_action::recompute_thread_priority(*target, expected_id);
          }
       }
    }
@@ -143,18 +143,18 @@ public:
 // loop, destroyed earlier) ahead of this deregistration.
 class active_wait_registration
 {
-   thread_control_block* tcb;
+   thread_control_block& tcb;
 
 public:
-   active_wait_registration(thread_control_block* tcb, wait_node_vector* nodes) : tcb(tcb)
+   active_wait_registration(thread_control_block& tcb, wait_node_vector* nodes) : tcb(tcb)
    {
-      spinlock_guard guard(tcb->pi_lock);
-      tcb->active_waits = nodes;
+      spinlock_guard guard(tcb.pi_lock);
+      tcb.active_waits = nodes;
    }
    ~active_wait_registration()
    {
-      spinlock_guard guard(tcb->pi_lock);
-      tcb->active_waits = nullptr;
+      spinlock_guard guard(tcb.pi_lock);
+      tcb.active_waits = nullptr;
    }
 
    active_wait_registration(active_wait_registration&&) = delete;

@@ -1,11 +1,27 @@
 #include "threading_subsystem.hpp"
+
 #include "align.hpp"
+#include "thread_action.hpp"
 
 namespace cyros
 {
 
 static_assert(sizeof(thread_control_block) + 4096 <= thread::min_stack_size,
               "Public constant thread::min_stack_size no longer accurately reflects the true min_stack_size");
+
+thread::thread(entry_fn&& entry, std::span<std::byte> stack, priority priority, core_affinity affinity)
+{
+   stack_layout slayout(stack, 0);
+   tcb = ::new (slayout.tcb) thread_control_block(
+      priority,
+      affinity,
+      slayout.user_stack,
+      std::move(entry),
+      this
+   );
+   thread_action::register_thread(*tcb);
+}
+
 
 thread::~thread()
 {
@@ -51,14 +67,12 @@ void thread::join() noexcept
 }
 
 
-thread_control_block::thread_control_block(uint32_t id,
-                                           thread::priority priority,
+thread_control_block::thread_control_block(thread::priority priority,
                                            core_affinity affinity,
                                            std::span<std::byte> stack,
                                            thread::entry_fn&& entry,
                                            thread* public_thread_handle)
-   : id(id),
-     base_priority(priority),
+   : base_priority(priority),
      effective_priority(priority),
      public_thread_handle(public_thread_handle),
      affinity(affinity),

@@ -68,7 +68,7 @@ struct thread_control_block
    thread_control_block* prev{this};
 
 
-   uint32_t id;
+   thread::id id{0};
    uint8_t base_priority;
    std::atomic<uint8_t> effective_priority; // Can change dynamically
    thread* public_thread_handle;
@@ -122,8 +122,7 @@ struct thread_control_block
       effective_priority.store(p, std::memory_order_relaxed);
    }
 
-   thread_control_block(uint32_t id,
-                        thread::priority priority,
+   thread_control_block(thread::priority priority,
                         core_affinity affinity,
                         std::span<std::byte> stack,
                         thread::entry_fn&& entry,

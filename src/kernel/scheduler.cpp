@@ -1,5 +1,7 @@
 #include "scheduler.hpp"
 
+#include "thread_action.hpp"
+
 namespace cyros
 {
 
@@ -14,15 +16,15 @@ void scheduler::init_idle_thread()
 {
    stack_layout slayout(idle_stack, 0);
    idle_thread = ::new (slayout.tcb) thread_control_block(
-      idle_thread_id,
       config::max_priorities-1,
       core_affinity::from_id(core_id),
       slayout.user_stack,
       idle_task,
       nullptr
    );
-   idle_thread->pinned_core = core_id;
+   idle_thread->id = idle_thread_id;
    idle_thread->state = thread_state::ready;
+   idle_thread->pinned_core = core_id;
 }
 
 // Core-local operations (only called on owning core)
@@ -179,7 +181,7 @@ void scheduler::drain_inbox() noexcept
             // filters TCB recycling, every other form of staleness degrades
             // to a redundant recompute inside the walk itself.
             if (request.tcb->id == request.expected_thread_id) {
-               kernel_request_priority_recompute(*request.tcb, request.expected_thread_id);
+               thread_action::recompute_thread_priority(*request.tcb, request.expected_thread_id);
             }
             break;
       }

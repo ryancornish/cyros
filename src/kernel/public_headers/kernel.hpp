@@ -26,16 +26,16 @@ namespace cyros::kernel
  * Must be called before any threads are created or kernel functions used.
  * Sets up scheduler data structures.
  */
-void initialise();
+void initialise() noexcept;
 
 /**
  * @brief Start the scheduler
  *
  * At least one thread must exist before calling start().
  */
-void start();
+void start() noexcept;
 
-void finalise();
+void finalise() noexcept;
 
 /**
  * @brief Get total number of CPU cores

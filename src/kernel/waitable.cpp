@@ -27,6 +27,7 @@
 #include <cyros/port/port.h>
 
 #include "scheduler.hpp"
+#include "thread_action.hpp"
 #include "threading_subsystem.hpp"
 
 namespace cyros
@@ -155,7 +156,7 @@ void waitable::wait_queue::wake_one(reschedule_policy policy) noexcept
       refresh_top();
    }
 
-   schedule_hint hint = kernel_request_thread_ready(*chosen);
+   schedule_hint hint = thread_action::ready_thread(*chosen);
    apply_reschedule_policy(policy, hint);
 }
 
@@ -180,7 +181,7 @@ void waitable::wait_queue::wake_all(reschedule_policy policy) noexcept
          node->next = nullptr;
          refresh_top();
       }
-      schedule_hint hint = kernel_request_thread_ready(*chosen);
+      schedule_hint hint = thread_action::ready_thread(*chosen);
       if (hint == schedule_hint::warranted) {
          aggregate_hint = schedule_hint::warranted;
       }
@@ -221,7 +222,7 @@ bool waitable::wait_queue::wake_one_and_commit(commit_fn const& commit, reschedu
    // delivery. Only the TCB is touched out here. The wait_node lives on the
    // waiter's stack and is only dereferenced under the lock, matching the
    // wake_one discipline.
-   schedule_hint hint = kernel_request_thread_ready(*chosen);
+   schedule_hint hint = thread_action::ready_thread(*chosen);
    apply_reschedule_policy(policy, hint);
    return true;
 }
@@ -291,12 +292,12 @@ void pi_waitable::register_held(thread_control_block& tcb) noexcept
    // it. Those waiters donated to the PREVIOUS holder, so the boost is
    // re-derived here for the new one. Never nested inside the pi_lock above,
    // the recompute takes it again itself.
-   kernel_request_priority_recompute(tcb, tcb.id);
+   thread_action::recompute_thread_priority(tcb, tcb.id);
 }
 
 bool pi_waitable::pi_try_acquire() noexcept
 {
-   auto& tcb = kernel_current_thread();
+   auto& tcb = thread_action::get_current_thread_on_this_core();
 
    std::uint32_t expected = 0;
    if (!owner_id.compare_exchange_strong(expected, tcb.id, std::memory_order_acq_rel)) {
@@ -313,7 +314,7 @@ bool pi_waitable::pi_acquire_condition(thread& caller) noexcept
    // this core, and the kernel's view of it carries the TCB the public
    // handle cannot expose.
    (void)caller;
-   auto& tcb = kernel_current_thread();
+   auto& tcb = thread_action::get_current_thread_on_this_core();
 
    std::uint32_t expected = 0;
    if (owner_id.compare_exchange_strong(expected, tcb.id, std::memory_order_acq_rel)) {
@@ -345,14 +346,14 @@ bool pi_waitable::pi_acquire_condition(thread& caller) noexcept
    // terminate while owning a pi resource (asserted at teardown), so a live
    // read here is part of that same contract.
    if (auto* h = holder.load(std::memory_order_acquire)) {
-      kernel_request_priority_recompute(*h, h->id);
+      thread_action::recompute_thread_priority(*h, h->id);
    }
    return false;
 }
 
 void pi_waitable::pi_release(reschedule_policy policy) noexcept
 {
-   auto& tcb = kernel_current_thread();
+   auto& tcb = thread_action::get_current_thread_on_this_core();
    CYROS_ASSERT_OP(owner_id.load(std::memory_order_relaxed), ==, tcb.id); // release by non-owner
 
    // Retire from the held list FIRST, so the restore recompute below no
@@ -379,7 +380,7 @@ void pi_waitable::pi_release(reschedule_policy policy) noexcept
    // Restore: re-derive from base and whatever we still hold, ending any
    // donation this resource justified. Runs on our own core, so this is the
    // synchronous local path, no doorbell latency on the restore side.
-   kernel_request_priority_recompute(tcb, tcb.id);
+   thread_action::recompute_thread_priority(tcb, tcb.id);
 }
 
 void pi_waitable::hand_over(reschedule_policy policy) noexcept
@@ -429,12 +430,11 @@ thread_control_block* pi_waitable::donation_target(thread::id& expected_id) noex
    // Racy by design: the holder can change or vanish between this load and
    // the recompute acting on it. The doorbell's id check plus the value-free
    // recompute make a stale answer harmless.
-   auto* h = holder.load(std::memory_order_acquire);
+   auto* const h = holder.load(std::memory_order_acquire);
    if (h != nullptr) {
       expected_id = h->id;
    }
    return h;
 }
-
 
 } // namespace cyros
