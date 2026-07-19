@@ -9,13 +9,6 @@
 #include <cstdint>
 #include <span>
 
-// TODO REMOVE THIS FROM PUBLIC HEADER IT DOES NOT BELONG
-namespace cyros::thread_action
-{
-void recompute_thread_priority(thread_control_block& tcb, thread::id expected_id);
-}
-
-
 namespace cyros
 {
 
@@ -260,8 +253,8 @@ private:
 
    friend class pi_waitable;
    friend class waitable_arm_guard;
+   friend struct waitable_access;
    friend std::size_t this_thread::wait_on_any(std::span<waitable_ref>) noexcept;
-   friend void thread_action::recompute_thread_priority(thread_control_block& tcb, thread::id expected_id);
 };
 
 
@@ -362,7 +355,7 @@ private:
    // renounce_if_assigned (in-flight assignment a group wait declined).
    void hand_over(reschedule_policy policy) noexcept;
 
-   friend void thread_action::recompute_thread_priority(thread_control_block& tcb, thread::id expected_id);
+   friend struct waitable_access;
 };
 
 

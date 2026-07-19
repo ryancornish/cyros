@@ -23,7 +23,7 @@ void register_thread(thread_control_block& tcb);
  * request is posted so that the owning scheduler performs the enqueue.
  *
  * @param tcb thread control block of the thread to make runnable.
- * @return ready_action::reschedule if the thread was queued on the current
+ * @return schedule_hint::warranted if the thread was queued on the current
  *         core and has higher priority than the running thread, indicating
  *         the caller should request a local reschedule.
  */

@@ -13,6 +13,53 @@
 namespace cyros
 {
 
+/* ============================================================================
+ * waitable_access - attorney for the priority-inheritance walk
+ *
+ * recompute_thread_priority needs four narrow operations on waitable and
+ * pi_waitable internals. Granting friendship to the function itself would
+ * force its declaration into the public header (a friend FUNCTION must be
+ * visibly declared to be callable, a friend STRUCT declaration is
+ * self-contained), and granting friendship to all of thread_action would
+ * bleed access far wider than the walk needs. This attorney is the narrow
+ * waist: the public header carries only "friend struct waitable_access", the
+ * capability lives here in a kernel-internal header, and the walk consumes
+ * these public statics with no friendship of its own, which also frees it to
+ * be decomposed into ordinary helpers.
+ *
+ * Keep this surface minimal on purpose: every method added here widens what
+ * ANY kernel-internal code can do to a waitable, so a new entry needs the
+ * same scrutiny a new friend would.
+ * ========================================================================= */
+struct waitable_access
+{
+   /// Best queued waiter's priority for a held PI resource (lock-free read).
+   [[nodiscard]] static std::uint8_t queue_top(pi_waitable const& w) noexcept
+   {
+      return w.queue.top();
+   }
+
+   /// Next link in the owner's held list (protected by the owner's pi_lock).
+   [[nodiscard]] static pi_waitable* next_held(pi_waitable const& w) noexcept
+   {
+      return w.next_held;
+   }
+
+   /// Re-order an armed node after its owner's priority changed.
+   /// @return true when the queue's best-waiter priority changed.
+   [[nodiscard]] static bool reslot(waitable& w, waitable::wait_node& node) noexcept
+   {
+      return w.queue.reslot(node);
+   }
+
+   /// The thread inheriting from this waitable's waiters, nullptr for
+   /// ownerless waitables. expected_id guards against TCB recycling.
+   [[nodiscard]] static thread_control_block* donation_target(waitable& w, thread::id& expected_id) noexcept
+   {
+      return w.donation_target(expected_id);
+   }
+};
+
 class wait_node_vector
 {
 private:

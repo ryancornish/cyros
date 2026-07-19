@@ -94,6 +94,78 @@ void post_priority_recompute(thread_control_block& tcb, thread::id const expecte
    CYROS_ASSERT(posted); // Inbox full
 }
 
+/**
+ * @brief Pending targets of a priority-inheritance chain walk.
+ *
+ * Bounded because the walk can run on the shared interceptor stack via
+ * drain_inbox: local hops beyond the capacity continue by self-posted
+ * doorbell instead of growing the walk, which push() folds away from the
+ * traversal.
+ */
+struct priority_chain
+{
+   static constexpr auto depth = 8u;
+   struct target
+   {
+      thread_control_block* tcb;
+      thread::id expected_id;
+   };
+
+   std::array<target, depth> targets{};
+   std::size_t pending{0};
+
+   void push(thread_control_block& next, thread::id const next_expected_id) noexcept
+   {
+      if (pending < targets.size()) {
+         targets[pending++] = { .tcb = &next, .expected_id = next_expected_id };
+      } else {
+         post_priority_recompute(next, next_expected_id);
+      }
+   }
+};
+
+/**
+ * @brief min(base, best waiter of every held PI resource).
+ *
+ * The definition of effective priority, folded from current truth. Caller
+ * holds the target's pi_lock, which keeps the held list stable, the queue
+ * tops are lock-free reads.
+ */
+[[nodiscard]] std::uint8_t donated_floor(thread_control_block const& target) noexcept
+{
+   std::uint8_t floor = target.base_priority;
+   for (auto* held = target.held_head; held != nullptr; held = waitable_access::next_held(*held)) {
+      floor = std::min(waitable_access::queue_top(*held), floor);
+   }
+   return floor;
+}
+
+/**
+ * @brief Re-order a blocked thread's armed nodes after its priority changed.
+ *
+ * The ordered position arm() gave each node is now stale. Where a re-slot
+ * changes a queue's BEST waiter, the holder of that queue's resource
+ * inherits differently, so it is chained for its own recompute, processed
+ * after this target's pi_lock is released. Caller holds the target's
+ * pi_lock, which keeps active_waits stable.
+ */
+void reslot_blocked_waits(thread_control_block& target, priority_chain& chain) noexcept
+{
+   if (target.state != thread_state::blocked || target.active_waits == nullptr) {
+      return;
+   }
+   for (auto& node : *target.active_waits) {
+      if (node.source == nullptr) continue;
+      if (!waitable_access::reslot(*node.source, node)) continue;
+
+      thread::id chase_id = 0;
+      if (auto* next = waitable_access::donation_target(*node.source, chase_id)) {
+         chain.push(*next, chase_id);
+      }
+   }
+}
+
+
 // Registered as isr handler for preemptive scheduling
 void reschedule_this_core()
 {
@@ -171,27 +243,16 @@ schedule_hint ready_thread(thread_control_block& tcb)
    return scheduler.set_thread_ready(tcb);
 }
 
-// TODO: Reduce cognitive complexity
 void recompute_thread_priority(thread_control_block& tcb, thread::id const expected_id)
 {
-   struct priority_chain_target
-   {
-      thread_control_block* tcb;
-      std::uint32_t expected_id;
-   };
-   static constexpr std::size_t priority_chain_depth = 8;
-   std::array<priority_chain_target, priority_chain_depth> priority_chain{};
-   std::size_t pending = 0;
-   priority_chain[pending++] = {
-      .tcb = &tcb,
-      .expected_id = expected_id,
-   };
+   priority_chain chain;
+   chain.push(tcb, expected_id);
 
    auto const this_core_id = cyros_port_get_core_id();
    bool reschedule_warranted = false;
 
-   while (pending > 0) {
-      auto const target = priority_chain[--pending];
+   while (chain.pending > 0) {
+      auto const target = chain.targets[--chain.pending];
 
       if (target.tcb->id != target.expected_id) continue;          // TCB recycled, drop
       if (target.tcb->state == thread_state::terminated) continue; // Stale, drop
@@ -203,48 +264,18 @@ void recompute_thread_priority(thread_control_block& tcb, thread::id const expec
 
       // pi_lock holds the held list and active_waits stable, and (as a
       // spinlock) holds off preemption for the matrix surgery inside
-      // reprioritize_thread.
+      // reprioritise_thread.
       spinlock_guard pi_guard(target.tcb->pi_lock);
 
-      std::uint8_t new_effective = target.tcb->base_priority;
-      for (pi_waitable* held = target.tcb->held_head; held != nullptr; held = held->next_held) {
-         std::uint8_t const top = held->queue.top();
-         new_effective = std::min(top, new_effective);
-      }
-
+      std::uint8_t const new_effective = donated_floor(*target.tcb);
       if (new_effective == target.tcb->priority()) continue;
 
-      auto const hint = scheduler_for_this_core().reprioritize_thread(*target.tcb, new_effective);
+      auto const hint = scheduler_for_this_core().reprioritise_thread(*target.tcb, new_effective);
       if (hint == schedule_hint::warranted) {
          reschedule_warranted = true;
       }
 
-      // A blocked thread's new priority must be reflected in every queue it
-      // is parked on, the ordered position arm() gave it is now stale. Where
-      // that changes a queue's BEST waiter, the holder of that queue's
-      // resource inherits differently, so it is queued for its own recompute,
-      // processed after this target's pi_lock is released.
-      if (target.tcb->state == thread_state::blocked && target.tcb->active_waits != nullptr) {
-         for (auto& node : *target.tcb->active_waits) {
-            if (node.source == nullptr) continue;
-            if (!node.source->queue.reslot(node)) continue;
-
-            thread::id chase_id = 0;
-            auto* next = node.source->donation_target(chase_id);
-            if (next == nullptr) continue;
-
-            if (pending < priority_chain.size()) {
-               priority_chain[pending++] = {
-                  .tcb = next,
-                  .expected_id=chase_id,
-               };
-            } else {
-               // Deep local chain: continue by doorbell instead of growing
-               // the walk. Self-posting is legal and drains promptly.
-               post_priority_recompute(*next, chase_id);
-            }
-         }
-      }
+      reslot_blocked_waits(*target.tcb, chain);
    }
 
    if (reschedule_warranted) {

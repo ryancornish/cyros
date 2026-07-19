@@ -110,7 +110,7 @@ void scheduler::set_thread_terminated(thread_control_block& tcb) noexcept
    tcb.termination.terminate(); // signal joiners
 }
 
-schedule_hint scheduler::reprioritize_thread(thread_control_block& tcb, uint8_t const new_effective) noexcept
+schedule_hint scheduler::reprioritise_thread(thread_control_block& tcb, uint8_t const new_effective) noexcept
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
    CYROS_ASSERT_OP(new_effective, <, config::max_priorities);

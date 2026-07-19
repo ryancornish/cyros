@@ -40,7 +40,7 @@ struct cross_core_request
    // Recompute is idempotent against every staleness EXCEPT the TCB memory
    // being recycled by a new thread, which this id check filters, ids are
    // never reused within a kernel session.
-   uint32_t expected_thread_id{0};
+   thread::id expected_thread_id{0};
 };
 
 class scheduler
@@ -59,7 +59,7 @@ private:
    mpsc_ring_buffer<cross_core_request, inbox_cap> inbox;
 
 public:
-   static constexpr uint32_t idle_thread_id = 0; // Reserved
+   static constexpr thread::id idle_thread_id = 0; // Reserved
 
    constexpr explicit scheduler(std::size_t core_id) : core_id(core_id) {};
 
@@ -69,7 +69,7 @@ public:
    scheduler& operator=(scheduler&&) = delete;
    scheduler& operator=(scheduler const&) = delete;
 
-   [[nodiscard]] constexpr uint32_t current_thread_id() const noexcept
+   [[nodiscard]] constexpr thread::id current_thread_id() const noexcept
    {
       return current_thread ? current_thread->id : 0;
    }
@@ -81,6 +81,8 @@ public:
 
    [[nodiscard]] constexpr thread_control_block& get_current_thread() const noexcept
    {
+      CYROS_ASSERT(current_thread != nullptr); // Not invocable from non-thread context
+
       return *current_thread;
    }
 
@@ -123,7 +125,7 @@ public:
     *         thread was raised above the running one, or the running one
     *         dropped below a ready peer.
     */
-   schedule_hint reprioritize_thread(thread_control_block& tcb, uint8_t new_effective) noexcept;
+   schedule_hint reprioritise_thread(thread_control_block& tcb, uint8_t new_effective) noexcept;
 
    void drain_inbox() noexcept;
 
