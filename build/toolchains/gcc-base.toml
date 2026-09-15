@@ -1,10 +1,10 @@
 name = "gcc-base"
 
 [tools]
-cc = "gcc-15"
-cxx = "g++-15"
-ar = "gcc-ar-15"
-asm = "gcc-15"
+cc = "gcc-16"
+cxx = "g++-16"
+ar = "gcc-ar-16"
+asm = "gcc-16"
 
 [flags]
 common = []
