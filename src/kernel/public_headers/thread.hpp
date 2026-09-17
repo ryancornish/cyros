@@ -185,8 +185,9 @@ template<typename... Waitables>
 
 inline void wait_on(waitable& w)
 {
-   // single-source call always returns 0
-   (void)wait_on_any(w);
+   std::array wrap{ std::ref(w) };
+   // Discard result: single-source call always returns 0.
+   (void)wait_on_any({wrap});
 }
 
 
