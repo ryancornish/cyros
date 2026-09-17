@@ -167,7 +167,18 @@ struct cpu_core
     * portably comparable, so the cross-core question "can this core receive a
     * signal yet" gets its own atomic rather than being inferred from the
     * handle. Always stored after the handle is recorded, so an acquire load
-    * that observes it also observes a valid handle. */
+    * that observes it also observes a valid handle.
+    *
+    * The spawned core also WAITS on it before entering the kernel, so no thread
+    * can run on a core before that core can receive an IPI. Without the wait
+    * the spawning thread can be descheduled between pthread_create returning
+    * and this store, the new core bootstraps, runs a thread that blocks and
+    * goes idle, and a wake posted from another core in that gap has its IPI
+    * dropped by the guard. pending_requests then folds every later wake into
+    * the request already on the intake, so nothing ever signals the core again
+    * and the thread is stranded for good. Measured at roughly 1 percent of
+    * test_sync_semaphore's producer/consumer case under 6-way load on a 4-core
+    * machine, see cross-core-defects.md section 14. */
    std::atomic<bool>       started{false};
 };
 
@@ -800,6 +811,12 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
             int rc = install_interceptor();
             CYROS_ASSERT(rc == 0); // interceptor failed to install on this core
 
+            // Do not enter the kernel until the spawning thread has published
+            // this core as able to receive IPIs. See cpu_core::started for the
+            // stranding this prevents. Signals are still dormant-blocked here,
+            // so the futex wait cannot be interrupted by a reschedule.
+            init->started.wait(false, std::memory_order_acquire);
+
             // Runs the kernel entry for this core, which starts its first thread.
             init->entry();
 
@@ -811,6 +828,7 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
          &core
       );
       core.started.store(true, std::memory_order_release);
+      core.started.notify_one(); // releases the core's wait before its kernel entry
    }
 
    // core0 on the calling thread.
@@ -859,6 +877,9 @@ void cyros_port_send_reschedule_ipi(uint32_t core_id)
       // Signalling a core that has not been brought up yet is dropped.
       // Allowed to be lossy because when the core is first brought up, it will
       // see at first-pick whatever this IPI attempt was trying to communicate to it.
+      // That premise holds ONLY because a spawned core waits for started before
+      // entering the kernel, so nothing has run there yet and no thread on it
+      // can be a waiter. Remove that wait and this drop strands threads.
       return;
    }
 
