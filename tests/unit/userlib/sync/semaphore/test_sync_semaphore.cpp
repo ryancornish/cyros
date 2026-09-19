@@ -189,7 +189,22 @@ TEST_F(SyncSemaphore_Test, GivenZeroCount_WhenAcquire_ThenBlocksUntilRelease)
  *
  * Two producers mint a known total of tokens in mixed burst sizes across two
  * cores, two consumers on two other cores acquire until the total is
- * consumed. Exactness is the assertion: consumed == minted, the count ends at
+ * consumed.
+ *
+ * THIS IS ALSO THE REGRESSION REPRODUCER for the dropped bring-up IPI of
+ * cross-core-defects.md section 14, which it found: a consumer on a
+ * late-spawned core was stranded forever by a wake whose IPI was dropped while
+ * its core was still unaddressable. It hangs when that defect is present,
+ * measured at about 1 percent per run under 6-way load on a 4-core box, and
+ * needs LOAD to show at all. Three properties are what reach the window, so
+ * keep them if this test is ever trimmed: consumers on the LAST-spawned cores
+ * (2 and 3), at least one producer on an EARLY-spawned core (core1, since
+ * core0's threads only run after every core is addressable, and a core0-only
+ * producer scores 0 in 12,000 lifecycles), and a token count high enough that
+ * consumers keep finding the semaphore empty and re-parking during the first
+ * microseconds of kernel::start(). A cut-down version with 80 tokens does not
+ * reproduce it: the producer drains its budget before the consumers exist, so
+ * nothing ever parks and no wake is ever posted. Exactness is the assertion: consumed == minted, the count ends at
  * zero, and a final try_acquire fails. A lost wakeup hangs (framework timeout
  * is the detector), a lost or double-granted token breaks the arithmetic, and
  * the wrapped-counter acquire bug fails the final-count checks immediately.
@@ -327,4 +342,170 @@ TEST_F(SyncSemaphore_Test, GivenThreeParkedWaiters_WhenReleaseThree_ThenAllProce
 
       kernel::finalise();
    }
+}
+/* ============================================================================
+ * release(0) is a no-op
+ *
+ * release(n) adds n and wakes n times, so n == 0 must add nothing and satisfy
+ * nobody. What is pinned here is exactly that: the count does not move and the
+ * parked waiter does not proceed. A stray wake_one() on top of that is NOT
+ * detectable from the public API, because the waitable contract makes a
+ * spurious wake legal, the waiter simply re-polls and re-parks, so do not read
+ * this test as proof that nothing was woken. The parked waiter is proved parked
+ * by a same-core witness of lower urgency: it can only run if the waiter is not
+ * runnable.
+ * ========================================================================= */
+TEST_F(SyncSemaphore_Test, GivenAParkedWaiter_WhenReleasingZero_ThenNothingIsWokenAndTheCountIsUnchanged)
+{
+   kernel::initialise();
+
+   static std::array<cyros::test::guarded_stack, 2> stacks;
+
+   struct state
+   {
+      semaphore sem{0};
+      std::atomic<bool>        waiter_done{false};
+      std::atomic<bool>        waiter_ran_early{false};
+      std::atomic<std::size_t> peek_after_zero{~std::size_t{0}};
+   } s;
+
+   thread waiter(
+      [&s]{
+         s.sem.acquire();
+         s.waiter_done.store(true, std::memory_order_release);
+      },
+      stacks[0], thread::priority(1), core0
+   );
+
+   // Less urgent and on the same core, so reaching this body at all proves the
+   // waiter is parked rather than merely descheduled.
+   thread witness(
+      [&s]{
+         s.sem.release(0);
+
+         s.peek_after_zero.store(s.sem.peek(), std::memory_order_release);
+         s.waiter_ran_early.store(s.waiter_done.load(std::memory_order_acquire),
+                                  std::memory_order_release);
+
+         s.sem.release(1); // now let it go, so the kernel can quiesce
+      },
+      stacks[1], thread::priority(2), core0
+   );
+
+   kernel::start();
+
+   EXPECT_EQ(s.peek_after_zero.load(), 0u)  << "release(0) changed the count";
+   EXPECT_FALSE(s.waiter_ran_early.load())  << "release(0) satisfied a waiter";
+   EXPECT_TRUE(s.waiter_done.load())        << "the waiter never got its token";
+   EXPECT_EQ(s.sem.peek(), 0u)              << "the single real release left a surplus";
+
+   kernel::finalise();
+}
+
+/* ============================================================================
+ * A release larger than the demand leaves the surplus in the count
+ *
+ * release(3) against one waiter grants that waiter exactly one token and keeps
+ * two. The extra wake_one calls land on an empty queue and must be harmless.
+ * ========================================================================= */
+TEST_F(SyncSemaphore_Test, GivenOneWaiter_WhenReleasingMoreThanIsDemanded_ThenTheSurplusRemains)
+{
+   kernel::initialise();
+
+   static std::array<cyros::test::guarded_stack, 2> stacks;
+
+   struct state
+   {
+      semaphore sem{0};
+      std::atomic<bool> waiter_done{false};
+   } s;
+
+   thread waiter(
+      [&s]{
+         s.sem.acquire();
+         s.waiter_done.store(true, std::memory_order_release);
+      },
+      stacks[0], thread::priority(1), core0
+   );
+
+   thread releaser(
+      [&s]{ s.sem.release(3); },
+      stacks[1], thread::priority(2), core0
+   );
+
+   kernel::start();
+
+   EXPECT_TRUE(s.waiter_done.load());
+   EXPECT_EQ(s.sem.peek(), 2u) << "three released against one waiter did not leave two";
+
+   kernel::finalise();
+}
+
+/* ============================================================================
+ * Barging: a more urgent releaser may take back the token it just released
+ *
+ * The suite header says grant ORDER between concurrent waiters is not asserted.
+ * This is the other half of that trade and it IS a property worth pinning,
+ * because it is what "built on plain wake, not transfer" buys: waking a waiter
+ * reserves nothing for it.
+ *
+ * Deterministic on one core. The releaser is MORE urgent than the waiter, so
+ * readying the waiter does not preempt it, and its own try_acquire runs first
+ * and succeeds. The waiter then runs, finds the count empty, and must re-park
+ * rather than return with nothing, which is the mandatory re-poll loop around a
+ * spurious wake. A second release finally satisfies it.
+ *
+ * If the semaphore is ever changed to a barge-free handoff, this test fails,
+ * and that is the correct signal: it is a deliberate change of the documented
+ * trade, not a regression to paper over.
+ * ========================================================================= */
+TEST_F(SyncSemaphore_Test, GivenAMoreUrgentReleaser_WhenItRetakesItsOwnRelease_ThenTheWaiterReParksAndIsSatisfiedLater)
+{
+   kernel::initialise();
+
+   static std::array<cyros::test::guarded_stack, 2> stacks;
+
+   struct state
+   {
+      semaphore sem{0};
+      std::atomic<bool> barged{false};
+      std::atomic<bool> waiter_done_before_second_release{false};
+      std::atomic<bool> waiter_done{false};
+   } s;
+
+   thread waiter(
+      [&s]{
+         s.sem.acquire();
+         s.waiter_done.store(true, std::memory_order_release);
+      },
+      stacks[0], thread::priority(2), core0
+   );
+
+   thread releaser(
+      [&s]{
+         // The waiter is parked (it is more urgent, so it ran first and blocked).
+         s.sem.release(1);
+
+         // Still running, because readying a less urgent thread does not
+         // preempt. Take the token straight back.
+         s.barged.store(s.sem.try_acquire(), std::memory_order_release);
+
+         s.waiter_done_before_second_release.store(
+            s.waiter_done.load(std::memory_order_acquire), std::memory_order_release);
+
+         s.sem.release(1);
+      },
+      stacks[1], thread::priority(1), core0
+   );
+
+   kernel::start();
+
+   EXPECT_TRUE(s.barged.load())
+      << "the releaser could not retake its own token, so the wake reserved it";
+   EXPECT_FALSE(s.waiter_done_before_second_release.load())
+      << "the waiter completed on a token that had already been taken";
+   EXPECT_TRUE(s.waiter_done.load()) << "the waiter never re-acquired after re-parking";
+   EXPECT_EQ(s.sem.peek(), 0u);
+
+   kernel::finalise();
 }

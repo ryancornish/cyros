@@ -415,4 +415,92 @@ TEST_F(PeriodicDriverTest, FromMicrosecondsRoundsUp)
    EXPECT_EQ(cyros::time::from_microseconds(1001).value, 1001u);
 }
 
+
+/* ============================================================================
+ * schedule_recurring: the paths this suite never reached
+ *
+ * Recurring FIRING is proved by the *_preempt suite against a real timer. What
+ * had no consumer anywhere is the rejection of bad arguments and the
+ * out-of-slots return, which are the paths a caller actually has to rely on:
+ * they must fail by returning an invalid handle, never by taking a slot or by
+ * arming something that fires at the wrong time.
+ * ========================================================================= */
+
+TEST_F(PeriodicDriverTest, ScheduleRecurringNullCallbackReturnsInvalidHandle)
+{
+   EXPECT_EQ(cyros::time::schedule_recurring(cyros::time::from_milliseconds(1), nullptr, nullptr).id, 0u);
+}
+
+// A zero interval would re-arm at the same tick forever, so it is refused.
+TEST_F(PeriodicDriverTest, ScheduleRecurringZeroIntervalReturnsInvalidHandle)
+{
+   std::atomic<int> count{0};
+
+   EXPECT_EQ(cyros::time::schedule_recurring(cyros::time::duration{0}, counting_callback, &count).id, 0u);
+
+   advance_and_pump(1'000);
+   EXPECT_EQ(count.load(), 0) << "a rejected recurring timer still fired";
+}
+
+// A rejected recurring request must not consume a slot: the table still accepts
+// its full capacity afterwards.
+TEST_F(PeriodicDriverTest, RejectedRecurringRequestsDoNotConsumeSlots)
+{
+   std::atomic<int> count{0};
+
+   for (int i = 0; i < 4; ++i) {
+      ASSERT_EQ(cyros::time::schedule_recurring(cyros::time::duration{0}, counting_callback, &count).id, 0u);
+      ASSERT_EQ(cyros::time::schedule_recurring(cyros::time::from_milliseconds(1), nullptr, nullptr).id, 0u);
+   }
+
+   std::vector<time::handle> handles;
+   for (uint32_t i = 0; i < kMaxScheduledCallbacks; ++i) {
+      time::handle const h = cyros::time::schedule_at(time::time_point{1'000 + i}, counting_callback, &count);
+      EXPECT_NE(h.id, 0u) << "slot " << i << " was consumed by a rejected request";
+      handles.push_back(h);
+   }
+}
+
+// The recurring path has its own out-of-slots return, distinct from schedule_at's.
+TEST_F(PeriodicDriverTest, ScheduleRecurringBeyondCapacityReturnsInvalidHandle)
+{
+   std::atomic<int> count{0};
+
+   for (uint32_t i = 0; i < kMaxScheduledCallbacks; ++i) {
+      ASSERT_NE(cyros::time::schedule_recurring(cyros::time::from_milliseconds(10), counting_callback, &count).id, 0u)
+         << "capacity reached early at " << i;
+   }
+
+   EXPECT_EQ(cyros::time::schedule_recurring(cyros::time::from_milliseconds(10), counting_callback, &count).id, 0u);
+}
+
+/* ============================================================================
+ * to_milliseconds / to_microseconds
+ *
+ * from_* was tested, to_* was not. At the port's 1 MHz these invert exactly,
+ * and the half-tick addend in the implementation makes the conversion round to
+ * nearest rather than truncate, which is what the sub-millisecond cases pin.
+ * ========================================================================= */
+
+TEST_F(PeriodicDriverTest, ToMillisecondsInvertsFromMilliseconds)
+{
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::from_milliseconds(0)), 0u);
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::from_milliseconds(1)), 1u);
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::from_milliseconds(250)), 250u);
+}
+
+TEST_F(PeriodicDriverTest, ToMillisecondsRoundsToNearest)
+{
+   // 1 MHz: 1 ms is 1000 ticks. 1499 ticks is nearer 1 ms, 1500 rounds up.
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::duration{1'499}), 1u);
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::duration{1'500}), 2u);
+}
+
+TEST_F(PeriodicDriverTest, ToMicrosecondsInvertsFromMicroseconds)
+{
+   EXPECT_EQ(cyros::time::to_microseconds(cyros::time::from_microseconds(0)), 0u);
+   EXPECT_EQ(cyros::time::to_microseconds(cyros::time::from_microseconds(1)), 1u);
+   EXPECT_EQ(cyros::time::to_microseconds(cyros::time::from_microseconds(12'345)), 12'345u);
+}
+
 }  // namespace

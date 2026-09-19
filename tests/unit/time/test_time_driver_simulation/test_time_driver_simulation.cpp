@@ -34,6 +34,14 @@
  * disabled because they depend on wall-clock sleeps and would make the suite
  * timing-flaky. Consequently those branches are NOT hit by the default run.
  *
+ * Those disabled tests were RUN and all 4 passed on 2026-09-18 (Arch box, 502ms
+ * for the set), so they are current rather than bit-rotted. Re-run them by hand
+ * after touching this driver:
+ *   ./test_time_driver_simulation --gtest_also_run_disabled_tests --gtest_filter='*RealTime*'
+ * They are what keeps real_time mode honest, and they are the reason the 24
+ * uncovered lines in this translation unit are a deliberate choice rather than
+ * a gap.
+ *
  * To keep the coverage gate honest, the real_time-only blocks in
  * time_driver_simulation.cpp should be wrapped in coverage-exclusion markers
  * (for gcov/lcov: LCOV_EXCL_START / LCOV_EXCL_STOP), namely:
@@ -588,6 +596,151 @@ TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCancelBeforeAutonomousFire)
    EXPECT_EQ(count.load(), 0);
 
    cyros::time::stop();
+}
+
+/* ============================================================================
+ * Recurring timers  (virtual_time mode)
+ *
+ * schedule_recurring had no consumer in this file at all, so the sim driver's
+ * re-arm arithmetic, its two rejection paths and the catch-up loop were carried
+ * only by the periodic and tickless preempt suites, which exercise a different
+ * implementation. Everything here is deterministic: virtual time moves only
+ * when a test advances it.
+ * ========================================================================= */
+
+// A null callback is rejected before a slot is taken.
+TEST_F(SimulationDriverTest, ScheduleRecurringNullCallbackReturnsInvalidHandle)
+{
+   time::handle const h = cyros::time::schedule_recurring(time::duration{10}, nullptr, nullptr);
+
+   EXPECT_EQ(h.id, 0u);
+}
+
+// A zero interval is rejected: it would re-arm at the same tick forever.
+TEST_F(SimulationDriverTest, ScheduleRecurringZeroIntervalReturnsInvalidHandle)
+{
+   std::atomic<int> count{0};
+
+   time::handle const h = cyros::time::schedule_recurring(time::duration{0}, counting_callback, &count);
+
+   EXPECT_EQ(h.id, 0u);
+   cyros::time::simulation::advance_by(time::duration{100});
+   EXPECT_EQ(count.load(), 0) << "a rejected recurring timer still fired";
+}
+
+// The first fire lands one full interval after arming, not immediately.
+TEST_F(SimulationDriverTest, RecurringDoesNotFireBeforeItsFirstInterval)
+{
+   std::atomic<int> count{0};
+   time::handle const h = cyros::time::schedule_recurring(time::duration{10}, counting_callback, &count);
+   ASSERT_NE(h.id, 0u);
+
+   cyros::time::simulation::advance_by(time::duration{9});
+
+   EXPECT_EQ(count.load(), 0);
+}
+
+// One fire per interval, and the timer stays armed across fires.
+TEST_F(SimulationDriverTest, RecurringFiresOncePerIntervalAcrossManyAdvances)
+{
+   std::atomic<int> count{0};
+   time::handle const h = cyros::time::schedule_recurring(time::duration{10}, counting_callback, &count);
+   ASSERT_NE(h.id, 0u);
+
+   for (int i = 1; i <= 5; ++i) {
+      cyros::time::simulation::advance_by(time::duration{10});
+      EXPECT_EQ(count.load(), i) << "wrong fire count after " << i << " intervals";
+   }
+}
+
+/* One advance that crosses several intervals fires ONCE and re-anchors ahead of
+ * now, rather than firing once per skipped interval. That is the `do { when +=
+ * period; } while (when <= now)` loop, and it is what stops a long advance (or a
+ * late pump) from delivering a burst of backlogged callbacks. */
+TEST_F(SimulationDriverTest, RecurringCrossingSeveralIntervalsInOneAdvanceFiresOnceAndReAnchors)
+{
+   std::atomic<int> count{0};
+   time::handle const h = cyros::time::schedule_recurring(time::duration{10}, counting_callback, &count);
+   ASSERT_NE(h.id, 0u);
+
+   cyros::time::simulation::advance_by(time::duration{35}); // crosses 10, 20, 30
+
+   EXPECT_EQ(count.load(), 1) << "a multi-interval advance delivered a backlog burst";
+
+   // Re-anchored to 40, the first multiple strictly after 35.
+   cyros::time::simulation::advance_by(time::duration{4});  // now 39
+   EXPECT_EQ(count.load(), 1);
+   cyros::time::simulation::advance_by(time::duration{1});  // now 40
+   EXPECT_EQ(count.load(), 2) << "the timer did not re-anchor to the next interval after now";
+}
+
+// Cancelling a recurring timer stops it permanently.
+TEST_F(SimulationDriverTest, CancelStopsARecurringTimer)
+{
+   std::atomic<int> count{0};
+   time::handle const h = cyros::time::schedule_recurring(time::duration{10}, counting_callback, &count);
+   ASSERT_NE(h.id, 0u);
+
+   cyros::time::simulation::advance_by(time::duration{10});
+   ASSERT_EQ(count.load(), 1);
+
+   EXPECT_TRUE(cyros::time::cancel(h));
+
+   cyros::time::simulation::advance_by(time::duration{100});
+   EXPECT_EQ(count.load(), 1) << "a cancelled recurring timer kept firing";
+}
+
+// A recurring and a one-shot timer coexist: the one-shot retires, the recurring
+// keeps going. This is the branch of fire_due_callbacks that distinguishes them.
+TEST_F(SimulationDriverTest, OneShotRetiresWhileARecurringTimerContinues)
+{
+   std::atomic<int> once{0};
+   std::atomic<int> repeating{0};
+
+   ASSERT_NE(cyros::time::schedule_at(time::time_point{10}, counting_callback, &once).id, 0u);
+   ASSERT_NE(cyros::time::schedule_recurring(time::duration{10}, counting_callback, &repeating).id, 0u);
+
+   cyros::time::simulation::advance_by(time::duration{10});
+   EXPECT_EQ(once.load(), 1);
+   EXPECT_EQ(repeating.load(), 1);
+
+   cyros::time::simulation::advance_by(time::duration{10});
+   EXPECT_EQ(once.load(), 1)      << "a one-shot fired twice";
+   EXPECT_EQ(repeating.load(), 2) << "the recurring timer stopped when the one-shot retired";
+}
+
+/* ============================================================================
+ * Duration conversions
+ *
+ * from_* had tests, to_* had none on this driver. At 1 kHz one tick is one
+ * millisecond, so the round trips are exact and the microsecond scale is what
+ * shows the rounding.
+ * ========================================================================= */
+
+TEST_F(SimulationDriverTest, ToMillisecondsInvertsFromMilliseconds)
+{
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::from_milliseconds(0)), 0u);
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::from_milliseconds(1)), 1u);
+   EXPECT_EQ(cyros::time::to_milliseconds(cyros::time::from_milliseconds(250)), 250u);
+}
+
+TEST_F(SimulationDriverTest, ToMicrosecondsScalesTicksToMicroseconds)
+{
+   // 1 kHz: one tick is 1000 us.
+   EXPECT_EQ(cyros::time::to_microseconds(time::duration{0}), 0u);
+   EXPECT_EQ(cyros::time::to_microseconds(time::duration{1}), 1'000u);
+   EXPECT_EQ(cyros::time::to_microseconds(time::duration{7}), 7'000u);
+}
+
+// Sub-tick microsecond values round UP to a whole tick, so a deadline is never
+// earlier than asked for; a zero request stays zero.
+TEST_F(SimulationDriverTest, FromMicrosecondsRoundsUpToAWholeTick)
+{
+   EXPECT_EQ(cyros::time::from_microseconds(0).value, 0u);
+   EXPECT_EQ(cyros::time::from_microseconds(1).value, 1u);
+   EXPECT_EQ(cyros::time::from_microseconds(999).value, 1u);
+   EXPECT_EQ(cyros::time::from_microseconds(1'000).value, 1u);
+   EXPECT_EQ(cyros::time::from_microseconds(1'001).value, 2u);
 }
 
 // real_time mode: start() is idempotent -- a second start() while the thread is

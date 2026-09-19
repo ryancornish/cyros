@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <utility>
 #include <vector>
 
 using namespace cyros;
@@ -900,6 +901,105 @@ TEST(SingleCoreMultiThread_Test,
       EXPECT_EQ(markers[i], i + 1) << "first round not in registration order at " << i;
       EXPECT_EQ(markers[i + 6], i + 1) << "second round not in registration order at " << i;
    }
+   EXPECT_EQ(kernel::active_threads(), 0u);
+
+   kernel::finalise();
+}
+
+
+/* ============================================================================
+ * Moving a thread handle
+ *
+ * thread is move-only and both move operations re-point the TCB's back pointer
+ * at the new handle. Nothing in the suite exercised either one, so a move that
+ * left the TCB pointing at a dead handle, or failed to disown the source, would
+ * not have been caught here. The handle is a HANDLE: moving it must not disturb
+ * the running thread, its id, or its registration.
+ * ========================================================================= */
+
+TEST(SingleCoreMultiThread_Test,
+     GivenARegisteredThread_WhenItsHandleIsMoveConstructed_ThenTheThreadIsUnaffected)
+{
+   cyros::test::guarded_stack stack;
+
+   bool ran = false;
+
+   kernel::initialise();
+
+   thread original([&]{ ran = true; }, stack, thread::priority(0), core0);
+   auto const id_before = original.get_id();
+
+   // WHEN: the handle is moved before the kernel ever runs
+   thread moved(std::move(original));
+
+   EXPECT_EQ(moved.get_id(), id_before)  << "moved-to handle names a different thread";
+   ASSERT_EQ(kernel::active_threads(), 1u) << "moving a handle changed registration";
+
+   kernel::start();
+
+   EXPECT_TRUE(ran);
+   EXPECT_EQ(kernel::active_threads(), 0u);
+
+   kernel::finalise();
+}
+
+TEST(SingleCoreMultiThread_Test,
+     GivenAnEmptyHandle_WhenAThreadIsMoveAssignedIntoIt_ThenTheThreadIsUnaffected)
+{
+   cyros::test::guarded_stack stack;
+
+   bool ran = false;
+
+   kernel::initialise();
+
+   thread sink; // default-constructed, owns nothing
+   thread original([&]{ ran = true; }, stack, thread::priority(0), core0);
+   auto const id_before = original.get_id();
+
+   // WHEN:
+   sink = std::move(original);
+
+   EXPECT_EQ(sink.get_id(), id_before);
+   ASSERT_EQ(kernel::active_threads(), 1u);
+
+   kernel::start();
+
+   EXPECT_TRUE(ran);
+   EXPECT_EQ(kernel::active_threads(), 0u);
+
+   kernel::finalise();
+}
+
+TEST(SingleCoreMultiThread_Test,
+     GivenAMovedHandle_WhenAnotherThreadJoinsThroughIt_ThenTheJoinCompletesAfterTermination)
+{
+   cyros::test::guarded_stack worker_stack;
+   cyros::test::guarded_stack joiner_stack;
+
+   std::vector<thread::id> order;
+
+   kernel::initialise();
+
+   thread worker([&]{ order.push_back(this_thread::id()); },
+                 worker_stack, thread::priority(1), core0);
+
+   // The handle the joiner will use is NOT the one the thread was created
+   // through, which is the point: join has to work through the moved-to handle.
+   thread moved(std::move(worker));
+
+   // More urgent, so it runs first and is genuinely blocked in join when the
+   // worker starts. A same-core joiner that spun instead would deadlock the core.
+   thread joiner([&]{
+                    moved.join();
+                    order.push_back(this_thread::id());
+                 },
+                 joiner_stack, thread::priority(0), core0);
+
+   kernel::start();
+
+   ASSERT_EQ(order.size(), 2u)          << "join never returned, or the worker never ran";
+   EXPECT_EQ(order[0], thread::id(1))   << "worker did not run before the joiner resumed";
+   EXPECT_EQ(order[1], thread::id(2));
    EXPECT_EQ(kernel::active_threads(), 0u);
 
    kernel::finalise();

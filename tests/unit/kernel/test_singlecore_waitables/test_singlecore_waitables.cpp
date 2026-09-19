@@ -57,6 +57,14 @@ public:
    void wake_one_no_set() noexcept { wake_one(); }
    void wake_all_no_set() noexcept { wake_all(); }
 
+   // The reschedule policy is part of the wake surface and is otherwise only
+   // ever used at its default, so these expose the other two arms.
+   void set_and_wake_one(reschedule_policy policy) noexcept
+   {
+      condition.store(true, std::memory_order_release);
+      wake_one(policy);
+   }
+
 protected:
    bool try_satisfy() noexcept override
    {
@@ -419,4 +427,133 @@ TEST_F(SingleCoreWaitables_Test,
    kernel::start();
 
    ASSERT_EQ(w.seen_caller_id.load(), captured_waiter_id);
+}
+
+
+/* ============================================================================
+ * reschedule_policy decides who keeps the core after a wake
+ *
+ * wake_one takes a policy and every caller in the tree uses the default, so the
+ * other two arms had no consumer at all. On one core the three are directly
+ * observable, and the difference is not cosmetic: it decides whether the waker
+ * runs on after waking somebody.
+ *
+ *   automatic : reschedule only if the woken thread is a better pick than the
+ *               running one. An EQUAL-priority wake is therefore not a better
+ *               pick and the waker keeps the core.
+ *   always    : reschedule regardless. The waker goes to the back of its
+ *               priority's FIFO run queue, so an equal-priority woken thread
+ *               takes the core immediately.
+ *   never     : do not reschedule even when the woken thread IS more urgent.
+ *               It stays ready until the next scheduling point the waker
+ *               reaches on its own.
+ * ========================================================================= */
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenAnEqualPriorityWaiter_WhenWokenWithAutomatic_ThenTheWakerKeepsTheCore)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waker_stack{};
+
+   TestWaitable w;
+   std::atomic<bool> waiter_done{false};
+   std::atomic<bool> waiter_ran_before_waker_finished{false};
+
+   thread waiter(
+      [&]{
+         this_thread::wait_on(w);
+         waiter_done.store(true, std::memory_order_release);
+      },
+      waiter_stack, thread::priority(1), core0
+   );
+
+   thread waker(
+      [&]{
+         w.set_and_wake_one(); // automatic
+         waiter_ran_before_waker_finished.store(waiter_done.load(std::memory_order_acquire),
+                                                std::memory_order_release);
+      },
+      waker_stack, thread::priority(1), core0
+   );
+
+   kernel::start();
+
+   EXPECT_FALSE(waiter_ran_before_waker_finished.load())
+      << "an equal-priority wake preempted the waker under the automatic policy";
+   EXPECT_TRUE(waiter_done.load());
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenAnEqualPriorityWaiter_WhenWokenWithAlways_ThenTheWakerYieldsTheCore)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waker_stack{};
+
+   TestWaitable w;
+   std::atomic<bool> waiter_done{false};
+   std::atomic<bool> waiter_ran_before_waker_finished{false};
+
+   thread waiter(
+      [&]{
+         this_thread::wait_on(w);
+         waiter_done.store(true, std::memory_order_release);
+      },
+      waiter_stack, thread::priority(1), core0
+   );
+
+   thread waker(
+      [&]{
+         w.set_and_wake_one(reschedule_policy::always);
+         waiter_ran_before_waker_finished.store(waiter_done.load(std::memory_order_acquire),
+                                                std::memory_order_release);
+      },
+      waker_stack, thread::priority(1), core0
+   );
+
+   kernel::start();
+
+   EXPECT_TRUE(waiter_ran_before_waker_finished.load())
+      << "the always policy did not hand the core to the equal-priority waiter";
+   EXPECT_TRUE(waiter_done.load());
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenAMoreUrgentWaiter_WhenWokenWithNever_ThenItWaitsForTheWakersNextSchedulingPoint)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waker_stack{};
+
+   TestWaitable w;
+   std::atomic<bool> waiter_done{false};
+   std::atomic<bool> waiter_ran_immediately{false};
+
+   // MORE urgent than the waker, so under any other policy it would preempt.
+   thread waiter(
+      [&]{
+         this_thread::wait_on(w);
+         waiter_done.store(true, std::memory_order_release);
+      },
+      waiter_stack, thread::priority(0), core0
+   );
+
+   thread waker(
+      [&]{
+         w.set_and_wake_one(reschedule_policy::never);
+
+         // Still running despite having readied a more urgent thread.
+         waiter_ran_immediately.store(waiter_done.load(std::memory_order_acquire),
+                                      std::memory_order_release);
+
+         // A voluntary scheduling point: now the more urgent thread must run.
+         this_thread::yield();
+      },
+      waker_stack, thread::priority(1), core0
+   );
+
+   kernel::start();
+
+   EXPECT_FALSE(waiter_ran_immediately.load())
+      << "the never policy still preempted the waker";
+   EXPECT_TRUE(waiter_done.load())
+      << "the woken thread never ran, so never lost the wake rather than deferring it";
 }

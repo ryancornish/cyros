@@ -18,6 +18,8 @@
 #include <cyros/sync/mutex.hpp>
 #include <cyros/sync/semaphore.hpp>
 
+#include <common/guarded_stack.hpp>
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -254,4 +256,131 @@ TEST_F(Diagnostics_Test, GivenChurningHandovers_WhenQueriedContinuously_ThenNoPh
 
    EXPECT_EQ(t.phantom.load(), 0u);
    EXPECT_EQ(t.queries.load(), 20'000u);
+}
+
+
+/* ============================================================================
+ * A chain longer than the reportable bound
+ *
+ * blocking_chain::max_links is 8 and the walk stops there. Nothing exercised
+ * that, so the query had never actually been run against a chain it cannot
+ * represent. Two things must hold at the bound, and the second is the one worth
+ * having: the report truncates to exactly max_links, and it does NOT set
+ * deadlocked. Running out of room is not a cycle, and a walk that confused the
+ * two would report a deadlock in a healthy application.
+ *
+ * Shape, one core, built inside-out exactly as the two-hop test above:
+ * holder[k] owns m[k] and then blocks on m[k-1], so from the most urgent thread
+ * the chain runs holder[N-2], holder[N-3] ... holder[0], which is N-1 = 9 links,
+ * one more than can be reported.
+ * ========================================================================= */
+TEST_F(Diagnostics_Test, GivenAChainLongerThanMaxLinks_WhenQueried_ThenItTruncatesWithoutClaimingDeadlock)
+{
+   static constexpr std::size_t chain_depth = 10; // 9 links, max_links is 8
+   static_assert(chain_depth - 1 > diagnostics::blocking_chain::max_links,
+                 "the chain must exceed what blocking_chain can report");
+
+   static std::array<cyros::test::guarded_stack, chain_depth> stacks;
+
+   struct state
+   {
+      std::array<sync::mutex, chain_depth>     m{};
+      /* semaphore has no default constructor, so each gate is named. Guaranteed
+       * elision initialises them in place, which matters because a waitable is
+       * neither copyable nor movable. */
+      std::array<sync::semaphore, chain_depth> gate{
+         sync::semaphore{0}, sync::semaphore{0}, sync::semaphore{0}, sync::semaphore{0},
+         sync::semaphore{0}, sync::semaphore{0}, sync::semaphore{0}, sync::semaphore{0},
+         sync::semaphore{0}, sync::semaphore{0},
+      };
+      std::array<thread*, chain_depth>         handles{};
+      diagnostics::blocking_chain              of_deepest;
+   };
+   state t;
+
+   std::array<thread, chain_depth> holders{};
+
+   /* holder[0] is the least urgent and runs first because every other holder
+    * parks on its gate immediately. Each holder takes its own mutex, wakes the
+    * next (more urgent) one, and then blocks on the previous holder's mutex. */
+   for (std::size_t k = 1; k < chain_depth; ++k) {
+      holders[k] = thread(
+         [&t, k]{
+            t.gate[k].acquire();
+            t.m[k].lock();
+            if (k + 1 < chain_depth) {
+               t.gate[k + 1].release(); // the next holder preempts and stages itself
+            }
+            t.m[k - 1].lock();          // blocks behind holder k-1
+            t.m[k - 1].unlock();
+            t.m[k].unlock();
+         },
+         stacks[k],
+         thread::priority(static_cast<std::uint8_t>(chain_depth - k + 1)),
+         core0
+      );
+   }
+
+   holders[0] = thread(
+      [&]{
+         t.m[0].lock();
+         t.gate[1].release(); // stages the whole chain above us
+
+         // Every other holder is now blocked; this thread is the only runnable
+         // one, so the chain is stable while it is queried.
+         t.of_deepest = diagnostics::blocking_chain_of(*t.handles[chain_depth - 1]);
+
+         t.m[0].unlock(); // resolves everything
+      },
+      stacks[0],
+      thread::priority(static_cast<std::uint8_t>(chain_depth + 1)),
+      core0
+   );
+
+   for (std::size_t k = 0; k < chain_depth; ++k) {
+      t.handles[k] = &holders[k];
+   }
+
+   kernel::start();
+
+   EXPECT_EQ(t.of_deepest.length, diagnostics::blocking_chain::max_links)
+      << "a chain longer than the bound did not fill the report exactly to the bound";
+   EXPECT_FALSE(t.of_deepest.deadlocked)
+      << "exhausting max_links was reported as a deadlock, which it is not";
+
+   // The reported prefix is the nearest holders, in order, starting with the
+   // one that owns the mutex the queried thread is blocked on.
+   for (std::size_t i = 0; i < t.of_deepest.length; ++i) {
+      EXPECT_EQ(t.of_deepest.holders[i], holders[chain_depth - 2 - i].get_id())
+         << "wrong holder at link " << i;
+   }
+}
+
+/* ============================================================================
+ * A handle that owns no thread
+ *
+ * A default-constructed or moved-from handle has no TCB. The query has an
+ * explicit guard for it, so the contract is an empty chain rather than a crash.
+ * ========================================================================= */
+TEST_F(Diagnostics_Test, GivenAHandleThatOwnsNoThread_WhenQueried_ThenTheChainIsEmpty)
+{
+   struct
+   {
+      diagnostics::blocking_chain chain;
+   } t;
+   t.chain.length = 3;      // prove the call overwrites both fields
+   t.chain.deadlocked = true;
+
+   thread querier(
+      [&]{
+         thread empty;      // owns nothing
+         t.chain = diagnostics::blocking_chain_of(empty);
+      },
+      s_a, thread::priority(1), core0
+   );
+
+   kernel::start();
+
+   EXPECT_EQ(t.chain.length, 0u);
+   EXPECT_FALSE(t.chain.deadlocked);
 }

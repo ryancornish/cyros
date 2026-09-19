@@ -25,6 +25,7 @@
  * is no liveness dependence on the helper either.
  */
 
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
@@ -214,6 +215,145 @@ TEST(SingleCorePreemption_Test,
       << "thread B never observed A advancing, so preemption did not interleave them";
    EXPECT_GT(a_count.load(), 0u);
    EXPECT_GT(b_count.load(), 0u);
+
+   kernel::finalise();
+}
+
+/* ============================================================================
+ * this_core::disable_preemption holds off an IPI until the matching enable
+ *
+ * The public this_core surface (core.cpp) had no test at all: every use of it
+ * in the tree is internal to the kernel, so nothing pinned the contract a user
+ * relies on. This is that contract, and it is the same shape as the interleave
+ * test above with one difference: A holds preemption disabled while the IPIs
+ * arrive, so B must not run. B advancing during that window would mean a
+ * disable did not actually mask the reschedule.
+ *
+ * The release is the assertion's other half. A pended reschedule must still be
+ * delivered once preemption is enabled, so B has to run AFTER the enable. A
+ * test that only proved "B never ran" would also pass if the IPI had been lost
+ * outright, which is a different and worse bug.
+ * ========================================================================= */
+TEST(SingleCorePreemption_Test,
+     GivenPreemptionDisabled_WhenIpisArrive_ThenNoSwitchHappensUntilPreemptionIsEnabled)
+{
+   kernel::initialise();
+
+   std::atomic<std::uint64_t> b_count{0};
+   std::atomic<bool> b_ran_while_disabled{false};
+   std::atomic<bool> b_ran_after_enable{false};
+   std::atomic<bool> workers_active{false};
+   std::atomic<bool> ipis_done{false};
+
+   thread a(
+      [&]{
+         workers_active.store(true);
+
+         {
+            auto const token = this_core::disable_preemption();
+
+            // Spin until the helper has finished firing. Nothing here yields,
+            // and preemption is masked, so B must not get the core.
+            while (!ipis_done.load()) {
+               // Reading B's counter from inside the disabled region is the
+               // observation: it must never move.
+               if (b_count.load(std::memory_order_relaxed) != 0) {
+                  b_ran_while_disabled.store(true);
+               }
+            }
+
+            this_core::enable_preemption(token);
+         }
+
+         // The reschedule pended during the disabled region is delivered by the
+         // enable above, so B runs before we get here again.
+         b_ran_after_enable.store(b_count.load(std::memory_order_relaxed) != 0);
+      },
+      a_stack,
+      thread::priority(0),
+      core0
+   );
+
+   thread b(
+      [&]{ b_count.fetch_add(1, std::memory_order_relaxed); },
+      b_stack,
+      thread::priority(0),
+      core0
+   );
+
+   std::thread interrupt_source([&]{
+      while (!workers_active.load()) {
+         std::this_thread::yield();
+      }
+
+      for (int fired = 0; fired < 200; ++fired) {
+         cyros_port_send_reschedule_ipi(0);
+         std::this_thread::sleep_for(std::chrono::microseconds(50));
+      }
+
+      ipis_done.store(true);
+   });
+
+   kernel::start();
+   interrupt_source.join();
+
+   EXPECT_FALSE(b_ran_while_disabled.load())
+      << "B ran while preemption was disabled, so the disable did not mask the reschedule";
+   EXPECT_TRUE(b_ran_after_enable.load())
+      << "B never ran after preemption was enabled, so the pended reschedule was lost";
+   EXPECT_EQ(b_count.load(), 1u);
+
+   kernel::finalise();
+}
+
+/* ============================================================================
+ * this_core::enter_critical masks interrupts, and nests
+ *
+ * Interrupt-disable is depth counted on this port, so an inner exit must NOT
+ * re-enable: only the outermost one does. A test that checked a single level
+ * would pass against an implementation that stored a bool.
+ * ========================================================================= */
+TEST(SingleCorePreemption_Test,
+     GivenNestedCriticalSections_WhenInnerExits_ThenInterruptsStayMaskedUntilTheOuterExit)
+{
+   kernel::initialise();
+
+   std::atomic<bool> enabled_at_entry{false};
+   std::atomic<bool> masked_inside_outer{false};
+   std::atomic<bool> masked_inside_inner{false};
+   std::atomic<bool> still_masked_after_inner_exit{false};
+   std::atomic<bool> enabled_after_outer_exit{false};
+
+   thread t(
+      [&]{
+         enabled_at_entry.store(cyros_port_interrupts_enabled());
+
+         auto const outer = this_core::enter_critical();
+         masked_inside_outer.store(!cyros_port_interrupts_enabled());
+
+         auto const inner = this_core::enter_critical();
+         masked_inside_inner.store(!cyros_port_interrupts_enabled());
+
+         this_core::exit_critical(inner);
+         still_masked_after_inner_exit.store(!cyros_port_interrupts_enabled());
+
+         this_core::exit_critical(outer);
+         enabled_after_outer_exit.store(cyros_port_interrupts_enabled());
+      },
+      a_stack,
+      thread::priority(0),
+      core0
+   );
+
+   kernel::start();
+
+   EXPECT_TRUE(enabled_at_entry.load())         << "a thread started with interrupts masked";
+   EXPECT_TRUE(masked_inside_outer.load())      << "enter_critical did not mask interrupts";
+   EXPECT_TRUE(masked_inside_inner.load());
+   EXPECT_TRUE(still_masked_after_inner_exit.load())
+      << "the inner exit re-enabled interrupts, so the depth count is not nesting";
+   EXPECT_TRUE(enabled_after_outer_exit.load())
+      << "the outermost exit did not restore interrupts";
 
    kernel::finalise();
 }
