@@ -12,7 +12,7 @@ cyros-builder build -p build_tree/profile.toml
 
 mkdir ./out/bin/
 
-g++-15 main.cpp \
+g++-16 main.cpp \
    -std=gnu++26 -O0 -g3 \
    -Iout/basic_project_1/gcc-basic/include/ \
    -Lout/basic_project_1/gcc-basic/lib/ \

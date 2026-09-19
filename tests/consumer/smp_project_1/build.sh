@@ -12,7 +12,7 @@ cyros-builder build --profile profile.toml
 
 mkdir ./out/bin/
 
-g++-15 main.cpp \
+g++-16 main.cpp \
    -std=gnu++26 -O0 -g3 \
    -Iout/smp_project_1/gcc-toolchain/include/ \
    -Lout/smp_project_1/gcc-toolchain/lib/ \

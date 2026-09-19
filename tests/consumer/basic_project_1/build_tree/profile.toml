@@ -1,16 +1,15 @@
+[profile]
 name = "basic_project_1"
-default_toolchain = "gcc-basic"
+toolchain = "./toolchains/gcc-basic.toml"
+config_header = "./configs/basic_project_1.hpp"
 
 [layout]
-project_root = "../../../.."
-build_root = "."
 source_root = "../../../../src"
 output_root = "../out"
 
-[build]
+[components]
 port = "linux_coop"
 time_driver = "simulation"
-config_header = "basic_project_1.hpp"
 
 [features]
 enable = []

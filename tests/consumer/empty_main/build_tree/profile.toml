@@ -1,16 +1,15 @@
+[profile]
 name = "empty_main"
-default_toolchain = "gcc-basic"
+toolchain = "./toolchains/gcc-basic.toml"
+config_header = "./configs/empty_main.hpp"
 
 [layout]
-project_root = "../../../.."
-build_root = "."
 source_root = "../../../../src"
 output_root = "../out"
 
-[build]
+[components]
 port = "linux_coop"
 time_driver = "simulation"
-config_header = "empty_main.hpp"
 
 [features]
 enable = []
