@@ -1,4 +1,5 @@
 // test_multicore.cpp
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
@@ -343,5 +344,47 @@ TEST_F(MultiCoreMultiThread_Test,
       EXPECT_EQ(stages[i].load(std::memory_order_acquire), 2)
          << "core " << i << " did not complete its thread";
    }
+   EXPECT_EQ(kernel::active_threads(), 0u);
+}
+
+
+/* ============================================================================
+ * this_core::cpu_relax is the public spin-wait hint
+ *
+ * Added 2026-09-19 with the port header going project-internal (roadmap A1):
+ * user code that spins used to reach for cyros_port_cpu_relax through port.h,
+ * which consumers can no longer see. This pins the documented usage, a spin on
+ * a condition ANOTHER core satisfies, through the public surface only. The
+ * spinner and the setter are on different cores on purpose: cpu_relax is a
+ * hardware hint and does not yield, so a same-core setter would be starved.
+ * ========================================================================= */
+TEST_F(MultiCoreMultiThread_Test,
+       GivenAFlagSetOnAnotherCore_WhenSpinningWithCpuRelax_ThenTheSpinSeesIt)
+{
+   std::array<cyros::test::guarded_stack, 2> stacks;
+
+   std::atomic<bool> flag{false};
+   std::atomic<std::uint64_t> spins{0};
+   std::atomic<bool> released{false};
+
+   thread spinner(
+      [&]{
+         while (!flag.load(std::memory_order_acquire)) {
+            this_core::cpu_relax();
+            spins.fetch_add(1, std::memory_order_relaxed);
+         }
+         released.store(true, std::memory_order_release);
+      },
+      stacks[0], thread::priority(0), core1
+   );
+
+   thread setter(
+      [&]{ flag.store(true, std::memory_order_release); },
+      stacks[1], thread::priority(0), core0
+   );
+
+   kernel::start();
+
+   EXPECT_TRUE(released.load()) << "the spin never observed the cross-core flag";
    EXPECT_EQ(kernel::active_threads(), 0u);
 }

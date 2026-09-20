@@ -9,7 +9,12 @@
 
 #include <cyros/chrono/alarm.hpp>
 #include <cyros/chrono/chrono.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/thread.hpp>
+// Internal header, reached through the internal include tree. Userlib is meant
+// to build on the PUBLIC kernel API alone (roadmap A1), and this is the last
+// userlib file that does not: it needs port.h only for CYROS_ASSERT, which has
+// no public equivalent until the assert design is settled (roadmap A2).
 #include <cyros/port/port.h>
 
 namespace cyros::chrono
@@ -59,7 +64,7 @@ void alarm::disarm() noexcept
        * outside its lock from whichever context advances time, so wait out
        * the two-statement body before letting the caller destroy us. */
       while (!fired.load(std::memory_order_acquire)) {
-         cyros_port_cpu_relax();
+         this_core::cpu_relax();
       }
    }
    timer = {};

@@ -1,8 +1,8 @@
 #include <cyros/sync/semaphore.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
-#include <cyros/port/port.h>
 
 #include <common/guarded_stack.hpp>
 
@@ -165,7 +165,7 @@ TEST_F(SyncSemaphore_Test, GivenZeroCount_WhenAcquire_ThenBlocksUntilRelease)
       thread producer(
          [&s]{
             while (!s.consumer_waiting.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.released_first.store(true, std::memory_order_release);
             s.sem.release();
@@ -261,7 +261,7 @@ TEST_F(SyncSemaphore_Test, GivenProducersAndConsumersAcrossCores_WhenTokensFlow_
             // by the time BOTH consumers have their full share, every token
             // is spoken for. Spin for the sibling's completion cross-core.
             while (s.consumed.load(std::memory_order_acquire) < tokens_total) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.final_peek.store(s.sem.peek(), std::memory_order_release);
             s.post_drain_take.store(s.sem.try_acquire(), std::memory_order_release);
@@ -325,11 +325,11 @@ TEST_F(SyncSemaphore_Test, GivenThreeParkedWaiters_WhenReleaseThree_ThenAllProce
       thread releaser(
          [&s]{
             while (s.parked.load(std::memory_order_acquire) < 3) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.sem.release(3);
             while (s.proceeded.load(std::memory_order_acquire) < 3) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.final_peek.store(s.sem.peek(), std::memory_order_release);
          },

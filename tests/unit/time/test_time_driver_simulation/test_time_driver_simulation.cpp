@@ -54,7 +54,6 @@
 
 #include <cyros/time/time.hpp>
 #include <cyros/time/simulation.hpp>
-#include <cyros/port/port.h>
 
 #include <gtest/gtest.h>
 

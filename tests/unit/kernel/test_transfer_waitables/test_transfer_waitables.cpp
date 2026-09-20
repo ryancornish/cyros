@@ -1,8 +1,8 @@
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/waitable.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
-#include <cyros/port/port.h>
 
 #include <common/guarded_stack.hpp>
 
@@ -127,7 +127,7 @@ TEST_F(MultiCoreTransfer_Test,
             // take the free branch instead of the transfer branch this test
             // exists to exercise.
             while (!waiter_armed.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             r.release();
          },
@@ -139,7 +139,7 @@ TEST_F(MultiCoreTransfer_Test,
       thread waiter(
          [&]{
             while (!owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             waiter_id.store(this_thread::id(), std::memory_order_release);
             this_thread::wait_on(r);
@@ -232,7 +232,7 @@ TEST_F(MultiCoreTransfer_Test,
             // timing artifact.
             while (!barger_spinning.load(std::memory_order_acquire) ||
                    !waiter_armed.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             r.release();
          },
@@ -244,7 +244,7 @@ TEST_F(MultiCoreTransfer_Test,
       thread waiter(
          [&]{
             while (!owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             waiter_id.store(this_thread::id(), std::memory_order_release);
             this_thread::wait_on(r);
@@ -273,7 +273,7 @@ TEST_F(MultiCoreTransfer_Test,
       thread barger(
          [&]{
             while (!owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             barger_spinning.store(true, std::memory_order_release);
             for (int i = 0; i < 100'000; ++i) {
@@ -281,7 +281,7 @@ TEST_F(MultiCoreTransfer_Test,
                   barger_stole_it.store(true, std::memory_order_release);
                   return;
                }
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          barger_stack,
@@ -347,7 +347,7 @@ TEST_F(MultiCoreTransfer_Test,
             // test exists to check, and would strand the loser forever.
             while (!low_armed.load(std::memory_order_acquire) ||
                    !high_armed.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             r.release();
          },
@@ -362,7 +362,7 @@ TEST_F(MultiCoreTransfer_Test,
       thread low_waiter(
          [&]{
             while (!owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             low_id.store(this_thread::id(), std::memory_order_release);
             // low_parked here sequences ARRIVAL ORDER only (low attempts to
@@ -411,7 +411,7 @@ TEST_F(MultiCoreTransfer_Test,
             // despite arriving second, ruling out an implementation that is
             // secretly FIFO-ordered rather than priority-ordered.
             while (!low_parked.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             high_id.store(this_thread::id(), std::memory_order_release);
             this_thread::wait_on(r);
@@ -579,7 +579,7 @@ TEST_F(MultiCoreTransfer_Test,
             // armed via wait_on_any (which arms through the same
             // wait_queue::arm() as wait_on), not merely signalled intent to.
             while (!waiter_armed.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             r.release();
          },
@@ -591,7 +591,7 @@ TEST_F(MultiCoreTransfer_Test,
       thread waiter(
          [&]{
             while (!owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             waiter_id.store(this_thread::id(), std::memory_order_release);
             winner.store(this_thread::wait_on_any(r, never_fires), std::memory_order_release);

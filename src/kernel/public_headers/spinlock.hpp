@@ -61,11 +61,12 @@ public:
    /**
     * @brief Try to acquire the spinlock without blocking
     * @return true if acquired, false if already locked
+    *
+    * On success the caller holds the lock in exactly the state lock() gives:
+    * inside an interrupt-masking critical section that unlock() ends. On
+    * failure the caller is left exactly as it was, not holding and not masked.
     */
-   bool try_lock()
-   {
-      return !flag.test_and_set(std::memory_order_acquire);
-   }
+   bool try_lock();
 
    /**
     * @brief Check if the spinlock is currently locked

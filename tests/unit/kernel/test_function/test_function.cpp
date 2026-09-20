@@ -1,4 +1,4 @@
-#include <cyros/kernel/kernel.hpp>
+#include <cyros/kernel/function.hpp>
 #include <gtest/gtest.h>
 
 using namespace cyros;

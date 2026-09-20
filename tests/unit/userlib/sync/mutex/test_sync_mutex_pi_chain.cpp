@@ -19,11 +19,13 @@
  * -------------------------------------------------------------
  * These numbers predate derived urgency and describe a mechanism that has since
  * been deleted, including the transitive bug they were taken to characterise.
- * Kept because the LATENCY shape is the interesting part and nobody has
- * re-measured it against the fold: the cost model changed from one cross-core
- * doorbell round trip per link to one recursive fold per pick, which should
- * change this curve substantially. Re-running the cost curve is the obvious
- * follow-up.
+ * Kept because the LATENCY shape is the interesting part. RE-MEASURED against
+ * the fold on 2026-09-18 (Arch box, cross-core-defects.md 8.2b): 0 failures in
+ * 1000 rounds and min = mean = 1 spin at every depth. Read that carefully, it is
+ * flat partly BY CONSTRUCTION: get_priority() now folds on read, so the first
+ * poll after the donor parks already sees the donation, and there is no
+ * cross-core propagation left for this curve to measure. The cost moved into
+ * the fold itself, which DISABLED_..._ReportFoldCost prices.
  *
  *   depth curve, 200 rounds per depth, 1000 rounds total in 3.5 seconds:
  *
@@ -96,10 +98,10 @@
 
 #include <cyros/sync/mutex.hpp>
 #include <cyros/sync/semaphore.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
-#include <cyros/port/port.h>
 
 #include <common/guarded_stack.hpp>
 
@@ -146,7 +148,7 @@ template <typename Predicate>
 {
    for (std::uint64_t i = 1; i <= budget; ++i) {
       if (done()) return i;
-      cyros_port_cpu_relax();
+      this_core::cpu_relax();
    }
    return 0;
 }

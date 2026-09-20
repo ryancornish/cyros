@@ -1004,3 +1004,109 @@ TEST(SingleCoreMultiThread_Test,
 
    kernel::finalise();
 }
+
+/* The three move cases the tests above did not reach, each of which was broken
+ * until 2026-09-19 (threading_subsystem.cpp):
+ *   - moving FROM an empty handle dereferenced a null TCB,
+ *   - self-move-assignment EMPTIED the handle and lost the thread,
+ *   - assigning over a handle skipped the destructor's must-be-terminated
+ *     contract, so it could silently abandon a live thread.
+ * The first two are pinned directly. The third is pinned from its legal side
+ * (assigning over a handle whose thread HAS terminated, then joining through
+ * the reassigned handle). Its illegal side is an assert, which needs a death
+ * test, see the roadmap's A2 plan. */
+
+TEST(SingleCoreMultiThread_Test,
+     GivenAnEmptyHandle_WhenMovedFrom_ThenBothHandlesStayEmptyAndNothingCrashes)
+{
+   kernel::initialise();
+
+   thread empty;
+   thread constructed(std::move(empty));   // move-construct from empty
+   thread assigned;
+   assigned = std::move(constructed);      // move-assign from empty
+
+   cyros::test::guarded_stack stack;
+   bool ran = false;
+   thread real([&]{ ran = true; }, stack, thread::priority(0), core0);
+
+   kernel::start();
+
+   EXPECT_TRUE(ran);
+   EXPECT_EQ(kernel::active_threads(), 0u);
+
+   kernel::finalise();
+}
+
+TEST(SingleCoreMultiThread_Test,
+     GivenAHandle_WhenMoveAssignedToItself_ThenItStillOwnsItsThread)
+{
+   cyros::test::guarded_stack stack;
+   bool ran = false;
+
+   kernel::initialise();
+
+   thread t([&]{ ran = true; }, stack, thread::priority(0), core0);
+   auto const id_before = t.get_id();
+
+   // Through a reference, because GCC's -Wself-move rejects the literal
+   // `t = std::move(t)` under -Werror, which is a compile-time guard for
+   // exactly this case, but not one a handle reached through a pointer or a
+   // container gets.
+   thread& same = t;
+   t = std::move(same);
+
+   EXPECT_EQ(t.get_id(), id_before) << "self-move-assignment emptied the handle";
+
+   kernel::start();
+
+   EXPECT_TRUE(ran);
+   EXPECT_EQ(kernel::active_threads(), 0u);
+
+   kernel::finalise();
+}
+
+TEST(SingleCoreMultiThread_Test,
+     GivenAHandleWhoseThreadTerminated_WhenAnotherThreadIsMoveAssignedIntoIt_ThenItJoinsTheNewThread)
+{
+   cyros::test::guarded_stack first_stack;
+   cyros::test::guarded_stack second_stack;
+   cyros::test::guarded_stack controller_stack;
+
+   struct
+   {
+      thread a;
+      thread b;
+      thread::id second_id{0};
+      std::vector<int> order;
+   } s;
+
+   kernel::initialise();
+
+   s.a = thread([&s]{ s.order.push_back(1); }, first_stack, thread::priority(1), core0);
+   s.b = thread([&s]{ s.order.push_back(2); }, second_stack, thread::priority(2), core0);
+   s.second_id = s.b.get_id();
+
+   // Most urgent, so it runs first. It joins the first thread, then reuses that
+   // terminated handle for the second one and joins through it.
+   thread controller(
+      [&s]{
+         s.a.join();                   // first thread runs and terminates
+         s.a = std::move(s.b);         // legal: a's thread has terminated
+         s.a.join();                   // joins the SECOND thread via the reused handle
+         s.order.push_back(3);
+      },
+      controller_stack, thread::priority(0), core0
+   );
+
+   kernel::start();
+
+   ASSERT_EQ(s.order.size(), 3u);
+   EXPECT_EQ(s.order[0], 1);
+   EXPECT_EQ(s.order[1], 2);
+   EXPECT_EQ(s.order[2], 3) << "the join through the reassigned handle returned early";
+   EXPECT_EQ(s.a.get_id(), s.second_id) << "the reassigned handle does not own the second thread";
+   EXPECT_EQ(kernel::active_threads(), 0u);
+
+   kernel::finalise();
+}

@@ -21,6 +21,17 @@ namespace cyros::this_core
  */
 CYROS_PUBLIC void pend_reschedule() noexcept;
 
+/**
+ * @brief Spin-wait hint: call once per iteration of a busy-wait loop.
+ *
+ * Tells the core it is spinning (PAUSE on x86, YIELD on ARM), which saves power
+ * and frees pipeline resources for a sibling hardware thread. It is a hardware
+ * hint only and does NOT yield to another cyros thread. So the usual rule still
+ * applies: spin only on a condition another CORE will satisfy, because a
+ * spinner can starve a same-core thread it is waiting for.
+ */
+CYROS_PUBLIC void cpu_relax() noexcept;
+
 struct [[nodiscard]] preemption_token { std::uint32_t v; };
 
 CYROS_PUBLIC preemption_token disable_preemption() noexcept;

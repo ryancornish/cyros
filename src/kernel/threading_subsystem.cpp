@@ -35,14 +35,31 @@ thread::~thread()
 thread::thread(thread&& other) noexcept : tcb(other.tcb)
 {
    other.tcb = nullptr;
-   tcb->public_thread_handle = this;
+   if (tcb != nullptr) {
+      tcb->public_thread_handle = this; // moving an empty handle is legal, and a no-op
+   }
 }
 
 thread& thread::operator=(thread&& other) noexcept
 {
+   // Self-move is a no-op. Without this guard the two lines below emptied the
+   // handle (tcb = other.tcb, then other.tcb = nullptr, with other == this),
+   // losing the thread and skipping the destructor's must-be-terminated check.
+   if (this == &other) return *this;
+
+   // Overwriting a handle is destroying it, so it carries the destructor's
+   // contract: the thread it owned must already have terminated. This used to
+   // abandon a live thread silently.
+   if (tcb != nullptr) {
+      CYROS_ASSERT(tcb->state == thread_state::terminated); // Assigned over a live thread
+      tcb->public_thread_handle = nullptr;
+   }
+
    tcb = other.tcb;
    other.tcb = nullptr;
-   tcb->public_thread_handle = this;
+   if (tcb != nullptr) {
+      tcb->public_thread_handle = this;
+   }
    return *this;
 }
 

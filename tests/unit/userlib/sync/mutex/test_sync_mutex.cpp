@@ -1,8 +1,8 @@
 #include <cyros/sync/mutex.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
-#include <cyros/port/port.h>
 
 #include <common/guarded_stack.hpp>
 
@@ -234,7 +234,7 @@ TEST_F(SyncMutex_Test, GivenHeldByAnotherCore_WhenTryLockProbes_ThenItFails)
          // Hold across the observer's whole probe so the mutex is never
          // legitimately free while it is looking.
          while (!s.observer_done.load(std::memory_order_acquire)) {
-            cyros_port_cpu_relax();
+            this_core::cpu_relax();
          }
          s.m.unlock();
       },
@@ -246,7 +246,7 @@ TEST_F(SyncMutex_Test, GivenHeldByAnotherCore_WhenTryLockProbes_ThenItFails)
    thread observer(
       [&s]{
          while (!s.holder_owns.load(std::memory_order_acquire)) {
-            cyros_port_cpu_relax();
+            this_core::cpu_relax();
          }
          // Must fail: the mutex is held by the holder on core0.
          s.probe_result.store(s.m.try_lock(), std::memory_order_release);
@@ -331,7 +331,7 @@ TEST_F(SyncMutex_Test, GivenFourCoresHammeringOneMutex_WhenTheyLockRepeatedly_Th
 
             // Widen the window so a real violation overlaps observably.
             for (int w = 0; w < critical_section_widen; ++w) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
 
             s.occupancy.fetch_sub(1, std::memory_order_release);
@@ -421,7 +421,7 @@ TEST_F(SyncMutex_Test, GivenWaiterParkedAndFreshCoreProbing_WhenOwnerUnlocks_The
             // Both flags are set from OTHER cores, so this spin cannot wedge.
             while (!s.waiter_armed.load(std::memory_order_acquire) ||
                    !s.barger_spinning.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.unlock();
          },
@@ -433,7 +433,7 @@ TEST_F(SyncMutex_Test, GivenWaiterParkedAndFreshCoreProbing_WhenOwnerUnlocks_The
       thread waiter(
          [&s]{
             while (!s.owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.lock();  // parks, then must be handed ownership by owner's unlock
             s.waiter_acquired.store(true, std::memory_order_release);
@@ -462,7 +462,7 @@ TEST_F(SyncMutex_Test, GivenWaiterParkedAndFreshCoreProbing_WhenOwnerUnlocks_The
       thread barger(
          [&s]{
             while (!s.owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.barger_spinning.store(true, std::memory_order_release);
             // Hammer try_lock against the owner's unlock from a core that did
@@ -479,7 +479,7 @@ TEST_F(SyncMutex_Test, GivenWaiterParkedAndFreshCoreProbing_WhenOwnerUnlocks_The
                   s.m.unlock();
                   return;
                }
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          barger_stack,
@@ -550,7 +550,7 @@ TEST_F(SyncMutex_Test, GivenTwoWaitersOfDifferentPriorityParked_WhenOwnerUnlocks
             // test. Cross-core flags, so no wedge.
             while (!s.low_armed.load(std::memory_order_acquire) ||
                    !s.high_armed.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.unlock();  // must hand to the higher-priority waiter
          },
@@ -563,7 +563,7 @@ TEST_F(SyncMutex_Test, GivenTwoWaitersOfDifferentPriorityParked_WhenOwnerUnlocks
       thread low_waiter(
          [&s]{
             while (!s.owner_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             // Arrival marker only, gating high's start. It does NOT gate the
             // owner's release, low_armed/high_armed do that, so the test proves
@@ -594,7 +594,7 @@ TEST_F(SyncMutex_Test, GivenTwoWaitersOfDifferentPriorityParked_WhenOwnerUnlocks
       thread high_waiter(
          [&s]{
             while (!s.low_parked.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.lock();
             s.high_order.store(static_cast<std::int32_t>(s.acquire_seq.fetch_add(1, std::memory_order_acq_rel)),

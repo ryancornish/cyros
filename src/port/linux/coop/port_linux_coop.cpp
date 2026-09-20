@@ -573,10 +573,14 @@ void cyros_port_irq_restore(cyros_mask_token_t token)
 {
    (void)token; // inert on this port, there is no mask to restore
 
-   // Unwind one nesting level
-   if (current_core.interrupt_disable_depth > 0) {
-      current_core.interrupt_disable_depth--;
-   }
+   // Unwind one nesting level. An unbalanced restore is a contract violation,
+   // asserted exactly as the preempt port asserts it. This used to clamp at
+   // zero instead, which made the coop port the one place an unbalanced
+   // restore went silent: a spinlock try_lock/unlock bug that panicked on the
+   // preempt port only showed up here as interrupts quietly re-enabling inside
+   // an outer critical section (tests/unit/kernel/test_spinlock).
+   CYROS_ASSERT(current_core.interrupt_disable_depth > 0); // unbalanced restore
+   current_core.interrupt_disable_depth--;
 
    // Interrupt depth reaching 0 is one of the contract's safe points: if a
    // reschedule was pended while masked, resolve it (only fires if preemption

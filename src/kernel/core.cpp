@@ -14,6 +14,11 @@ void pend_reschedule() noexcept
    cyros_port_pend_reschedule();
 }
 
+void cpu_relax() noexcept
+{
+   cyros_port_cpu_relax();
+}
+
 preemption_token disable_preemption() noexcept
 {
    return { .v = cyros_port_preempt_disable() };

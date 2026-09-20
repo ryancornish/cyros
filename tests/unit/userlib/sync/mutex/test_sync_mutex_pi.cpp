@@ -1,4 +1,5 @@
 #include <cyros/sync/mutex.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
@@ -47,9 +48,11 @@ namespace
 
 // Bounded budget for conductor polls that a PI failure would otherwise turn
 // into an infinite spin. Generous by orders of magnitude against IPI plus
-// reschedule latency, but sized remembering that debug builds do not inline
-// cyros_port_cpu_relax, so every iteration is a real call and a failed stage
-// should still report within a couple of seconds rather than minutes.
+// reschedule latency, but sized remembering that nothing here inlines:
+// this_core::cpu_relax is an out-of-line public wrapper around the port's
+// cyros_port_cpu_relax (two real calls per iteration since 2026-09-19, one
+// before), so a failed stage should still report within a couple of seconds
+// rather than minutes.
 constexpr std::uint64_t poll_budget = 20'000'000;
 
 // Extra spins the boosted holder burns after the exit signal before checking
@@ -79,7 +82,7 @@ template <typename Predicate>
 {
    for (std::uint64_t i = 0; i < poll_budget; ++i) {
       if (done()) return true;
-      cyros_port_cpu_relax();
+      this_core::cpu_relax();
    }
    return false;
 }
@@ -152,14 +155,14 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
             // inversion (H parked and provably donating, Mid provably ready).
             // Cross-core flag, cannot wedge.
             while (!s.exit_cs.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
 
             // Grace window: Mid's ready request has had orders of magnitude
             // longer than an IPI to land. If we are still running, priority
             // inheritance is what kept us on the core.
             for (int i = 0; i < grace_spins; ++i) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.spinner_preempted_cs.store(s.mid_started.load(std::memory_order_acquire),
                                          std::memory_order_release);
@@ -174,7 +177,7 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
       thread h(
          [&s]{
             while (!s.conductor_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.g_h.lock(); // parks until the conductor stages us
             s.g_h.unlock();
@@ -197,7 +200,7 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
       thread mid(
          [&s]{
             while (!s.conductor_ready.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             // Parked here until the conductor stages the inversion. Without
             // this gate Mid monopolises core0 from the first schedule and
@@ -211,7 +214,7 @@ TEST_F(SyncMutexPi_Test, GivenSpinnerBetweenHolderAndWaiter_WhenHighBlocksOnHeld
             // prevent the preemption and the CS check above records it.
             s.mid_started.store(true, std::memory_order_release);
             while (!s.mid_stop.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax(); // the starvation threat, defanged by PI
+               this_core::cpu_relax(); // the starvation threat, defanged by PI
             }
          },
          stacks[2],
@@ -341,7 +344,7 @@ TEST_F(SyncMutexPi_Test, GivenBlockedHolderChainAcrossCores_WhenUrgentWaiterJoin
             s.m1.lock();
             s.c_locked.store(true, std::memory_order_release);
             while (!s.release_c.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m1.unlock(); // transfer to B, restore to base 5
          },
@@ -353,14 +356,14 @@ TEST_F(SyncMutexPi_Test, GivenBlockedHolderChainAcrossCores_WhenUrgentWaiterJoin
       thread b_thread(
          [&s]{
             while (!s.c_locked.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m2.lock();
             s.b_locked.store(true, std::memory_order_release);
             s.m1.lock(); // parks behind C, donating 3
             s.b_got_m1.store(true, std::memory_order_release);
             while (!s.release_b.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m1.unlock(); // frees, no waiters remain on M1
             s.m2.unlock(); // transfer to A, restore to base 3
@@ -373,12 +376,12 @@ TEST_F(SyncMutexPi_Test, GivenBlockedHolderChainAcrossCores_WhenUrgentWaiterJoin
       thread a_thread(
          [&s]{
             while (!s.a_go.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m2.lock(); // parks behind B: the transitive trigger
             s.a_got_m2.store(true, std::memory_order_release);
             while (!s.a_exit.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m2.unlock();
          },

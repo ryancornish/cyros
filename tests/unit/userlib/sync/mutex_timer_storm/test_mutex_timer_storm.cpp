@@ -49,11 +49,11 @@
 
 #include <cyros/sync/mutex.hpp>
 #include <cyros/sync/semaphore.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/time/time.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
-#include <cyros/port/port.h>
 
 #include <common/guarded_stack.hpp>
 
@@ -107,7 +107,7 @@ struct storm_state
 void tick_callback(void* arg) noexcept
 {
    auto* s = static_cast<storm_state*>(arg);
-   s->ticks[cyros_port_get_core_id()].fetch_add(1, std::memory_order_relaxed);
+   s->ticks[this_core::id()].fetch_add(1, std::memory_order_relaxed);
 }
 
 
@@ -118,7 +118,7 @@ void tick_callback(void* arg) noexcept
 void isr_wake_callback(void* arg) noexcept
 {
    auto* s = static_cast<storm_state*>(arg);
-   s->ticks[cyros_port_get_core_id()].fetch_add(1, std::memory_order_relaxed);
+   s->ticks[this_core::id()].fetch_add(1, std::memory_order_relaxed);
    s->isr_wakes.fetch_add(1, std::memory_order_relaxed);
    s->isr_gate.release();
 }

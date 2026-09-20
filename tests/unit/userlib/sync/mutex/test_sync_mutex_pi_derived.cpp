@@ -35,10 +35,10 @@
 #include <cyros/sync/cemutex.hpp>
 #include <cyros/sync/mutex.hpp>
 #include <cyros/sync/semaphore.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
-#include <cyros/port/port.h>
 
 #include <common/guarded_stack.hpp>
 
@@ -63,7 +63,7 @@ template <typename Predicate>
 {
    for (std::uint64_t i = 0; i < budget; ++i) {
       if (done()) return true;
-      cyros_port_cpu_relax();
+      this_core::cpu_relax();
    }
    return false;
 }
@@ -143,7 +143,7 @@ TEST_F(SyncMutexPiDerived_Test,
             s.n_gate.release();
 
             while (!s.spinner_running.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
 
             // If we are ever scheduled again it is because the pick folded our
@@ -161,7 +161,7 @@ TEST_F(SyncMutexPiDerived_Test,
             s.n_gate.acquire();   // blocks, so H can run and take the mutex first
             s.spinner_running.store(true, std::memory_order_release);
             while (!s.stop_spinner.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[1], thread::priority(3), core0);
@@ -170,7 +170,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread u(
          [&s]{
             while (!s.spinner_running.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.lock();     // donates urgency 1 to H
             s.m.unlock();
@@ -248,7 +248,7 @@ TEST_F(SyncMutexPiDerived_Test,
             s.shared.lock();
             s.c_holds.store(true, std::memory_order_release);
             while (!s.release_c.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.shared.unlock();
          },
@@ -265,7 +265,7 @@ TEST_F(SyncMutexPiDerived_Test,
             [&s, i]{
                s.own[i].lock();
                while (!s.c_holds.load(std::memory_order_acquire)) {
-                  cyros_port_cpu_relax();
+                  this_core::cpu_relax();
                }
                s.parked.fetch_add(1, std::memory_order_acq_rel);
                s.shared.lock();
@@ -402,7 +402,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread d(
          [&s]{
             while (!s.h_holds.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.lock();
             s.m.unlock();
@@ -530,7 +530,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread d1(
          [&s]{
             while (!s.h1_holds.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m1.lock();
             s.m1.unlock();
@@ -540,7 +540,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread d2(
          [&s]{
             while (!s.h2_holds.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m2.lock();
             s.m2.unlock();
@@ -641,12 +641,12 @@ TEST_F(SyncMutexPiDerived_Test,
             s.h_holds_both.store(true, std::memory_order_release);
 
             while (!s.drop_keen.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.keen.unlock();
 
             while (!s.drop_mild.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.mild.unlock();
          },
@@ -656,7 +656,7 @@ TEST_F(SyncMutexPiDerived_Test,
       auto const waiter = [&s](mutex& m) {
          return [&s, &m]{
             while (!s.h_holds_both.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             m.lock();
             m.unlock();
@@ -762,7 +762,7 @@ TEST_F(SyncMutexPiDerived_Test,
             // BEHIND a better-base thread instead of straight onto the core.
             while (!s.stop_spinner.load(std::memory_order_acquire)
                    && !s.spinner_running.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.unlock();                                  // hands the mutex to H
             s.l_released.store(true, std::memory_order_release);
@@ -772,7 +772,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread h(
          [&s]{
             while (!s.l_holds.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.lock();
             s.h_resumed.store(true, std::memory_order_release);
@@ -798,7 +798,7 @@ TEST_F(SyncMutexPiDerived_Test,
             s.n_gate.acquire();
             s.spinner_running.store(true, std::memory_order_release);
             while (!s.stop_spinner.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[3], thread::priority(3), core0);
@@ -808,7 +808,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread u(
          [&s]{
             while (!s.l_released.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.lock();     // donates urgency 1 to H
             s.m.unlock();
@@ -918,7 +918,7 @@ TEST_F(SyncMutexPiDerived_Test,
          [&s]{
             s.n_gate.acquire();
             while (!s.stop_spinner.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[1], thread::priority(2), core0);
@@ -929,7 +929,7 @@ TEST_F(SyncMutexPiDerived_Test,
          [&s]{
             s.m2.lock();
             while (!s.c_holds.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m1.lock();      // parks behind C, donating urgency 3
             s.m1.unlock();
@@ -950,7 +950,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread a(
          [&s]{
             while (!s.b_parked.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m2.lock();
             s.m2.unlock();
@@ -1077,7 +1077,7 @@ TEST_F(SyncMutexPiDerived_Test,
             s.n_gate.acquire();
             s.spinner_running.store(true, std::memory_order_release);
             while (!s.stop_spinner.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[1], thread::priority(2), core0);
@@ -1090,14 +1090,14 @@ TEST_F(SyncMutexPiDerived_Test,
             s.m2.lock();
             while (!s.spinner_running.load(std::memory_order_acquire)
                    && !s.stop_spinner.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.b_locking.store(true, std::memory_order_release);
             // Bounded stall, swept on a stride coprime with the driver's, so
             // the arm-to-park window slides through P's fairly fixed wake
             // latency and the two meet at some alignment in every run.
             for (int j = (rep % 13) * 96; j > 0; --j) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m1.lock();
             s.m1.unlock();
@@ -1112,7 +1112,7 @@ TEST_F(SyncMutexPiDerived_Test,
          [&s]{
             s.p_gate.acquire();
             while (!s.stop_p.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[3], thread::priority(0), core1);
@@ -1128,10 +1128,10 @@ TEST_F(SyncMutexPiDerived_Test,
          [&s]{
             while (!s.b_locking.load(std::memory_order_acquire)
                    && !s.stop_spinner.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             for (int j = 8192; j > 0; --j) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m2.lock();
             s.m2.unlock();
@@ -1151,7 +1151,7 @@ TEST_F(SyncMutexPiDerived_Test,
             // Sweep P's release across B's arm-to-park window round by round.
             // A hit rotates B out ready-and-armed and holds it there for A.
             for (int j = (rep % 5) * 128; j > 0; --j) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.p_gate.release();
 
@@ -1249,7 +1249,7 @@ TEST_F(SyncMutexPiDerived_Test,
             // ceiling keeps us on the core.
             s.n_gate.release();
             for (std::uint32_t i = 0; i < 200000; ++i) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.preempted_in_cs.store(s.spinner_ran.load(std::memory_order_acquire),
                                     std::memory_order_release);
@@ -1270,7 +1270,7 @@ TEST_F(SyncMutexPiDerived_Test,
              * until told otherwise means the only thing that can hand it to N
              * is the release prompt. */
             while (!s.stop_spinner.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[0], thread::priority(5), core0);
@@ -1284,7 +1284,7 @@ TEST_F(SyncMutexPiDerived_Test,
             }
             while (!s.stop_spinner.load(std::memory_order_acquire)) {
                s.n_ran_after.store(true, std::memory_order_release);
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[1], thread::priority(3), core0);
@@ -1397,14 +1397,14 @@ TEST_F(SyncMutexPiDerived_Test,
             s.h_holds.store(true, std::memory_order_release);
 
             while (!s.finish_h.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.cs_done.store(true, std::memory_order_release);
             s.c.unlock();
 
             // Back at base 5. Stay alive so the run does not end here.
             while (!s.stop_all.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[0], thread::priority(5), core0);
@@ -1417,7 +1417,7 @@ TEST_F(SyncMutexPiDerived_Test,
             s.x_gate.acquire();
             s.x_ran.store(true, std::memory_order_release);
             while (!s.stop_all.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
          },
          stacks[1], thread::priority(1), core0);
@@ -1428,7 +1428,7 @@ TEST_F(SyncMutexPiDerived_Test,
          [&s]{
             s.m.lock();
             while (!s.h_holds.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.c.lock();      // parks behind H
             s.c.unlock();
@@ -1449,7 +1449,7 @@ TEST_F(SyncMutexPiDerived_Test,
       thread u(
          [&s]{
             while (!s.w_parked.load(std::memory_order_acquire)) {
-               cyros_port_cpu_relax();
+               this_core::cpu_relax();
             }
             s.m.lock();     // lifts W to 0, which must reach H through C
             s.m.unlock();
