@@ -39,7 +39,7 @@ objcopy = "arm-none-eabi-objcopy"
 # section GC the whole object lands in the image.
 common = ["-mcpu=cortex-m33", "-mthumb", "-mfloat-abi=soft", "-ffunction-sections", "-fdata-sections"]
 c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions"]
-cxx = ["-std=gnu++23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions", "-fno-rtti"]
+cxx = ["-std=gnu++26", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions", "-fno-rtti"]
 asm = []
 
 # -nostartfiles: the application owns its reset path. newlib's crt0 assumes a

@@ -9,7 +9,7 @@ asm = "gcc-16"
 [flags]
 common = ["-g3", "-O0"]
 c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic"]
-cxx = ["-std=gnu++23", "-Wall", "-Werror", "-Wextra", "-Wpedantic"]
+cxx = ["-std=gnu++26", "-Wall", "-Werror", "-Wextra", "-Wpedantic"]
 asm = []
 link = []
 

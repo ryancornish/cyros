@@ -7,86 +7,63 @@
 
 #include "threading_subsystem.hpp"
 
-#include <array>
+#include <cstddef>
+#include <inplace_vector>
 
 namespace cyros
 {
 
-// TODO: Replace with std::inplace_vector?
+/**
+ * @brief The wait nodes one blocking call owns, one per waitable.
+ */
 class wait_node_vector
 {
 private:
    using wait_node = wait_queue::wait_node;
 
-   std::array<wait_node, config::max_wait_nodes> store{};
-   std::size_t count = 0;
+   std::inplace_vector<wait_node, config::max_wait_nodes> store;
 
 public:
    constexpr wait_node_vector() = default;
-   constexpr wait_node_vector(std::size_t node_count, thread_control_block& tcb)
+
+   /**
+    * @brief One node per waitable, all owned by @p tcb.
+    */
+   wait_node_vector(std::size_t node_count, thread_control_block& tcb)
    {
+      CYROS_ASSERT_OP(node_count, <=, config::max_wait_nodes);
+
       for (std::size_t i = 0; i < node_count; ++i) {
-         push({
+         auto slot = store.try_push_back(wait_node{
             .owner = &tcb,
-            .next = nullptr,
+            .next  = nullptr,
          });
+         CYROS_ASSERT(slot.has_value());
       }
    }
 
-   using iterator = wait_node*;
-   using const_iterator = wait_node const*;
-
-   iterator begin()
+   [[nodiscard]] std::size_t size() const noexcept
    {
-      return store.data();
-   }
-
-   iterator end()
-   {
-      return store.data() + count;
+      return store.size();
    }
 
    [[nodiscard]] bool empty() const noexcept
    {
-      return count == 0;
-   }
-
-   [[nodiscard]] size_t size() const noexcept
-   {
-      return count;
-   }
-
-   [[nodiscard]] const_iterator begin() const noexcept
-   {
-      return store.data();
-   }
-
-   [[nodiscard]] const_iterator end() const noexcept
-   {
-     return store.data() + count;
-   }
-
-   [[nodiscard]] constexpr size_t capacity() const noexcept
-   {
-     return store.size();
+      return store.empty();
    }
 
    wait_node const& operator[](std::size_t index) const noexcept
    {
-      CYROS_ASSERT(index < count);
+      CYROS_ASSERT(index < store.size());
+
       return store[index];
    }
 
    wait_node& operator[](std::size_t index) noexcept
    {
-      CYROS_ASSERT(index < count);
-      return store[index];
-   }
+      CYROS_ASSERT(index < store.size());
 
-   void push(wait_node node)
-   {
-      CYROS_ASSERT(count < store.size());
-      store[count++] = node;
+      return store[index];
    }
 };
 
