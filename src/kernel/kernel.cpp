@@ -159,11 +159,10 @@ void idle_task()
    }
 
    while (k.running.load(std::memory_order::relaxed)) {
-      // Re-check BEFORE sleeping. cyros_port_idle() blocks until signalled, so
-      // a notification lost between a producer's push and this point would
-      // otherwise park the core with work outstanding, which is a hang rather
-      // than a delay. The intake is the truth and the IPI only a hint, so
-      // looking again here is what makes losing the hint survivable.
+      // TODO: The below check supposedly prevents a race
+      // with a lost notification arriving but not signalling because
+      // we are not in cyros_port_idle() yet. But I find it hard to believe
+      // that this check _prevents_ a race altogether...
       if (scheduler_for_this_core().intake_pending()) {
          this_thread::yield();
          continue;
