@@ -3,8 +3,8 @@ extends = "clang-base.toml"
 
 [flags]
 common_add = ["-O0", "-g"]
-cxx_add    = ["-stdlib=libc++"]
-link_add   = ["-stdlib=libc++"]
+cxx_add = ["-stdlib=libc++"]
+link_add = ["-stdlib=libc++"]
 
 [settings]
 debug = true

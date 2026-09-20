@@ -1,12 +1,12 @@
 [test]
-name   = "test_sync_semaphore"
+name = "test_sync_semaphore"
 source = "test_sync_semaphore.cpp"
 config = "test_sync_semaphore_config.hpp"
 
 [components]
-port        = "linux_preempt"
+port = "linux_preempt"
 time_driver = "tickless"
-features    = ["sync"]
+features = ["sync"]
 
 [link]
 system_libraries = ["gtest", "gtest_main"]

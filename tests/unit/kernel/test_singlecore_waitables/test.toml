@@ -1,5 +1,5 @@
 [test]
-name   = "test_singlecore_waitables"
+name = "test_singlecore_waitables"
 source = "test_singlecore_waitables.cpp"
 config = "test_singlecore_waitables_config.hpp"
 

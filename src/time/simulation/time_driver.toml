@@ -1,9 +1,9 @@
 name = "simulation"
 
 sources = [
-  "time_driver_simulation.cpp",
+   "time_driver_simulation.cpp",
 ]
 
 public_headers = [
-  "public_headers/simulation.hpp -> cyros/time/simulation.hpp",
+   "public_headers/simulation.hpp -> cyros/time/simulation.hpp",
 ]

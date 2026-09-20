@@ -14,5 +14,5 @@ private_includes = [
 ]
 
 public_headers = [
-  "public_headers/port_traits.h -> cyros/port/port_traits.h",
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
 ]

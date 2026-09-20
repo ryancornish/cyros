@@ -1,5 +1,5 @@
 [test]
-name   = "test_singlecore_multithread"
+name = "test_singlecore_multithread"
 source = "test_singlecore_multithread.cpp"
 config = "test_singlecore_multithread_config.hpp"
 

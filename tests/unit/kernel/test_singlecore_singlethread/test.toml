@@ -1,5 +1,5 @@
 [test]
-name   = "test_singlecore_singlethread"
+name = "test_singlecore_singlethread"
 source = "test_singlecore_singlethread.cpp"
 config = "test_singlecore_singlethread_config.hpp"
 

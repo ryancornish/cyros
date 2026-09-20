@@ -1,0 +1,7 @@
+[test]
+name = "test_spinlock"
+source = "test_spinlock.cpp"
+config = "test_spinlock_config.hpp"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

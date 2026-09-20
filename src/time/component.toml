@@ -1,12 +1,12 @@
 name = "time"
 kind = "time"
 
-public_headers = [
-  "public_headers/time.hpp -> cyros/time/time.hpp",
+variants = [
+   "simulation",
+   "periodic",
+   "tickless",
 ]
 
-variants = [
-  "simulation",
-  "periodic",
-  "tickless",
+public_headers = [
+   "public_headers/time.hpp -> cyros/time/time.hpp",
 ]

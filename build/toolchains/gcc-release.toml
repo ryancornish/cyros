@@ -3,11 +3,12 @@ extends = "gcc-base.toml"
 
 [flags]
 common_add = ["-O2"]
+
 # -fvisibility=hidden hides every symbol unless its declaration carries
 # CYROS_PUBLIC (see cyros/kernel/visibility.hpp). That is what gives
 # archive.localize_hidden something to act on: the merged object keeps only the
 # declared public ABI global and localizes the rest.
-c_add   = ["-ffunction-sections", "-fdata-sections", "-flto", "-fvisibility=hidden"]
+c_add = ["-ffunction-sections", "-fdata-sections", "-flto", "-fvisibility=hidden"]
 cxx_add = ["-ffunction-sections", "-fdata-sections", "-flto", "-fvisibility=hidden", "-fvisibility-inlines-hidden"]
 
 [settings]
@@ -17,6 +18,7 @@ optimization = "2"
 [archive]
 strategy = "lto_merged"
 localize_hidden = true
+
 # MUST stay false while localize_hidden is true, and the loader enforces it.
 # preserve_lto_sections selects -flinker-output=rel, which keeps the GIMPLE IR in
 # the object; symbol resolution then comes from the LTO plugin, which ignores the

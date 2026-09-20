@@ -1,5 +1,5 @@
 [test]
-name   = "test_time_driver_periodic"
+name = "test_time_driver_periodic"
 source = "test_time_driver_periodic.cpp"
 config = "test_time_driver_periodic_config.hpp"
 

@@ -1,5 +1,5 @@
 [test]
-name   = "test_chrono_alarm_preempt"
+name = "test_chrono_alarm_preempt"
 source = "test_chrono_alarm_preempt.cpp"
 config = "test_chrono_alarm_preempt_config.hpp"
 
@@ -7,9 +7,9 @@ config = "test_chrono_alarm_preempt_config.hpp"
 # a genuinely blocked thread. This is the suite that gives the ISR-safe wake
 # claim a consumer, so it asserts order and lower bounds, never exact ticks
 [components]
-port        = "linux_preempt"
+port = "linux_preempt"
 time_driver = "periodic"
-features    = ["chrono", "sync"]
+features = ["chrono", "sync"]
 
 [link]
 system_libraries = ["gtest", "gtest_main"]

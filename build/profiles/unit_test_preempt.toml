@@ -1,6 +1,7 @@
 [profile]
 name = "unit_test_preempt"
 toolchain = "../toolchains/gcc-debug.toml"
+
 # config_header is intentionally omitted. Each test supplies its own via
 # test.toml [test].config.
 
@@ -10,6 +11,7 @@ output_root = "../../out"
 
 [components]
 port = "linux_preempt"
+
 # time_driver intentionally omitted. Each test supplies its own via
 # test.toml [components].time_driver (if it needs one).
 

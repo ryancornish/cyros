@@ -1,5 +1,5 @@
 [test]
-name   = "test_time_driver_tickless_preempt"
+name = "test_time_driver_tickless_preempt"
 source = "test_time_driver_tickless_preempt.cpp"
 config = "test_time_driver_tickless_preempt_config.hpp"
 

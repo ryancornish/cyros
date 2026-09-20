@@ -1,12 +1,12 @@
 [test]
-name   = "test_mutex_timer_storm"
+name = "test_mutex_timer_storm"
 source = "test_mutex_timer_storm.cpp"
 config = "test_mutex_timer_storm_config.hpp"
 
 [components]
-port        = "linux_preempt"
+port = "linux_preempt"
 time_driver = "periodic"
-features    = ["sync"]
+features = ["sync"]
 
 [link]
 system_libraries = ["gtest", "gtest_main"]

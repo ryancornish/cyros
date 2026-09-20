@@ -1,5 +1,5 @@
 [test]
-name   = "test_multicore_waitables"
+name = "test_multicore_waitables"
 source = "test_multicore_waitables.cpp"
 config = "test_multicore_waitables_config.hpp"
 

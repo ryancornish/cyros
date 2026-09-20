@@ -1,12 +1,14 @@
 name = "port"
 kind = "port"
 
-public_headers = [
-  "public_headers/port.h -> cyros/port/port.h",
-  "public_headers/port_time.h -> cyros/port/port_time.h",
+variants = [
+   "linux_coop",
+   "linux_preempt",
 ]
 
-variants = [
-  "linux_coop",
-  "linux_preempt",
-]
+# port.h and port_time.h are the KERNEL-to-port contract, not a public API. They
+# are an include root rather than public headers: the kernel and the ports
+# compile against them in place, and nothing is copied into the exported tree,
+# so a consumer of libcyros.a cannot reach them at all. See
+# ~/cyros-claude/port-internal-proposal.md.
+internal_include_roots = ["internal_headers"]

@@ -1,5 +1,5 @@
 [test]
-name   = "test_transfer_waitables"
+name = "test_transfer_waitables"
 source = "test_transfer_waitables.cpp"
 config = "test_transfer_waitables_config.hpp"
 

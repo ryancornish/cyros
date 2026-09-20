@@ -1,5 +1,5 @@
 [test]
-name   = "test_diagnostics_deadlock"
+name = "test_diagnostics_deadlock"
 source = "test_diagnostics_deadlock.cpp"
 config = "test_diagnostics_deadlock_config.hpp"
 

@@ -1,5 +1,5 @@
 [test]
-name   = "test_time_driver_simulation"
+name = "test_time_driver_simulation"
 source = "test_time_driver_simulation.cpp"
 config = "test_time_driver_simulation_config.hpp"
 

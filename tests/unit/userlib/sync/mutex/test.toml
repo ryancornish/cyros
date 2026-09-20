@@ -1,5 +1,5 @@
 [test]
-name   = "test_sync_mutex"
+name = "test_sync_mutex"
 source = [
    "test_sync_mutex.cpp",
    "test_sync_mutex_pi.cpp",
@@ -9,9 +9,9 @@ source = [
 config = "test_sync_mutex_config.hpp"
 
 [components]
-port        = "linux_preempt"
+port = "linux_preempt"
 time_driver = "tickless"
-features    = ["sync"]
+features = ["sync"]
 
 [link]
 system_libraries = ["gtest", "gtest_main"]
