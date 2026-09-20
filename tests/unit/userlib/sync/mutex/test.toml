@@ -1,5 +1,6 @@
 [test]
 name = "test_sync_mutex"
+layer = 7
 source = [
    "test_sync_mutex.cpp",
    "test_sync_mutex_pi.cpp",

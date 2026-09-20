@@ -1,8 +1,8 @@
 [test]
-name = "test_multicore_waitables"
+name = "test_multicore_scheduling"
 layer = 5
-source = "test_multicore_waitables.cpp"
-config = "test_multicore_waitables_config.hpp"
+source = "test_multicore_scheduling.cpp"
+config = "test_multicore_scheduling_config.hpp"
 
 [link]
 # Uses its own main() — link gtest but not gtest_main.

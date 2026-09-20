@@ -1,5 +1,6 @@
 [test]
 name = "test_function"
+layer = 0
 source = "test_function.cpp"
 config = "test_function_config.hpp"
 

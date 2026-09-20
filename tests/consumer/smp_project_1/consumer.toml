@@ -1,0 +1,14 @@
+[components]
+# A filter, exactly as in a unit test's test.toml: this project builds its own
+# profile with its own port, so it only runs in the suite for that port rather
+# than being built twice identically.
+port = "linux_preempt"
+
+[consumer]
+binary = "out/bin/main"
+kind = "integration"
+layer = 9
+name = "smp_project_1"
+
+# Several cores with logging. The only consumer exercising the preempt port through the exported tree.
+script = "build.sh"

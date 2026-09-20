@@ -1,5 +1,6 @@
 [test]
 name = "test_singlecore_preemption"
+layer = 3
 source = "test_singlecore_preemption.cpp"
 config = "test_singlecore_preemption_config.hpp"
 

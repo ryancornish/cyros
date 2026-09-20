@@ -14,6 +14,7 @@
 
 #include <cyros/kernel/diagnostics.hpp>
 #include <cyros/kernel/kernel.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/thread.hpp>
 #include <cyros/sync/mutex.hpp>
 #include <cyros/sync/semaphore.hpp>

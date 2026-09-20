@@ -1,5 +1,6 @@
 [test]
 name = "test_time_driver_tickless"
+layer = 1
 source = "test_time_driver_tickless.cpp"
 config = "test_time_driver_tickless_config.hpp"
 

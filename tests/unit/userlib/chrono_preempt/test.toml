@@ -1,5 +1,6 @@
 [test]
 name = "test_chrono_alarm_preempt"
+layer = 8
 source = "test_chrono_alarm_preempt.cpp"
 config = "test_chrono_alarm_preempt_config.hpp"
 

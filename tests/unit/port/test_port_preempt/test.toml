@@ -1,5 +1,6 @@
 [test]
 name = "test_linux_preempt_port"
+layer = 0
 source = "test_linux_preempt_port.cpp"
 config = "test_linux_preempt_port_config.hpp"
 

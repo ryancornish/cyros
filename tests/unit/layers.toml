@@ -1,0 +1,60 @@
+# Layer policy for the T1 test layering.
+#
+# The builder supplies the MECHANISM (compare a test's includes against this
+# table and refuse an upward reach). This file is the POLICY: which layer owns
+# which part of the public API. See ~/cyros-claude/test-layering-proposal.md
+# section 3, and 3g for why this check exists at all.
+#
+# A layer number here is `impl_rank`: 0 for something built on nothing inside
+# cyros, and otherwise one more than the highest thing it is built on. A test at
+# layer N may include anything graded N or below. Reaching above N is refused,
+# unless its test.toml declares a harness debt saying why the contract cannot be
+# observed any lower.
+#
+# Not every layer owns a header. Scheduling (L3) and cross-core wake (L5) are
+# proved through thread.hpp and waitable.hpp rather than headers of their own,
+# so the check constrains those layers only from below. That is a limit of a
+# static include check, not a gap in the model.
+
+prefix = "cyros/"
+
+[headers]
+# L0, built on nothing inside cyros.
+"cyros/kernel/function.hpp" = 0
+"cyros/port/port.h" = 0
+"cyros/port/port_time.h" = 0
+
+# L1, built directly on the port.
+"cyros/kernel/core.hpp" = 1
+"cyros/kernel/spinlock.hpp" = 1
+"cyros/time/time.hpp" = 1
+"cyros/time/simulation.hpp" = 1
+
+# L2, the harness floor: bringing the kernel up and creating threads. Nothing
+# that needs a running core can be observed below this.
+"cyros/kernel/kernel.hpp" = 2
+"cyros/kernel/thread.hpp" = 2
+
+# L4, parking and waking.
+"cyros/kernel/waitable.hpp" = 4
+
+# L6 and L7, userlib sync. Semaphore first: the mutex and diagnostics tests use
+# semaphores as gates, and the semaphore tests use no mutex.
+"cyros/sync/semaphore.hpp" = 6
+"cyros/sync/mutex.hpp" = 7
+"cyros/sync/cemutex.hpp" = 7
+"cyros/kernel/diagnostics.hpp" = 7
+
+# L8, everything coupled to time.
+"cyros/chrono/chrono.hpp" = 8
+"cyros/chrono/alarm.hpp" = 8
+"cyros/rr/round_robin.hpp" = 8
+
+[ungraded]
+# Carry no layer. Compile-time configuration and visibility macros are needed at
+# every layer and say nothing about what a test depends on.
+headers = [
+   "cyros/config/config.hpp",
+   "cyros/port/port_traits.h",
+   "cyros/kernel/visibility.hpp",
+]

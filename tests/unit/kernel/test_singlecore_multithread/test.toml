@@ -1,5 +1,6 @@
 [test]
 name = "test_singlecore_multithread"
+layer = 3
 source = "test_singlecore_multithread.cpp"
 config = "test_singlecore_multithread_config.hpp"
 

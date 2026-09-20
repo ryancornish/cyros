@@ -1,18 +1,22 @@
 /**
  * @file kernel.hpp
- * @brief Cyros Kernel API
+ * @brief The kernel itself: bringing it up, taking it down, and asking what it
+ *        is currently doing.
  *
- * This is the main kernel header. It contains all kernel primitives and APIs.
+ * This header declares `cyros::kernel` and nothing else, which is the whole
+ * point. Until 2026-09-20 it ALSO acted as an umbrella that included every
+ * kernel primitive (threads, waitables, spinlocks, function, core), so there
+ * was no way to depend on starting the kernel without depending on all of them.
+ *
+ * That is a coupling defect in its own right, and it surfaced in the T1 test
+ * layering: bring-up sits below waitables in the chain, but its tests could not
+ * say so while the only header offering kernel::start() also offered wait_on().
+ * The umbrella was removed rather than renamed. Include what you use.
  */
 
 #ifndef CYROS_KERNEL_HPP
 #define CYROS_KERNEL_HPP
 
-#include <cyros/kernel/function.hpp>
-#include <cyros/kernel/spinlock.hpp>
-#include <cyros/kernel/thread.hpp>
-#include <cyros/kernel/waitable.hpp>
-#include <cyros/kernel/core.hpp>
 #include <cyros/kernel/visibility.hpp>
 
 #include <cstdint>

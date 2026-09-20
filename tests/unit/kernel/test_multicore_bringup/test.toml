@@ -1,0 +1,9 @@
+[test]
+name = "test_multicore_bringup"
+layer = 2
+source = "test_multicore_bringup.cpp"
+config = "test_multicore_bringup_config.hpp"
+
+[link]
+# Uses its own main() — link gtest but not gtest_main.
+system_libraries = ["boost_context", "gtest"]

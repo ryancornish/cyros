@@ -1,5 +1,6 @@
 [test]
 name = "test_singlecore_singlethread"
+layer = 2
 source = "test_singlecore_singlethread.cpp"
 config = "test_singlecore_singlethread_config.hpp"
 

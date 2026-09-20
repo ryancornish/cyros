@@ -1,5 +1,7 @@
 [test]
 name = "test_round_robin"
+layer = 8
+kind = "integration"
 source = "test_round_robin.cpp"
 config = "test_round_robin_config.hpp"
 

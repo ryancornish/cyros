@@ -1,5 +1,7 @@
 [test]
 name = "test_spinlock"
+layer = 1
+harness_debt = { layer = 2, reason = "spinlock's contract is interrupt masking on the holding core and exclusion across cores. Neither exists until the kernel has started the cores, so it cannot be observed below the harness floor." }
 source = "test_spinlock.cpp"
 config = "test_spinlock_config.hpp"
 

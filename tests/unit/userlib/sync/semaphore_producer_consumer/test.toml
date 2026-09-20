@@ -1,0 +1,14 @@
+[test]
+name = "test_semaphore_producer_consumer"
+layer = 6
+kind = "integration"
+source = "test_semaphore_producer_consumer.cpp"
+config = "test_semaphore_producer_consumer_config.hpp"
+
+[components]
+port = "linux_preempt"
+time_driver = "tickless"
+features = ["sync"]
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

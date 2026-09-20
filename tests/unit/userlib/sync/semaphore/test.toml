@@ -1,5 +1,6 @@
 [test]
 name = "test_sync_semaphore"
+layer = 6
 source = "test_sync_semaphore.cpp"
 config = "test_sync_semaphore_config.hpp"
 

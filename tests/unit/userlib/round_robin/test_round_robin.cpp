@@ -1,5 +1,7 @@
 #include <cyros/rr/round_robin.hpp>
 #include <cyros/kernel/kernel.hpp>
+#include <cyros/kernel/thread.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/time/time.hpp>
 #include <cyros/port/port_traits.h>
 #include <cyros/config/config.hpp>

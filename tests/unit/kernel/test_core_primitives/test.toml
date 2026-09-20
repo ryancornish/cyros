@@ -1,0 +1,10 @@
+[test]
+name = "test_core_primitives"
+layer = 1
+harness_debt = { layer = 2, reason = "cpu_relax is a spin-wait hint whose only observable effect is that a spin on another core's store makes progress, so it cannot be observed until the kernel has started at least two cores." }
+source = "test_core_primitives.cpp"
+config = "test_core_primitives_config.hpp"
+
+[link]
+# Uses its own main() — link gtest but not gtest_main.
+system_libraries = ["boost_context", "gtest"]

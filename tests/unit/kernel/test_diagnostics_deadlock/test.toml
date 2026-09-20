@@ -1,5 +1,6 @@
 [test]
 name = "test_diagnostics_deadlock"
+layer = 7
 source = "test_diagnostics_deadlock.cpp"
 config = "test_diagnostics_deadlock_config.hpp"
 

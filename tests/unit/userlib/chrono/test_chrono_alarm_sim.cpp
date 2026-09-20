@@ -16,6 +16,7 @@
 #include <cyros/chrono/alarm.hpp>
 #include <cyros/chrono/chrono.hpp>
 #include <cyros/kernel/kernel.hpp>
+#include <cyros/kernel/waitable.hpp>
 #include <cyros/kernel/thread.hpp>
 #include <cyros/sync/semaphore.hpp>
 #include <cyros/time/time.hpp>

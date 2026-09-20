@@ -1,5 +1,6 @@
 [test]
 name = "test_singlecore_waitables"
+layer = 4
 source = "test_singlecore_waitables.cpp"
 config = "test_singlecore_waitables_config.hpp"
 

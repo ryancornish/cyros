@@ -1,0 +1,14 @@
+[consumer]
+name = "basic_project_1"
+layer = 9
+kind = "integration"
+
+# One thread, created and run. The smallest thing a user can do with cyros.
+script = "build.sh"
+binary = "out/bin/main"
+
+[components]
+# A filter, exactly as in a unit test's test.toml: this project builds its own
+# profile with its own port, so it only runs in the suite for that port rather
+# than being built twice identically.
+port = "linux_coop"

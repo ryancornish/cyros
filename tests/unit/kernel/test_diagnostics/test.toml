@@ -1,5 +1,6 @@
 [test]
 name = "test_diagnostics"
+layer = 7
 source = "test_diagnostics.cpp"
 config = "test_diagnostics_config.hpp"
 

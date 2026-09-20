@@ -1,5 +1,6 @@
 [test]
 name = "test_transfer_waitables"
+layer = 5
 source = "test_transfer_waitables.cpp"
 config = "test_transfer_waitables_config.hpp"
 

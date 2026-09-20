@@ -1,5 +1,6 @@
 [test]
 name = "test_time_driver_simulation"
+layer = 1
 source = "test_time_driver_simulation.cpp"
 config = "test_time_driver_simulation_config.hpp"
 

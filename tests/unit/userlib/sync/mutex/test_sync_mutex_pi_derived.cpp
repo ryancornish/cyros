@@ -37,6 +37,7 @@
 #include <cyros/sync/semaphore.hpp>
 #include <cyros/kernel/core.hpp>
 #include <cyros/kernel/kernel.hpp>
+#include <cyros/kernel/thread.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
 

@@ -1,5 +1,7 @@
 [test]
 name = "test_mutex_timer_storm"
+layer = 7
+kind = "integration"
 source = "test_mutex_timer_storm.cpp"
 config = "test_mutex_timer_storm_config.hpp"
 
