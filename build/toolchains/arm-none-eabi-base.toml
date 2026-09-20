@@ -1,0 +1,91 @@
+name = "arm-none-eabi-base"
+
+# Bare-metal ARM cross toolchain, Cortex-M33 (ARMv8-M Mainline).
+#
+# The hardware target is an STM32U575. QEMU's mps2-an505 stands in for it
+# until the port is trusted, and the two differ only outside the port's own
+# surface: NVIC, SysTick, PendSV, BASEPRI, PRIMASK and PSPLIM are core
+# features and are identical on both.
+#
+# Two flag choices here are load-bearing and were measured on 2026-09-20,
+# Arch box, arm-none-eabi-gcc 16.2.0.
+#
+# -ffreestanding is DELIBERATELY ABSENT. It sets __STDC_HOSTED__ to 0, and
+# libstdc++ then stops declaring __throw_logic_error and its siblings while
+# its own headers still reference them. 8 of the 15 kernel translation units
+# fail to compile with it. The arm-none-eabi libstdc++ is built against
+# newlib and expects to be hosted, so the kernel is compiled hosted and
+# simply never calls into anything that needs an OS.
+#
+# -mfloat-abi=soft is a starting position, not a permanent one. The M33 in
+# both QEMU and the U575 has an FPU, but hard-float means the port must also
+# decide the lazy-stacking question (FPCCR.ASPEN and LSPEN, and whether
+# s16-s31 join the PendSV save) on day one. Soft-float keeps
+# CYROS_PORT_CONTEXT_SIZE honest and small while the switch itself is being
+# debugged. Adding hard-float later is a contained change to the port and
+# this file.
+
+[tools]
+cc = "arm-none-eabi-gcc"
+cxx = "arm-none-eabi-g++"
+ar = "arm-none-eabi-gcc-ar"
+asm = "arm-none-eabi-gcc"
+objcopy = "arm-none-eabi-objcopy"
+
+[flags]
+# -ffunction-sections/-fdata-sections plus --gc-sections below. Standard
+# practice on a flash-constrained part, and it does real work here: libstdc++
+# and newlib both drag in objects for one referenced symbol, and without
+# section GC the whole object lands in the image.
+common = ["-mcpu=cortex-m33", "-mthumb", "-mfloat-abi=soft", "-ffunction-sections", "-fdata-sections"]
+c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions"]
+cxx = ["-std=gnu++23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions", "-fno-rtti"]
+asm = []
+
+# -nostartfiles: the application owns its reset path. newlib's crt0 assumes a
+# vector table and a stack it did not set up, and on a machine QEMU boots from
+# an ELF there is nothing for it to do that the port's startup does not.
+# -nostdlib++ is ENFORCEMENT, not an optimisation. cyros must have no link
+# dependency on libstdc++, so that a downstream user is free to link it for
+# their own purposes, or not link it at all. Without this the rule is a
+# convention nobody checks; with it, any use of a libstdc++ SYMBOL (as opposed
+# to its headers, which are fine) becomes a link error on every ARM build.
+#
+# The rule exists because stubbing those symbols out in cyros would silently
+# HIJACK them for a downstream user who did want real exceptions: measured
+# 2026-09-21, a weak std::__throw_out_of_range_fmt in libcyros.a satisfies the
+# reference, libstdc++'s own definition is never pulled, and the user's catch
+# block stops running with no diagnostic.
+link = ["-nostartfiles", "-Wl,--gc-sections", "-nostdlib++"]
+
+[settings]
+family = "gcc"
+debug = false
+optimization = "0"
+warnings_as_errors = false
+
+# No OS, no gtest, no hosted main. This is what makes a plain
+# `cyros-builder test -p <an arm profile>` skip the 28 gtest binaries instead
+# of failing to build every one of them. A test that runs here says so with
+# `hosted = false` in its own test.toml.
+hosted = false
+
+# How a binary built by this toolchain is executed. Without this the runner
+# would exec a Cortex-M ELF on x86-64 and report "Exec format error".
+#
+# -semihosting-config target=native routes BKPT 0xAB to QEMU itself rather
+# than to a debugger, which is what carries both the output and the exit
+# code. Verified 2026-09-20: SYS_EXIT_EXTENDED propagates a nonzero status
+# out to the shell, so the runner's pass/fail check works unchanged.
+[runner]
+command = [
+   "qemu-system-arm",
+   "-M", "mps2-an505",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+
+# An emulated target has no OS to kill a deadlocked kernel. Without this a
+# lost wakeup hangs the suite instead of failing one test.
+timeout = 30

@@ -1,0 +1,17 @@
+name = "arm-none-eabi-debug"
+extends = "arm-none-eabi-base.toml"
+
+# -Og rather than -O0. On a 32-bit MCU -O0 inflates the kernel enough to
+# matter, and the context switch is hand-written assembly whose correctness
+# does not depend on the optimisation level. -g3 is kept because
+# arm-none-eabi-gdb attaches to QEMU's gdbstub and that is the primary way
+# this port gets debugged.
+[flags]
+common_add = ["-Og", "-g3"]
+
+[settings]
+debug = true
+optimization = "g"
+
+[archive]
+strategy = "simple"

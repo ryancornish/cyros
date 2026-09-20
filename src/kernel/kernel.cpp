@@ -45,7 +45,9 @@ struct kernel_state
 [[nodiscard, gnu::pure]]
 scheduler& scheduler_for_core(std::uint32_t core_id)
 {
-   return k.schedulers.at(core_id);
+   CYROS_ASSERT_OP(core_id, <, config::cores);
+
+   return k.schedulers[core_id];
 }
 
 /**

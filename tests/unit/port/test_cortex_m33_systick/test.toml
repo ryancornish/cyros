@@ -1,0 +1,27 @@
+[test]
+name = "test_cortex_m33_systick"
+layer = 1
+kind = "unit"
+
+# time::start() is per-core and runs after kernel::start() in a core's context,
+# so the time source cannot be observed until the kernel is up. Same shape as
+# test_spinlock on the host side, and declared rather than hidden by relabelling
+# this as a layer-2 test.
+harness_debt = { layer = 2, reason = "time::start() is per-core and requires a running kernel, so a real SysTick cannot be observed below layer 2" }
+source = [
+   "test_cortex_m33_systick.cpp",
+   "../arm_bench/startup_mps2_an505.c",
+   "../arm_bench/syscall_stubs.c",
+]
+config = "test_cortex_m33_systick_config.hpp"
+
+# Runs on bare metal. Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m33"
+time_driver = "periodic"
+
+[link]
+system_libraries = []
+linker_script = "../arm_bench/mps2_an505.ld"

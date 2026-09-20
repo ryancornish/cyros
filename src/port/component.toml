@@ -4,6 +4,7 @@ kind = "port"
 variants = [
    "linux_coop",
    "linux_preempt",
+   "cortex_m33",
 ]
 
 # port.h and port_time.h are the KERNEL-to-port contract, not a public API. They

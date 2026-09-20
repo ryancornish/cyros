@@ -1,0 +1,20 @@
+[test]
+name = "test_cortex_m33_bringup"
+layer = 2
+kind = "unit"
+source = [
+   "test_cortex_m33_bringup.cpp",
+   "../arm_bench/startup_mps2_an505.c",
+   "../arm_bench/syscall_stubs.c",
+]
+config = "test_cortex_m33_bringup_config.hpp"
+
+# Runs on bare metal. Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m33"
+
+[link]
+system_libraries = []
+linker_script = "../arm_bench/mps2_an505.ld"

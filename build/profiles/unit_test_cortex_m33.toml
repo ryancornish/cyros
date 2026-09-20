@@ -1,0 +1,20 @@
+# Unit-test profile for the bare-metal Cortex-M33 port.
+#
+# Tests run under QEMU via the toolchain's [runner]. Each test supplies its own
+# config header and linker script, as on the host profiles.
+[profile]
+name = "unit_test_cortex_m33"
+toolchain = "../toolchains/arm-none-eabi-debug.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m33"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

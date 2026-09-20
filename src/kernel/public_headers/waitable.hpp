@@ -284,8 +284,6 @@ class CYROS_PUBLIC pi_wait_queue
 class CYROS_PUBLIC waitable
 {
 public:
-   virtual ~waitable();
-
    waitable(waitable&&) = delete;
    waitable(waitable const&) = delete;
    waitable& operator=(waitable&&) = delete;
@@ -295,6 +293,7 @@ protected:
    using transfer_fn = wait_queue::transfer_fn;
 
    waitable() noexcept = default;
+   ~waitable();
 
    /**
     * @brief Attempt to satisfy the calling thread without blocking.

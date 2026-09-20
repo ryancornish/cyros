@@ -1,0 +1,10 @@
+name = "cortex_m33"
+
+sources = [
+   "port_cortex_m33.cpp",
+   "port_time_cortex_m33.cpp",
+]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

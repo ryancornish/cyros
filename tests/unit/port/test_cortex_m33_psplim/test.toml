@@ -1,0 +1,25 @@
+[test]
+name = "test_cortex_m33_psplim"
+layer = 0
+kind = "unit"
+
+# PSPLIM is programmed by the port in context_init and reloaded on every
+# switch, so its subject is layer 0. It cannot be observed until a thread is
+# actually running on the stack it guards, which needs the kernel up.
+harness_debt = { layer = 2, reason = "PSPLIM guards a RUNNING thread's stack, so it cannot be observed until the kernel has started one" }
+source = [
+   "test_cortex_m33_psplim.cpp",
+   "../arm_bench/startup_mps2_an505.c",
+   "../arm_bench/syscall_stubs.c",
+]
+config = "test_cortex_m33_psplim_config.hpp"
+
+# Runs on bare metal. Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m33"
+
+[link]
+system_libraries = []
+linker_script = "../arm_bench/mps2_an505.ld"

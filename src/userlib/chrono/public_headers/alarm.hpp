@@ -34,7 +34,7 @@ public:
    /**
     * @brief Destroying an armed alarm disarms it first.
     */
-   ~alarm() override;
+   ~alarm();
 
    /**
     * @brief Arm to fire at @p tp. The alarm must not already be pending.

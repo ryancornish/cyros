@@ -1,0 +1,28 @@
+[test]
+name = "test_cortex_m33_port"
+layer = 0
+kind = "unit"
+source = [
+   "test_cortex_m33_port.cpp",
+   "../arm_bench/startup_mps2_an505.c",
+   "../arm_bench/syscall_stubs.c",
+]
+config = "test_cortex_m33_port_config.hpp"
+
+# Runs on bare metal. Skipped by every hosted profile.
+hosted = false
+
+[components]
+# Locked to the bare-metal port. It reads PRIMASK and BASEPRI directly, so it
+# is meaningless anywhere else and is skipped on a host run.
+port = "cortex_m33"
+
+[link]
+# No gtest: it does not run bare metal, and this test uses the tiny harness in
+# tests/unit/common/arm/bench.hpp instead.
+system_libraries = []
+
+# The board memory map. A TEST input rather than a toolchain one because it
+# describes the board, and the same port is meant to link against an STM32U575
+# script without the toolchain changing. Resolved relative to this file.
+linker_script = "../arm_bench/mps2_an505.ld"
