@@ -5,8 +5,10 @@
  *
  * THE CLOCK, AND IT WAS MEASURED
  * ==============================
- * `cyros_port_systick_clock_hz` defaults to 20 MHz, which is what QEMU's
- * mps2-an505 actually drives SysTick at. MEASURED 2026-09-21 against the
+ * `cyros_port_systick_clock_hz()` is supplied by the BOARD and has no default,
+ * for the reasons at its declaration below. The QEMU bench answers 20 MHz,
+ * which is what mps2-an505 actually drives SysTick at. MEASURED 2026-09-21
+ * against the
  * semihosting SYS_ELAPSED reference (a 1 GHz nanosecond counter, per
  * SYS_TICKFREQ): 20,000,051 Hz with CLKSOURCE=1 and 19,999,929 Hz with
  * CLKSOURCE=0, both within 50 ppm of exactly 20 MHz.
@@ -15,9 +17,9 @@
  * cent wrong. Nothing caught it because nothing asserted an absolute rate.
  * `test_cortex_m33_systick` now does, against the same semihosting reference.
  *
- * ANY REAL BOARD MUST OVERRIDE THIS. The symbol is weak precisely so an
- * application can state what its own clock tree produces. The STM32U575 runs
- * to 160 MHz and will be wrong by a factor of eight if left alone.
+ * EVERY board states its own. There is no default to be wrong, which is the
+ * point: the STM32U575 boots at 4 MHz and any real application raises it, so
+ * no single compiled-in number could be right for both.
  *
  *
  * TWO MODES, AND HOW THEY DIFFER
@@ -88,13 +90,48 @@
 namespace cortex_m = cyros::port::cortex_m;
 
 /**
- * @brief Frequency feeding SysTick, in Hz.
+ * @brief What is feeding SysTick RIGHT NOW, in Hz. **The board must define
+ *        this. There is deliberately no default.**
  *
- * Weak so an application can define its own without a port rebuild, which is
- * how a board says what its clock tree produces. See the file comment: this
- * value is the QEMU mps2-an505 one and a real board must override it.
+ * Signature, which a board must match exactly:
+ *
+ *     extern "C" uint32_t cyros_port_systick_clock_hz(void);
+ *
+ * WHY A FUNCTION RATHER THAN A CONSTANT. It describes a RUNTIME fact. The
+ * STM32U575 boots from MSIS at 4 MHz and essentially every real application
+ * raises that to 80 MHz or more before doing anything else, so a value fixed at
+ * link time is wrong for almost everyone. A function is read when the timer is
+ * programmed, which makes the natural code order ("configure the clock tree,
+ * then start the kernel") correct by construction.
+ *
+ * WHY NO WEAK DEFAULT. A default is a value that is silently wrong whenever the
+ * board forgot to say otherwise, and this port has now been bitten twice by
+ * exactly that: a guessed 25 MHz against QEMU's real 20, and a 4 MHz reset
+ * value that any real application invalidates within microseconds of boot.
+ * Neither failed to build or run. Both silently scaled every duration in the
+ * system. Without a default, a board that does not state its clock fails to
+ * LINK, naming this symbol, which is the one failure mode that cannot be
+ * mistaken for working software.
+ *
+ * WHAT IT MUST RETURN. The frequency actually reaching SysTick at the moment of
+ * the call. A board may return a literal if its clock is fixed after startup
+ * (see tests/unit/port/arm_bench, and tests/hardware/u575), or read its own
+ * clock tree if it is not.
+ *
+ * WHEN IT IS READ, and therefore the contract on the caller. Only inside
+ * cyros_port_time_setup, which `time::start()` calls. So:
+ *
+ *   - Configure the clock tree BEFORE `time::start()`.
+ *   - Do not change it while the time driver is running. Nothing can detect
+ *     that, and every duration silently rescales from the moment it happens.
+ *   - To change it deliberately, bracket the change: `time::stop()`, retune,
+ *     `time::start()`. The new rate is picked up by the second start.
+ *
+ * That third rule is a real limitation rather than a preference. See
+ * ~/cyros-claude/arm-port-notes.md section 14 for what it would take to lift
+ * it, which is a time source that does not run off the CPU clock at all.
  */
-extern "C" [[gnu::weak]] std::uint32_t const cyros_port_systick_clock_hz = 20'000'000u;
+extern "C" std::uint32_t cyros_port_systick_clock_hz(void);
 
 namespace
 {
@@ -246,9 +283,21 @@ void cyros_port_time_setup(std::uint32_t tick_hz)
    armed_deadline = never;
    delivery_enabled = false;
 
+   std::uint32_t const clock_hz = cyros_port_systick_clock_hz();
+
+   /* A board that returns nonsense is caught here rather than producing a tick
+    * rate that is merely wrong. Zero would divide by zero below; the upper
+    * bound is a sanity rail, no Cortex-M part runs SysTick anywhere near it. */
+   CYROS_ASSERT_OP(clock_hz, >, 0u);
+   CYROS_ASSERT_OP(clock_hz, <=, 1'000'000'000u);
+
    if (tick_hz == 0u) {
       active_mode = timer_mode::tickless;
-      configured_tick_hz = 0;
+      /* In tickless a port tick IS a counter cycle, so the tick rate is the
+       * clock rate. Captured here so freq_hz() reports what the timer was
+       * actually programmed against rather than re-reading a board function
+       * whose answer may since have changed. */
+      configured_tick_hz = clock_hz;
 
       /* The counter and its wrap interrupt run from here, independently of
        * delivery. See the file comment: the wrap interrupt carries `base`. */
@@ -261,7 +310,7 @@ void cyros_port_time_setup(std::uint32_t tick_hz)
    else {
       active_mode = timer_mode::periodic;
 
-      std::uint32_t const reload = (cyros_port_systick_clock_hz / tick_hz) - 1u;
+      std::uint32_t const reload = (clock_hz / tick_hz) - 1u;
 
       /* SysTick's reload field is 24 bits. Without this check a tick_hz too low
        * for the clock truncates and produces a tick rate that is wrong by a
@@ -302,10 +351,10 @@ std::uint64_t cyros_port_time_now(void)
 std::uint64_t cyros_port_time_freq_hz(void)
 {
    /* Periodic: a port tick IS a SysTick interrupt, so the rate is the
-    * configured tick rate. Tickless: a port tick is a counter CYCLE. */
-   return (active_mode == timer_mode::tickless)
-        ? cyros_port_systick_clock_hz
-        : configured_tick_hz;
+    * configured tick rate. Tickless: a port tick is a counter CYCLE, and
+    * setup() captured the clock rate into the same field. Either way this
+    * reports what the hardware was actually programmed against. */
+   return configured_tick_hz;
 }
 
 void cyros_port_time_reset(std::uint64_t time)

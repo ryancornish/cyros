@@ -39,6 +39,21 @@ extern int cyros_bench_main(void);
 extern void (*__init_array_start[])(void);
 extern void (*__init_array_end[])(void);
 
+/**
+ * @brief What drives SysTick on this board.
+ *
+ * The port declares this and deliberately supplies no default, so every image
+ * has to say. MEASURED 2026-09-21 against semihosting's nanosecond reference:
+ * 20,000,051 Hz with CLKSOURCE=1 and 19,999,929 with CLKSOURCE=0, both within
+ * 50 ppm of exactly 20 MHz.
+ *
+ * A literal is correct here because nothing on the bench ever changes it.
+ */
+uint32_t cyros_port_systick_clock_hz(void)
+{
+   return 20000000u;
+}
+
 /* Semihosting, open-coded so the reset path depends on nothing. */
 #define SYS_EXIT_EXTENDED 0x20
 #define SYS_WRITE0        0x04

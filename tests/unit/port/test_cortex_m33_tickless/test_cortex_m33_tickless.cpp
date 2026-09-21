@@ -58,9 +58,9 @@
 
 using namespace cyros;
 
-/* The port's weak board-clock symbol. In tickless mode a port tick IS a counter
- * cycle, so this is also the driver's conversion base. */
-extern "C" std::uint32_t const cyros_port_systick_clock_hz;
+/* The board's clock, which in tickless mode is also the tick rate because a
+ * port tick IS a counter cycle. */
+extern "C" std::uint32_t cyros_port_systick_clock_hz(void);
 
 namespace
 {
@@ -284,7 +284,7 @@ void worker()
 {
    /* The frequency argument is the driver's conversion base. In tickless mode
     * the port reports the counter rate, so hand the driver the same thing. */
-   time::initialise(cyros_port_systick_clock_hz);
+   time::initialise(cyros_port_systick_clock_hz());
    time::start();
 
    test_tickless_reports_the_counter_rate();
