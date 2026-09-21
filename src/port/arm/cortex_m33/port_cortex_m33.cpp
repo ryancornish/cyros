@@ -144,6 +144,15 @@ std::uint32_t discover_priority_bits() noexcept
  * port. Sitting in the initial frame's LR slot costs nothing and turns an
  * otherwise unbounded jump into a named panic.
  */
+/**
+ * @brief EXC_RETURN for a fresh thread: Thread mode, PSP, standard frame.
+ *
+ * Bit 4 (FType) set means NO floating-point state in the exception frame,
+ * bit 3 (Mode) set means Thread rather than Handler, bit 2 (SPSEL) set means
+ * PSP rather than MSP.
+ */
+constexpr std::uint32_t exc_return_thread_psp_no_fp = 0xFFFFFFFDu;
+
 [[noreturn]] void thread_return_trap()
 {
    cyros_port_system_error(0, 0, "thread entry returned", 0);
@@ -169,6 +178,15 @@ void cyros_port_init(cyros_port_reschedule_t handler)
     * from a thread that does not exist. */
    cortex_m::disable_irq();
    cortex_m::set_basepri(0u);
+
+   /* Turn the FPU on before anything can execute an FP instruction. The kernel
+    * itself uses none, but the toolchain is hard-float, so a user thread may
+    * touch one at any time and a disabled FPU turns that into a NOCP
+    * UsageFault a long way from the cause. */
+   cortex_m::reg(cortex_m::scb_cpacr) =
+      cortex_m::reg(cortex_m::scb_cpacr) | cortex_m::cpacr_fpu_full_access;
+   cortex_m::dsb();
+   cortex_m::isb();
 
    std::uint32_t const bits = discover_priority_bits();
    CYROS_ASSERT_OP(bits, >=, 2u);   /* need at least two distinguishable levels */
@@ -345,6 +363,13 @@ void cyros_port_context_init(cyros_port_context* context,
    *--sp = 0u;                                                   /* r1               */
    *--sp = reinterpret_cast<std::uint32_t>(arg);                 /* r0, the argument */
 
+   /* EXC_RETURN, which the PendSV epilogue loads into lr and returns through.
+    * Thread mode, PSP, and NO FP state: a thread that has never run cannot
+    * have touched the FPU, so its first exception return uses the standard
+    * frame. The hardware sets FType to 0 on its own the first time the thread
+    * does use FP. */
+   *--sp = exc_return_thread_psp_no_fp;
+
    /* Callee-saved, stored r11 down to r4 so that memory reads r4..r11 upward,
     * matching the stmdb/ldmia pair in the PendSV handler. */
    for (int i = 0; i < 8; ++i) { *--sp = 0u; }
@@ -397,18 +422,37 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
  * Naked because the prologue and epilogue ARE the mechanism: a compiler-emitted
  * frame would save the wrong registers to the wrong stack. The handler runs on
  * MSP while the thread it interrupted is stacked on PSP.
+ *
+ * EXC_RETURN IS SAVED IN THE THREAD'S OWN FRAME, not on MSP. It used to be
+ * pushed to MSP, which worked only because every thread's EXC_RETURN was
+ * identical. It stops being identical the moment the FPU is enabled: bit 4
+ * (FType) says whether THAT thread has an extended exception frame carrying FP
+ * state, so it is per-thread state and belongs with the rest of it.
  */
 extern "C" [[gnu::naked]] void PendSV_Handler(void)
 {
    asm volatile(
       "mrs   r0, psp                    \n"  /* the interrupted thread's stack  */
-      "stmdb r0!, {r4-r11}              \n"  /* complete its saved state        */
+      /* FType (bit 4) is CLEAR when this thread has an extended exception
+       * frame, i.e. when it has used the FPU. s0-s15 and FPSCR are the
+       * hardware's business; s16-s31 are callee-saved and ours. Executing this
+       * vstmdb is also what flushes any pending LAZY save out to FPCAR, which
+       * still points at this thread's frame, before anything switches. */
+      "tst   lr, #0x10                  \n"
+      "it    eq                         \n"
+      "vstmdbeq r0!, {s16-s31}          \n"
+      "stmdb r0!, {r4-r11, lr}          \n"  /* callee-saved, plus EXC_RETURN   */
       "msr   psp, r0                    \n"
-      "push  {r3, lr}                   \n"  /* EXC_RETURN, r3 keeps MSP 8-aligned */
+      "push  {r3, lr}                   \n"  /* keeps MSP 8-aligned across the bl */
       "bl    cyros_port_pendsv_dispatch \n"  /* may call cyros_port_switch      */
       "pop   {r3, lr}                   \n"
       "mrs   r0, psp                    \n"  /* possibly a DIFFERENT stack now  */
-      "ldmia r0!, {r4-r11}              \n"
+      "ldmia r0!, {r4-r11, lr}          \n"  /* including THAT thread's EXC_RETURN */
+      /* Mirrors the prologue, and keys off the INCOMING thread's EXC_RETURN,
+       * which the ldmia above has just restored. */
+      "tst   lr, #0x10                  \n"
+      "it    eq                         \n"
+      "vldmiaeq r0!, {s16-s31}          \n"
       "msr   psp, r0                    \n"
       "bx    lr                         \n"  /* exception return unstacks the rest */
    );
@@ -453,6 +497,10 @@ void cyros_port_start_first(cyros_port_context* first)
       "msr   control, %[spsel]  \n"  /* Thread mode on PSP, still privileged   */
       "isb                      \n"
       "pop   {r4-r11}           \n"  /* callee-saved, now from the thread stack */
+      /* Step over the saved EXC_RETURN. This path does not use it: it is
+       * entering Thread mode by hand rather than by exception return, which is
+       * the whole reason this function is not just a `bx lr`. */
+      "add   sp, sp, #4         \n"
       "ldr   r1, [sp, #24]      \n"  /* PC out of the frame                    */
       "str   r1, [sp, #28]      \n"  /* park it in the xPSR slot, which we drop */
       "pop   {r0-r3, r12, lr}   \n"  /* r0 = arg, lr = thread_return_trap      */

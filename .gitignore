@@ -52,3 +52,9 @@ build_coverage/
 
 # Build output
 out/
+
+# Firmware images and link maps
+*.elf
+*.bin
+*.hex
+*.map

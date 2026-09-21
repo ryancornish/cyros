@@ -1,2 +1,5 @@
 Documentation:
   CommentFormat: Doxygen
+
+CompileFlags:
+  Add: [-Wno-error=deprecated-declarations]

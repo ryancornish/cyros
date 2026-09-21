@@ -55,6 +55,26 @@ inline constexpr std::uint32_t aircr_prigroup_shift = 8u;
 inline constexpr std::uint32_t aircr_prigroup_mask  = 0x7u;
 inline constexpr std::uintptr_t scb_shpr  = scb_base + 0x18u;  /* System Handler Priority, 12 bytes */
 inline constexpr std::uintptr_t scb_shcsr = scb_base + 0x24u;  /* System Handler Control and State */
+inline constexpr std::uintptr_t scb_cpacr = scb_base + 0x88u;  /* Coprocessor Access Control   */
+
+/* CPACR grants access to CP10 and CP11, which together ARE the FPU. Both are
+ * two-bit fields: 0b11 is full access from privileged and unprivileged code.
+ * Touching an FP instruction with these clear is a UsageFault (NOCP), which is
+ * the usual way a hard-float image dies on its first floating-point value. */
+inline constexpr std::uint32_t cpacr_fpu_full_access = (0x3u << 20) | (0x3u << 22);
+
+/* Floating-Point Context Control. The reset defaults are ASPEN=1 and LSPEN=1:
+ * the hardware allocates an extended exception frame for a thread that has
+ * used the FPU, and defers writing s0-s15 into it until something actually
+ * needs the registers (lazy stacking).
+ *
+ * The port KEEPS those defaults. The conditional `vstmdb {s16-s31}` in PendSV
+ * is itself an FP instruction, so it forces any pending lazy save out to
+ * FPCAR, which points into the OUTGOING thread's frame, before anything
+ * switches. That is the ordering the lazy scheme requires, and it is why the
+ * FP save in the handler is conditional on the same bit the hardware used to
+ * decide whether to allocate the frame. */
+inline constexpr std::uintptr_t fpu_fpccr = 0xE000EF34u;
 inline constexpr std::uintptr_t scb_ccr   = scb_base + 0x14u;  /* Configuration and Control    */
 
 inline constexpr std::uint32_t icsr_pendsvset = 1u << 28;

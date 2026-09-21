@@ -17,13 +17,16 @@ name = "arm-none-eabi-base"
 # newlib and expects to be hosted, so the kernel is compiled hosted and
 # simply never calls into anything that needs an OS.
 #
-# -mfloat-abi=soft is a starting position, not a permanent one. The M33 in
-# both QEMU and the U575 has an FPU, but hard-float means the port must also
-# decide the lazy-stacking question (FPCCR.ASPEN and LSPEN, and whether
-# s16-s31 join the PendSV save) on day one. Soft-float keeps
-# CYROS_PORT_CONTEXT_SIZE honest and small while the switch itself is being
-# debugged. Adding hard-float later is a contained change to the port and
-# this file.
+# -mfloat-abi=hard with the M33's FPv5-SP-D16, since 2026-09-21. It started
+# soft, deliberately, so that the context switch could be debugged without the
+# lazy-stacking question in the same frame. Both are now done and tested.
+#
+# Hard float changes the ABI, so every object in the image must agree, which
+# is why it lives here rather than in a per-target flag. The port enables the
+# FPU in cyros_port_init (CPACR) and PendSV saves s16-s31 conditionally on
+# EXC_RETURN.FType. See port_cortex_m33.cpp.
+#
+# The STM32U575's FPU is the same FPv5-SP-D16, so this matches the hardware.
 
 [tools]
 cc = "arm-none-eabi-gcc"
@@ -37,7 +40,7 @@ objcopy = "arm-none-eabi-objcopy"
 # practice on a flash-constrained part, and it does real work here: libstdc++
 # and newlib both drag in objects for one referenced symbol, and without
 # section GC the whole object lands in the image.
-common = ["-mcpu=cortex-m33", "-mthumb", "-mfloat-abi=soft", "-ffunction-sections", "-fdata-sections"]
+common = ["-mcpu=cortex-m33", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-sp-d16", "-ffunction-sections", "-fdata-sections"]
 c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions"]
 cxx = ["-std=gnu++26", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions", "-fno-rtti"]
 asm = []
