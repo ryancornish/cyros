@@ -43,9 +43,9 @@ extern void (*__init_array_end[])(void);
  * @brief What drives SysTick on this board.
  *
  * The port declares this and deliberately supplies no default, so every image
- * has to say. MEASURED 2026-09-21 against semihosting's nanosecond reference:
- * 20,000,051 Hz with CLKSOURCE=1 and 19,999,929 with CLKSOURCE=0, both within
- * 50 ppm of exactly 20 MHz.
+ * has to say. Measured against semihosting's nanosecond reference: 20,000,051
+ * Hz with CLKSOURCE=1 and 19,999,929 with CLKSOURCE=0, both within 50 ppm of
+ * exactly 20 MHz.
  *
  * A literal is correct here because nothing on the bench ever changes it.
  */

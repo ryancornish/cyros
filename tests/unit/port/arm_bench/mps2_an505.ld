@@ -39,9 +39,8 @@ SECTIONS
    /* ARM unwind tables. Nothing in cyros unwinds, but libgcc's unwinder
     * references __exidx_start and __exidx_end unconditionally once anything
     * drags it in, and an unplaced .ARM.exidx silently OVERLAPS .data rather
-    * than erroring. Found the hard way on 2026-09-20 while testing the
-    * C++26 contracts `enforce` semantic, which pulls the unwinder in through
-    * std::terminate. Placing them keeps that failure loud. */
+    * than erroring. The C++26 contracts `enforce` semantic is one route in,
+    * through std::terminate. Placing them keeps that failure loud. */
    .ARM.extab : { *(.ARM.extab* .gnu.linkonce.armextab.*) } > CODE :code
    .ARM.exidx : {
       __exidx_start = .;

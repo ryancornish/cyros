@@ -2,6 +2,13 @@
  * @file port_linux_preempt.cpp
  * @brief Linux simulation port using sigctx for genuine preemptive switching
  *
+ * This file implements BOTH halves of the port contract, port_core.h and
+ * port_mcu.h. A hosted port has no core/MCU boundary to express: the identity
+ * trio is built out of the same file-local state, `global` and the
+ * `current_core` TLS, as the switching code, so separating them would publish
+ * that state across two translation units for no gain. The ARM tree, where the
+ * boundary is real, keeps the two in separate files.
+ *
  * Where the boost.context port is cooperative end to end, this port exists to
  * exercise the one path that port structurally cannot reach: an asynchronous
  * signal interrupting a running thread mid-instruction and forcing a context

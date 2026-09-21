@@ -7,9 +7,9 @@ variants = [
    "cortex_m33",
 ]
 
-# port.h and port_time.h are the KERNEL-to-port contract, not a public API. They
-# are an include root rather than public headers: the kernel and the ports
-# compile against them in place, and nothing is copied into the exported tree,
-# so a consumer of libcyros.a cannot reach them at all. See
-# ~/cyros-claude/port-internal-proposal.md.
+# port_core.h and port_mcu.h, and port.h which is just an umbrella over the two,
+# are the KERNEL-to-port contract, not a public API. They are an include root
+# rather than public headers: the kernel and the ports compile against them in
+# place, and nothing is copied into the exported tree, so a consumer of
+# libcyros.a cannot reach them at all.
 internal_include_roots = ["internal_headers"]

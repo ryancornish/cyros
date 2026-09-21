@@ -2,6 +2,13 @@
  * @file port_linux_coop.cpp
  * @brief Linux simulation port, cooperative switching
  *
+ * This file implements BOTH halves of the port contract, port_core.h and
+ * port_mcu.h. A hosted port has no core/MCU boundary to express: the identity
+ * trio is built out of the same file-local state, `global` and the
+ * `current_core` TLS, as the switching code, so separating them would publish
+ * that state across two translation units for no gain. The ARM tree, where the
+ * boundary is real, keeps the two in separate files.
+ *
  * Simulates embedded behaviour (stack-based context switching) while running on
  * Linux for development and testing. Each pthread simulates one "core", and each
  * core owns a scheduler context that acts as the outer context for every thread

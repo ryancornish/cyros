@@ -140,10 +140,10 @@ void test_ordinary_stack_use_does_not_trip_it()
     * but its depth depends on the optimiser, and this has to be deterministic:
     * the test's success condition is that the NEXT instruction faults.
     *
-    * The distance is COMPUTED rather than a constant. The first version of
-    * this test subtracted a fixed 4096, which on a 6.4 KB stack left SP a
-    * comfortable 2 KB ABOVE the limit, so nothing faulted and the test
-    * reported the guard as broken when it was working perfectly.
+    * The distance is COMPUTED rather than a constant, because a fixed
+    * subtraction has to be larger than the stack to be sure of crossing the
+    * limit. Too small a one leaves SP above the limit, nothing faults, and the
+    * test reports the guard as broken while it is working perfectly.
     *
     * On ARMv8-M the limit is checked on the SP update itself, so the SUB is
     * what faults, and it does so before anything is written through the bad

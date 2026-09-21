@@ -49,7 +49,7 @@ inline constexpr std::uintptr_t scb_aircr = scb_base + 0x0Cu;  /* Application In
 /* AIRCR.PRIGROUP, bits [10:8]. It splits each 8-bit priority field into a
  * GROUP (preemption) part and a SUB-priority part, and only the group part
  * decides preemption and BASEPRI masking. See the priority discussion in
- * port_cortex_m33.cpp: getting this wrong makes two adjacent priority values
+ * port_core_armv8m.cpp: getting this wrong makes two adjacent priority values
  * behave as one. */
 inline constexpr std::uint32_t aircr_prigroup_shift = 8u;
 inline constexpr std::uint32_t aircr_prigroup_mask  = 0x7u;

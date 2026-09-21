@@ -49,7 +49,7 @@
  */
 
 #include <cyros/port/port.h>
-#include <cyros/port/port_time.h>
+#include <cyros/port/port_mcu.h>
 
 #include "port_linux_preempt_internal.hpp"
 

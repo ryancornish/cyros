@@ -1,10 +1,19 @@
 name = "cortex_m33"
 
+description = "Generic single-core Cortex-M33: core peripherals only."
+extends = "armv8m"
+
+# The MCU half of the contract, split by topic. The identity/bring-up trio is
+# what a multicore part varies; the time source is what a vendor part varies
+# (LPTIM rather than SysTick). A target usually replaces one and keeps the
+# other.
 sources = [
-   "port_cortex_m33.cpp",
-   "port_time_cortex_m33.cpp",
+   "port_mcu_cortex_m33.cpp",
+   "port_time_systick.cpp",
 ]
 
+# Overrides the layer's traits rather than joining them: CYROS_PORT_CORE_COUNT
+# is an MCU-level fact even though CYROS_PORT_STACK_ALIGN next to it is not.
 public_headers = [
    "public_headers/port_traits.h -> cyros/port/port_traits.h",
 ]

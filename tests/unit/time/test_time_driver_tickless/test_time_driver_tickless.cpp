@@ -31,7 +31,7 @@
  */
 
 #include <cyros/time/time.hpp>
-#include <cyros/port/port_time.h>
+#include <cyros/port/port_mcu.h>
 
 #include <gtest/gtest.h>
 

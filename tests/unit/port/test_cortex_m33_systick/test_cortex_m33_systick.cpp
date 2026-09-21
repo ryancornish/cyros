@@ -4,7 +4,7 @@
  *
  * Subject / Trusts / Proves
  * -------------------------
- * Subject: the cortex_m33 port's `port_time.h` implementation, driving the
+ * Subject: the cortex_m33 port's `port_mcu.h` time implementation, driving the
  *          periodic time driver from a real SysTick interrupt.
  * Trusts:  layer 0 (the port's masking contract) and the kernel bring-up that
  *          layer 2 proves, which is why this test declares a harness debt.
@@ -53,7 +53,7 @@
 #include <cyros/time/time.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
-#include <cyros/port/port_time.h>
+#include <cyros/port/port_mcu.h>
 #include <cyros/port/port_traits.h>
 
 #include <common/arm/bench.hpp>
@@ -202,9 +202,8 @@ void test_systick_advances_a_monotonic_clock()
  *
  * Every other check in this file is relative: the clock moves, it does not go
  * backwards, it stops when masked. All of those pass with a completely wrong
- * `cyros_port_systick_clock_hz`, and one WAS wrong: a guessed 25 MHz against
- * QEMU's actual 20 MHz, so every tick rate on the bench was 25 per cent out
- * and nothing noticed for a day.
+ * `cyros_port_systick_clock_hz`, which would scale every tick rate on the
+ * bench by whatever factor that value is out by, silently.
  *
  * Semihosting's SYS_ELAPSED is the only reference here that does not come from
  * the thing under test, which is what makes this check possible at all.

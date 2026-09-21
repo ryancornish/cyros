@@ -22,7 +22,8 @@ prefix = "cyros/"
 # L0, built on nothing inside cyros.
 "cyros/kernel/function.hpp" = 0
 "cyros/port/port.h" = 0
-"cyros/port/port_time.h" = 0
+"cyros/port/port_core.h" = 0
+"cyros/port/port_mcu.h" = 0
 
 # L1, built directly on the port.
 "cyros/kernel/core.hpp" = 1

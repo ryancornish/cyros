@@ -1,21 +1,20 @@
 /**
- * @file port_time_cortex_m33.cpp
+ * @file port_time_systick.cpp
  * @brief SysTick time source for the Cortex-M33 port. Periodic and tickless.
  *
  *
- * THE CLOCK, AND IT WAS MEASURED
- * ==============================
+ * THE CLOCK, AND IT IS MEASURED NOT GUESSED
+ * =========================================
  * `cyros_port_systick_clock_hz()` is supplied by the BOARD and has no default,
  * for the reasons at its declaration below. The QEMU bench answers 20 MHz,
- * which is what mps2-an505 actually drives SysTick at. MEASURED 2026-09-21
- * against the
- * semihosting SYS_ELAPSED reference (a 1 GHz nanosecond counter, per
- * SYS_TICKFREQ): 20,000,051 Hz with CLKSOURCE=1 and 19,999,929 Hz with
- * CLKSOURCE=0, both within 50 ppm of exactly 20 MHz.
+ * which is what mps2-an505 drives SysTick at, measured against the semihosting
+ * SYS_ELAPSED reference (a 1 GHz nanosecond counter, per SYS_TICKFREQ):
+ * 20,000,051 Hz with CLKSOURCE=1 and 19,999,929 Hz with CLKSOURCE=0, both
+ * within 50 ppm of exactly 20 MHz.
  *
- * It had been a guessed 25 MHz, which made every tick rate on the bench 25 per
- * cent wrong. Nothing caught it because nothing asserted an absolute rate.
- * `test_cortex_m33_systick` now does, against the same semihosting reference.
+ * A guessed clock is silently wrong by whatever factor it is off, and scales
+ * every duration in the system with nothing to catch it. `test_cortex_m33_systick`
+ * asserts the absolute rate against that same semihosting reference.
  *
  * EVERY board states its own. There is no default to be wrong, which is the
  * point: the STM32U575 boots at 4 MHz and any real application raises it, so
@@ -54,8 +53,7 @@
  *    must be folded into `base` FIRST or it is lost. And if a wrap is already
  *    pending at that moment, its interrupt must be CANCELLED (ICSR.PENDSTCLR),
  *    because the fold already accounted for it and letting the ISR also add a
- *    period would double-count. That single line is the whole reason the first
- *    version of this file refused to implement tickless at all.
+ *    period would double-count.
  *
  *
  * WHY THE WRAP INTERRUPT STAYS ON IN TICKLESS
@@ -70,18 +68,17 @@
  *
  * THE 64-BIT READ PROBLEM, WHICH IS REAL ON THIS TARGET
  * ====================================================
- * MEASURED 2026-09-20: std::atomic<std::uint64_t>::is_always_lock_free is FALSE
- * on ARMv8-M, because the profile has no LDREXD. The Linux ports' time sources
- * hold `std::atomic<uint64_t> now` and that is fine on x86-64; copying it here
- * would silently emit a libatomic call taking an address-hashed lock, inside an
- * ISR, on the hottest path in the time layer.
+ * std::atomic<std::uint64_t>::is_always_lock_free is FALSE on ARMv8-M, because
+ * the profile has no LDREXD. The Linux ports' time sources hold
+ * `std::atomic<uint64_t> now` and that is fine on x86-64; copying it here would
+ * silently emit a libatomic call taking an address-hashed lock, inside an ISR,
+ * on the hottest path in the time layer.
  *
  * So every 64-bit value below is plain and every access is inside a masked
  * region or inside the ISR itself.
  */
 
-#include <cyros/port/port.h>
-#include <cyros/port/port_time.h>
+#include <cyros/port/port_mcu.h>
 
 #include "cortex_m.hpp"
 
@@ -127,9 +124,8 @@ namespace cortex_m = cyros::port::cortex_m;
  *   - To change it deliberately, bracket the change: `time::stop()`, retune,
  *     `time::start()`. The new rate is picked up by the second start.
  *
- * That third rule is a real limitation rather than a preference. See
- * ~/cyros-claude/arm-port-notes.md section 14 for what it would take to lift
- * it, which is a time source that does not run off the CPU clock at all.
+ * That third rule is a real limitation rather than a preference. Lifting it
+ * takes a time source that does not run off the CPU clock at all.
  */
 extern "C" std::uint32_t cyros_port_systick_clock_hz(void);
 
@@ -196,10 +192,9 @@ std::uint64_t now_tickless_locked() noexcept
        * already taken that path. So zero here can only be the post-write
        * window, where no time has elapsed since `base` was set.
        *
-       * MEASURED 2026-09-21: this is exactly how the first working version of
-       * this file reported a deadline as one full 24-bit period late. The
-       * callback read VAL==0 with CTRL==0x7 immediately after the ISR resized
-       * the interval, and now() jumped 16.7 million cycles. */
+       * Getting this wrong reports a deadline one full 24-bit period late: a
+       * callback reading VAL==0 with CTRL==0x7 immediately after the ISR
+       * resized the interval makes now() jump 16.7 million cycles. */
       return base;
    }
 
@@ -414,7 +409,7 @@ void cyros_port_time_arm(std::uint64_t deadline)
 {
    CYROS_ASSERT(active_mode == timer_mode::tickless);
 
-   /* Must be safe with interrupts already disabled, per port_time.h. The
+   /* Must be safe with interrupts already disabled, per port_mcu.h. The
     * save/restore token makes that true rather than assumed. */
    cyros_mask_token_t const token = cyros_port_irq_save();
 
@@ -431,8 +426,8 @@ void cyros_port_time_arm(std::uint64_t deadline)
     * This is not just an optimisation. Every restart writes SYST_CVR, and the
     * cycles between reading the counter and that write are DISCARDED, because
     * the write reloads from LOAD. Restarting on every arm therefore leaks a
-    * little time each call. Measured 2026-09-21 on a 200-iteration
-    * arm/cancel loop: the clock ran 16x SLOW before this check existed. */
+    * little time each call, and it compounds: on a 200-iteration arm/cancel
+    * loop, without this check, the clock runs 16x SLOW. */
    std::uint64_t const interval_end = base + std::uint64_t{current_reload} + 1u;
    if (armed_deadline < interval_end) {
       retime_locked();
@@ -461,7 +456,7 @@ void cyros_port_time_disarm(void)
 void cyros_port_send_time_ipi(std::uint32_t core_id)
 {
    /* Single core: the time core is always this core, so there is nothing to
-    * notify. port_time.h explicitly permits an empty implementation. */
+    * notify. port_mcu.h explicitly permits an empty implementation. */
    CYROS_ASSERT_OP(core_id, ==, 0u);
 }
 

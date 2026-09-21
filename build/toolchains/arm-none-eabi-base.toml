@@ -7,8 +7,8 @@ name = "arm-none-eabi-base"
 # surface: NVIC, SysTick, PendSV, BASEPRI, PRIMASK and PSPLIM are core
 # features and are identical on both.
 #
-# Two flag choices here are load-bearing and were measured on 2026-09-20,
-# Arch box, arm-none-eabi-gcc 16.2.0.
+# Two flag choices here are load-bearing, and both were verified against
+# arm-none-eabi-gcc 16.2.0.
 #
 # -ffreestanding is DELIBERATELY ABSENT. It sets __STDC_HOSTED__ to 0, and
 # libstdc++ then stops declaring __throw_logic_error and its siblings while
@@ -17,14 +17,12 @@ name = "arm-none-eabi-base"
 # newlib and expects to be hosted, so the kernel is compiled hosted and
 # simply never calls into anything that needs an OS.
 #
-# -mfloat-abi=hard with the M33's FPv5-SP-D16, since 2026-09-21. It started
-# soft, deliberately, so that the context switch could be debugged without the
-# lazy-stacking question in the same frame. Both are now done and tested.
+# -mfloat-abi=hard with the M33's FPv5-SP-D16.
 #
 # Hard float changes the ABI, so every object in the image must agree, which
 # is why it lives here rather than in a per-target flag. The port enables the
 # FPU in cyros_port_init (CPACR) and PendSV saves s16-s31 conditionally on
-# EXC_RETURN.FType. See port_cortex_m33.cpp.
+# EXC_RETURN.FType. See port_core_armv8m.cpp.
 #
 # The STM32U575's FPU is the same FPv5-SP-D16, so this matches the hardware.
 
@@ -55,10 +53,10 @@ asm = []
 # to its headers, which are fine) becomes a link error on every ARM build.
 #
 # The rule exists because stubbing those symbols out in cyros would silently
-# HIJACK them for a downstream user who did want real exceptions: measured
-# 2026-09-21, a weak std::__throw_out_of_range_fmt in libcyros.a satisfies the
-# reference, libstdc++'s own definition is never pulled, and the user's catch
-# block stops running with no diagnostic.
+# HIJACK them for a downstream user who did want real exceptions: a weak
+# std::__throw_out_of_range_fmt in libcyros.a satisfies the reference,
+# libstdc++'s own definition is never pulled, and the user's catch block stops
+# running with no diagnostic.
 link = ["-nostartfiles", "-Wl,--gc-sections", "-nostdlib++"]
 
 [settings]
@@ -78,8 +76,8 @@ hosted = false
 #
 # -semihosting-config target=native routes BKPT 0xAB to QEMU itself rather
 # than to a debugger, which is what carries both the output and the exit
-# code. Verified 2026-09-20: SYS_EXIT_EXTENDED propagates a nonzero status
-# out to the shell, so the runner's pass/fail check works unchanged.
+# code. SYS_EXIT_EXTENDED propagates a nonzero status out to the shell, so the
+# runner's pass/fail check works unchanged.
 [runner]
 command = [
    "qemu-system-arm",

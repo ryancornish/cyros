@@ -1,18 +1,86 @@
 /**
- * @file port_time.h
- * @brief Cyros Timer-Driver Port Layer API (C ABI)
+ * @file port_mcu.h
+ * @brief Cyros MCU port contract (C ABI): what a core alone cannot answer.
  *
- * TODO: Description
+ * The companion to `port_core.h`. Everything here has an MCU-specific answer
+ * even when the processor core is identical, so two targets sharing a core
+ * share `port_core.h` and differ here.
+ *
+ * Two groups:
+ *
+ *  - **Multicore identity and bring-up.** Which core am I, how are the others
+ *    started, and how does one interrupt another.
+ *  - **The time source.** SysTick is core-level HARDWARE, but the time
+ *    CONTRACT is MCU-level, because a given MCU may answer it with a different
+ *    peripheral entirely (an LPTIM, say, which keeps running when the CPU clock
+ *    does not). A contract's layer is set by who may vary it, not by what
+ *    hardware one implementation happens to use.
+ *
+ * A target may additionally require symbols from the APPLICATION, for facts
+ * only the board knows, such as what frequency is actually reaching its timer.
+ * A target declares those itself rather than this header declaring them for
+ * everyone, because what a board must supply depends on which target is
+ * selected. cyros never implements them.
  */
 
-#ifndef CYROS_PORT_TIME_H
-#define CYROS_PORT_TIME_H
+#ifndef CYROS_PORT_MCU_H
+#define CYROS_PORT_MCU_H
 
+#include <cyros/port/port_core.h>
+
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ----------------------------------------------------------------------------
+ * SMP & Multi-Core Support
+ *
+ * How a core identifies itself, how secondary cores are started, and how one
+ * core interrupts another all have MCU-specific answers and no architectural
+ * one. An SSE-200 releases its second core through CPUWAIT and rings an MHU;
+ * an RP2350 uses its SIO FIFO for both; a hosted port uses threads. That is why
+ * these three live here rather than in port_core.h.
+ *
+ * All three are trivial when CYROS_PORT_CORE_COUNT is 1, which is exactly why
+ * their MCU-dependence is easy to miss.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Get the ID of the current CPU core
+ * @return Core ID (0-indexed)
+ *
+ * For single-core systems, always returns 0.
+ * For SMP systems, returns which core is executing this code.
+ */
+uint32_t cyros_port_get_core_id(void);
+
+/**
+ * @brief Start (or release) all secondary cores and run entry on every core.
+ * @param cores_to_use Number of cores to start
+ * @param entry Entry point to run on each core
+ *
+ * After this call returns on the bootstrap core:
+ *  - On embedded: typically never returns because entry will start the first thread.
+ *  - On simulation: may return if port_start_first returns (cooperative).
+ */
+void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry);
+
+/**
+ * @brief Send an IPI to another core to trigger a reschedule
+ * @param core_id Target core ID
+ *
+ * Causes the target core to perform a reschedule at its next safe point. This
+ * is the cross-core analogue of cyros_port_pend_reschedule(): it carries the
+ * same weak guarantee and the receiving core resolves it exactly as a locally
+ * pended reschedule would be.
+ */
+void cyros_port_send_reschedule_ipi(uint32_t core_id);
+
+
+
 
 /* ============================================================================
  * Port Type Definitions
@@ -129,8 +197,9 @@ void cyros_port_time_disarm(void);
 void cyros_port_send_time_ipi(uint32_t core_id);
 
 
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* CYROS_PORT_TIME_H */
+#endif /* CYROS_PORT_MCU_H */

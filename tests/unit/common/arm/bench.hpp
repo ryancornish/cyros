@@ -10,8 +10,8 @@
  *
  * WHY THIS EXISTS RATHER THAN GTEST. gtest does not run bare metal: it wants a
  * heap, exceptions, iostreams and a hosted main. The surface the cyros suite
- * actually uses is small (measured 2026-09-20 across every unit test: EXPECT_EQ
- * and friends, TEST, TEST_F, one TEST_P), so a shim is cheap. This is the
+ * actually uses is small (across every unit test: EXPECT_EQ and friends, TEST,
+ * TEST_F, one TEST_P), so a shim is cheap. This is the
  * smaller half of that shim, carrying only what a target bring-up needs.
  *
  * It deliberately does NOT try to be gtest-compatible. The tests that run here

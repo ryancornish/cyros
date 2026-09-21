@@ -7,8 +7,8 @@
  * build/toolchains/arm-none-eabi-base.toml for why -ffreestanding is wrong
  * here), so a handful of its error paths reach abort(). abort() pulls in
  * _exit, _kill and _getpid, and once the linker is walking libc it wants the
- * file and heap stubs too. Measured 2026-09-20: the kernel's only route into
- * this is std::__throw_out_of_range_fmt from kernel.cpp.
+ * file and heap stubs too. The kernel's only route into this is
+ * std::__throw_out_of_range_fmt from kernel.cpp.
  *
  * WHY THEY PANIC RATHER THAN RETURN -1. The conventional bare-metal stub
  * returns a failure code and lets the program carry on. That is the wrong

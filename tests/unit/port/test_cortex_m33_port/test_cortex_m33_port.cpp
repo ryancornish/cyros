@@ -18,9 +18,8 @@
  * On both Linux ports the interrupt-save token is INERT. Nothing in the host
  * suite can distinguish a correct cyros_port_irq_restore from one that simply
  * enables interrupts, because there is no hardware state to get wrong. That
- * gap hid a real defect: spinlock::lock() stored its token before owning the
- * lock, and no Linux test could see it (CLAUDE_cyros.md section 7,
- * ~/cyros-claude/roadmap.md P1's "known trap").
+ * gap hides a whole class of defect: a spinlock storing its token before it
+ * owns the lock is invisible to every Linux test.
  *
  * Here the token IS the saved PRIMASK or BASEPRI, so the case that matters -
  * a critical section entered while already masked - is observable. That case
@@ -129,8 +128,8 @@ void test_pendsv_is_strictly_the_lowest_priority()
     * concerned. Raising BASEPRI to PendSV's level then masked SysTick too, and
     * every kernel critical section stopped the clock.
     *
-    * Found 2026-09-20 by test_cortex_m33_systick, which needed a real
-    * interrupt to see it. This is the cheap version of that check. */
+    * test_cortex_m33_systick catches this too, but only by running a real
+    * interrupt. This is the cheap version of that check. */
    std::uint32_t const prigroup = (read32(scb_aircr) >> 8) & 0x7u;
    std::uint32_t const sub_bits = prigroup + 1u;
 

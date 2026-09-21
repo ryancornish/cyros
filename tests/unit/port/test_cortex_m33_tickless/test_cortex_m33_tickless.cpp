@@ -4,7 +4,7 @@
  *
  * Subject / Trusts / Proves
  * -------------------------
- * Subject: the cortex_m33 port's tickless implementation of `port_time.h`,
+ * Subject: the cortex_m33 port's tickless implementation of `port_mcu.h`,
  *          driven through the `tickless` time driver.
  * Trusts:  layers 0 to 2, and the periodic path that
  *          `test_cortex_m33_systick` proves.
@@ -48,7 +48,7 @@
 #include <cyros/time/time.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
-#include <cyros/port/port_time.h>
+#include <cyros/port/port_mcu.h>
 #include <cyros/port/port_traits.h>
 
 #include <common/arm/bench.hpp>

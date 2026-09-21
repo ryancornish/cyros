@@ -1,6 +1,6 @@
 /**
- * @file port_cortex_m33.cpp
- * @brief Bare-metal Cortex-M33 (ARMv8-M Mainline) port.
+ * @file port_core_armv8m.cpp
+ * @brief ARMv8-M Mainline CORE LAYER: everything port_core.h asks for.
  *
  * Bench is QEMU's mps2-an505. Hardware target is an STM32U575. Everything this
  * file touches is architectural, so the two are the same target as far as the
@@ -45,7 +45,7 @@
  * register value, so nesting composes without a depth counter, and a critical
  * section entered while already masked restores to masked rather than to open.
  * That last case is the one no Linux test can observe, because the token is
- * inert there (see ~/cyros-claude/roadmap.md, P1's "known trap").
+ * inert there.
  *
  * Baseline priority, in port.h's sense, is PRIMASK == 0 AND BASEPRI == 0 in
  * Thread mode. When the outermost restore of either register reaches that
@@ -64,7 +64,7 @@
  * values from that.
  */
 
-#include <cyros/port/port.h>
+#include <cyros/port/port_core.h>
 
 #include "cortex_m.hpp"
 
@@ -197,19 +197,17 @@ void cyros_port_init(cyros_port_reschedule_t handler)
     * The first is how many priority bits the part implements, which is what
     * discover_priority_bits found.
     *
-    * The second is AIRCR.PRIGROUP, and MISSING IT IS A REAL BUG THAT THIS PORT
-    * SHIPPED FOR AN AFTERNOON. PRIGROUP splits every priority field into a
-    * GROUP part and a SUB-priority part, and preemption and BASEPRI masking
-    * consider ONLY the group part. At the reset default of 0 the bottom bit is
-    * sub-priority, so on this bench, where all 8 bits are implemented, PendSV
-    * at 0xFF and SysTick at 0xFE landed in the SAME group. Raising BASEPRI to
-    * PendSV's level then masked SysTick too, and every kernel critical section
-    * silently stopped the clock.
+    * The second is AIRCR.PRIGROUP, and ignoring it is a silent bug rather than
+    * a missing feature. PRIGROUP splits every priority field into a GROUP part
+    * and a SUB-priority part, and preemption and BASEPRI masking consider ONLY
+    * the group part. At the reset default of 0 the bottom bit is sub-priority,
+    * so on a part implementing all 8 bits, PendSV at 0xFF and SysTick at 0xFE
+    * land in the SAME group. Raising BASEPRI to PendSV's level then masks
+    * SysTick too, and every kernel critical section stops the clock.
     *
-    * It was invisible to every check that looks at the priority NUMBERS,
-    * including this port's own layer-0 test, which asserted only that the two
-    * values differ. It took an interrupt actually firing to find, which is why
-    * test_cortex_m33_systick exists.
+    * No check that looks at the priority NUMBERS can see this, since the two
+    * values do differ. Only an interrupt actually firing shows it, which is
+    * what test_cortex_m33_systick is for.
     *
     * PRIGROUP is read rather than written, because an application may have set
     * it for its own device IRQs. The cost is that changing PRIGROUP after
@@ -239,38 +237,6 @@ void cyros_port_init(cyros_port_reschedule_t handler)
 
    cortex_m::dsb();
    cortex_m::isb();
-}
-
-
-/* ============================================================================
- * SMP & Multi-Core Support
- * ========================================================================= */
-
-std::uint32_t cyros_port_get_core_id(void)
-{
-   return 0u;
-}
-
-void cyros_port_start_cores(std::size_t cores_to_use, cyros_port_core_entry_t entry)
-{
-   /* Single core. A dual-M33 part (RP2350, or QEMU's mps2-an521) would start
-    * the second core here, and is a separate port variant rather than a switch
-    * in this one. */
-   CYROS_ASSERT_OP(cores_to_use, ==, 1u);
-   CYROS_ASSERT(entry != nullptr);
-
-   entry();
-
-   /* entry() reaches cyros_port_start_first, which never returns. */
-   CYROS_PORT_UNREACHABLE();
-}
-
-void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
-{
-   /* On one core the cross-core request degenerates to a local one, and carries
-    * the same weak guarantee. */
-   CYROS_ASSERT_OP(core_id, ==, 0u);
-   cyros_port_pend_reschedule();
 }
 
 
@@ -423,11 +389,11 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
  * frame would save the wrong registers to the wrong stack. The handler runs on
  * MSP while the thread it interrupted is stacked on PSP.
  *
- * EXC_RETURN IS SAVED IN THE THREAD'S OWN FRAME, not on MSP. It used to be
- * pushed to MSP, which worked only because every thread's EXC_RETURN was
- * identical. It stops being identical the moment the FPU is enabled: bit 4
- * (FType) says whether THAT thread has an extended exception frame carrying FP
- * state, so it is per-thread state and belongs with the rest of it.
+ * EXC_RETURN IS SAVED IN THE THREAD'S OWN FRAME, not on MSP. With the FPU
+ * enabled it is per-thread state: bit 4 (FType) says whether THAT thread has an
+ * extended exception frame carrying FP state, so threads do not share a value
+ * and it belongs with the rest of the thread's context. Pushing it to MSP
+ * instead only works while every thread's EXC_RETURN happens to be identical.
  */
 extern "C" [[gnu::naked]] void PendSV_Handler(void)
 {
