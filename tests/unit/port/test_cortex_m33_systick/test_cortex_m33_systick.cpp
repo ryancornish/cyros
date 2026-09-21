@@ -197,6 +197,52 @@ void test_systick_advances_a_monotonic_clock()
    CYROS_CHECK(monotonic);
 }
 
+/**
+ * @brief The tick rate is what was asked for, in ABSOLUTE terms.
+ *
+ * Every other check in this file is relative: the clock moves, it does not go
+ * backwards, it stops when masked. All of those pass with a completely wrong
+ * `cyros_port_systick_clock_hz`, and one WAS wrong: a guessed 25 MHz against
+ * QEMU's actual 20 MHz, so every tick rate on the bench was 25 per cent out
+ * and nothing noticed for a day.
+ *
+ * Semihosting's SYS_ELAPSED is the only reference here that does not come from
+ * the thing under test, which is what makes this check possible at all.
+ */
+void test_the_tick_rate_is_actually_what_was_configured()
+{
+   cyros::bench::start("the configured tick rate is the real one");
+
+   if (!cyros::bench::elapsed_ns_is_available()) {
+      cyros::bench::print("  no SYS_ELAPSED reference, skipping the absolute check\n");
+      return;
+   }
+
+   std::uint64_t const t0 = time::now().value;
+   std::uint64_t const ns0 = cyros::bench::elapsed_ns();
+
+   /* Long enough that the semihosting traps at each end are noise. */
+   while ((cyros::bench::elapsed_ns() - ns0) < 200'000'000ull) { }
+
+   std::uint64_t const ns = cyros::bench::elapsed_ns() - ns0;
+   std::uint64_t const ticks = time::now().value - t0;
+   std::uint64_t const measured_hz = (ticks * 1'000'000'000ull) / ns;
+
+   cyros::bench::print("  configured = ");
+   cyros::bench::print_hex(tick_hz);
+   cyros::bench::print("  measured = ");
+   cyros::bench::print_hex(static_cast<std::uint32_t>(measured_hz));
+   cyros::bench::print("\n");
+
+   /* Ten per cent. Wide, because the guest's progress against host time is
+    * QEMU's business and an emulator is not a frequency standard. Narrow
+    * enough that the 25 per cent error this exists to catch cannot hide. */
+   std::uint64_t const low  = (std::uint64_t{tick_hz} * 90u) / 100u;
+   std::uint64_t const high = (std::uint64_t{tick_hz} * 110u) / 100u;
+   CYROS_CHECK(measured_hz >= low);
+   CYROS_CHECK(measured_hz <= high);
+}
+
 void test_preempt_disable_leaves_the_clock_running()
 {
    cyros::bench::start("a preempt-disabled section does NOT stop the clock");
@@ -250,6 +296,7 @@ void test_irq_masking_does_stop_the_clock()
 void worker()
 {
    test_systick_advances_a_monotonic_clock();
+   test_the_tick_rate_is_actually_what_was_configured();
    test_preempt_disable_leaves_the_clock_running();
    test_irq_masking_does_stop_the_clock();
 

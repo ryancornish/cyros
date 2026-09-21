@@ -64,6 +64,37 @@ inline void print(char const* text) noexcept
    __builtin_unreachable();
 }
 
+/**
+ * @brief Host-observed nanoseconds since the image started running.
+ *
+ * SYS_ELAPSED (0x30) returns target ticks, and SYS_TICKFREQ (0x31) reports the
+ * rate. On QEMU that rate is 1 GHz, so the value is nanoseconds directly.
+ * Checked at runtime by elapsed_ns_is_available() rather than assumed.
+ *
+ * This is the ONLY time reference on the bench that does not come from the
+ * thing under test, which is what makes it worth having: it is how the SysTick
+ * clock constant was measured, and how a test can assert an ABSOLUTE rate
+ * rather than merely a monotonic one. A port that gets its clock wrong by 25
+ * per cent, as this one did, passes every relative check.
+ *
+ * It costs a semihosting trap per call, so it belongs at the edges of a
+ * measurement and never inside one.
+ */
+inline constexpr long sys_elapsed  = 0x30;
+inline constexpr long sys_tickfreq = 0x31;
+
+inline bool elapsed_ns_is_available() noexcept
+{
+   return semihost(sys_tickfreq, nullptr) == 1'000'000'000L;
+}
+
+inline std::uint64_t elapsed_ns() noexcept
+{
+   volatile std::uint32_t block[2] = { 0, 0 };
+   semihost(sys_elapsed, block);
+   return (static_cast<std::uint64_t>(block[1]) << 32) | block[0];
+}
+
 inline void print_hex(std::uint32_t value) noexcept
 {
    char buffer[11] = { '0', 'x' };

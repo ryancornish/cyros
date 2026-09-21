@@ -1,0 +1,25 @@
+[test]
+name = "test_cortex_m33_tickless"
+layer = 1
+kind = "unit"
+
+# time::start() is per-core and requires a running kernel, exactly as for the
+# periodic test next door.
+harness_debt = { layer = 2, reason = "time::start() is per-core and requires a running kernel, so a real SysTick cannot be observed below layer 2" }
+source = [
+   "test_cortex_m33_tickless.cpp",
+   "../arm_bench/startup_mps2_an505.c",
+   "../arm_bench/syscall_stubs.c",
+]
+config = "test_cortex_m33_tickless_config.hpp"
+
+# Runs on bare metal. Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m33"
+time_driver = "tickless"
+
+[link]
+system_libraries = []
+linker_script = "../arm_bench/mps2_an505.ld"
