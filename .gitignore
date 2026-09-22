@@ -58,3 +58,6 @@ out/
 *.bin
 *.hex
 *.map
+
+# IDE config, local to a machine
+.vscode/

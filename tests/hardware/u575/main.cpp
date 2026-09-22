@@ -23,8 +23,10 @@
  *   p baton                      which thread ran last
  *   p switch_count               how many context switches have happened
  *
- * Output goes out over SEMIHOSTING, the same channel the QEMU bench uses, so
- * it needs `arm semihosting enable` in OpenOCD (debug.sh does it). Each call
+ * Output goes out over SEMIHOSTING, the same channel the QEMU bench uses.
+ * `openocd.cfg` arms it from an examine-end event, so it is on whoever drives
+ * OpenOCD. It appears on OPENOCD's stdout, not gdb's, which under an IDE means
+ * the terminal running the gdb server rather than the debug console. Each call
  * halts the core briefly, so nothing timing-sensitive should print.
  */
 

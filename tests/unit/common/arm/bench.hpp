@@ -44,7 +44,18 @@ inline constexpr long sys_write0        = 0x04;
 inline constexpr long sys_exit_extended = 0x20;
 inline constexpr std::uint32_t adp_stopped_application_exit = 0x20026u;
 
-inline long semihost(long op, void volatile* arg) noexcept
+/**
+ * @brief Issue one semihosting call.
+ *
+ * NOT INLINE, deliberately. A `BKPT` inlined into the caller's line makes that
+ * line impossible to STEP OVER in a debugger: gdb single-steps through the
+ * line, the debug agent services the trap and resumes the core itself, and the
+ * step never completes, so the session hangs on the source line while the
+ * target runs on. As an out-of-line CALL, gdb steps over it by breakpointing
+ * the return address and resuming, which is what the trap handling expects.
+ * The extra call/return is nothing against a trap that costs microseconds.
+ */
+[[gnu::noinline]] inline long semihost(long op, void volatile* arg) noexcept
 {
    register long r0 asm("r0") = op;
    register void volatile* r1 asm("r1") = arg;
