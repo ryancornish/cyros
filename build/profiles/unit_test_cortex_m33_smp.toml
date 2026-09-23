@@ -1,0 +1,22 @@
+# Unit-test profile for the dual-core Cortex-M33 port.
+#
+# A separate profile from unit_test_cortex_m33.toml rather than a variant of
+# it, because the two differ in the MACHINE their tests run on and that is a
+# property of the toolchain. An image built for mps2-an521 cannot execute on
+# mps2-an505.
+[profile]
+name = "unit_test_cortex_m33_smp"
+toolchain = "../toolchains/arm-none-eabi-debug-smp.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m33_smp"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

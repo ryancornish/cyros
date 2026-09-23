@@ -1,0 +1,27 @@
+name = "arm-none-eabi-debug-smp"
+extends = "arm-none-eabi-debug.toml"
+
+# Identical compiler settings to the single-core debug toolchain. The ONE thing
+# that differs is the machine the result runs on, and it has to be a separate
+# toolchain rather than a per-test setting because the runner is a property of
+# the toolchain: nothing built for mps2-an521 can be executed on mps2-an505 or
+# the other way round.
+#
+# mps2-an521 rather than the three other dual-M33 machines QEMU offers. It
+# shares the AN505 memory map, so the linker script and the compiler flags are
+# unchanged from the single-core bench, which keeps the difference between the
+# two benches to the startup file and the machine name. mps3-an524, musca-a and
+# musca-b1 all have different maps and all fault on this image.
+[runner]
+command = [
+   "qemu-system-arm",
+   "-M", "mps2-an521",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+
+# Longer than the single-core bench's 30s. A failure to release the second core,
+# or a rendezvous that never completes, shows up as a hang rather than a fault,
+# and a dual-core TCG run is slower than a single-core one.
+timeout = 60

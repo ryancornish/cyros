@@ -1,0 +1,16 @@
+name = "cortex_m33_smp"
+description = "Dual Cortex-M33 on an SSE-200 subsystem: QEMU's mps2-an521."
+
+# The same core layer the single-core target uses, byte for byte. That reuse is
+# the whole point of the split: everything in port_core.h is identical on these
+# two targets and everything that differs is in this directory.
+extends = "armv8m"
+
+sources = [
+   "port_mcu_cortex_m33_smp.cpp",
+   "port_time_systick_smp.cpp",
+]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

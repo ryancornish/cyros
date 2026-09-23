@@ -5,6 +5,7 @@ variants = [
    "linux_coop",
    "linux_preempt",
    "cortex_m33",
+   "cortex_m33_smp",
 ]
 
 # port_core.h and port_mcu.h, and port.h which is just an umbrella over the two,

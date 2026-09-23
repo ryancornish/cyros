@@ -249,6 +249,42 @@ inline void write_hex(std::uint32_t value) noexcept
    write0(buffer);
 }
 
-} // namespace cyros::port
+/**
+ * @brief Apply the core-private half of port initialisation to THIS core.
+ *
+ * Everything cyros_port_init does to hardware lives in registers that are
+ * private to a core: PRIMASK, BASEPRI, CPACR, the system handler priorities
+ * and ICSR. On a single-core target cyros_port_init is the only caller and
+ * this split is invisible. On a multicore one every secondary core must run
+ * it too, or it comes up with default handler priorities and no FPU while
+ * running the same kernel.
+ *
+ * It deliberately does NOT derive the priority values. Those are facts about
+ * the core design, identical on every core of a homogeneous part, so the
+ * bootstrap core derives them in cyros_port_init and this only applies them.
+ * That keeps the globals holding them written by exactly one core.
+ *
+ * Declared here, in the header the core layer shares with the MCU layer, so a
+ * multicore MCU layer can call it on a core it has just released. It is not
+ * part of the kernel-facing contract and no kernel code may call it.
+ */
+void init_this_core();
+
+/**
+ * @brief The highest priority VALUE a device IRQ may be given and stay useful.
+ *
+ * Numerically lower is more urgent. A device IRQ configured numerically above
+ * this sits at or below PendSV, so raising BASEPRI to disable preemption would
+ * mask it too, and a driver would silently stop being serviced inside every
+ * kernel critical section. That is the exact shape of the bug SysTick hit
+ * before its priority was derived rather than hardcoded.
+ *
+ * Derived in cyros_port_init, so this reports a real value only after it. An
+ * MCU layer configuring its own IRQs, an inter-core doorbell for instance,
+ * should use it rather than inventing a constant.
+ */
+std::uint32_t device_irq_priority();
+
+} // namespace cyros::port::cortex_m
 
 #endif /* CYROS_PORT_CORTEX_M_HPP */

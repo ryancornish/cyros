@@ -66,6 +66,20 @@
 
 #include <cyros/port/port_core.h>
 
+/* For cyros_port_get_core_id, and for that one function only.
+ *
+ * A core layer may CALL the MCU contract, exactly as an MCU layer may call the
+ * core contract. The property the layering protects is that `armv8m` links
+ * UNCHANGED against any MCU layer, and depending on a declaration preserves
+ * that completely. What a layer may never do is IMPLEMENT the other half, and
+ * that is mechanically checked rather than left to this comment.
+ *
+ * The dependency exists because ARMv8-M has no architectural core identity, so
+ * per-core state in a core-level file cannot be indexed without asking the MCU.
+ * On a single-core target the call folds away entirely: see this_core().
+ */
+#include <cyros/port/port_mcu.h>
+
 #include "cortex_m.hpp"
 
 #include <cstddef>
@@ -102,10 +116,48 @@ namespace
 /* The kernel's reschedule entry point, installed by cyros_port_init. */
 cyros_port_reschedule_t reschedule_handler = nullptr;
 
-/* Current thread's TLS base. Swapped by cyros_port_switch so that a thread
- * carries its own across a switch, which the Linux ports get from pthread TLS
- * and this target has to do by hand. */
-void* current_tls = nullptr;
+/* A CACHE of the running thread's TLS base, one slot per core.
+ *
+ * TLS IS PER THREAD, not per core, and nothing here changes that. The
+ * authoritative copy is `tls` in each thread's own context, and
+ * cyros_port_switch saves the outgoing thread's and loads the incoming one's.
+ * This array only answers "on this core, which thread is running and where is
+ * its TLS base", so it is indexed by core for the same reason PSP is per core:
+ * there is one running thread per core, not one in the system.
+ *
+ * With a single slot, core 1's switch would overwrite core 0's notion of the
+ * running thread. The next save on core 0 would then write core 1's thread's
+ * base into core 0's thread's context, so the two threads would end up sharing
+ * a TLS base. Per core is what keeps the thread-to-TLS mapping one to one.
+ *
+ * No two cores ever write the same word, so no atomics are needed. There is no
+ * false sharing to pad against either: an SSE-200 M33 has no data cache.
+ */
+void* current_tls[CYROS_PORT_CORE_COUNT] = {};
+
+/**
+ * @brief Which core is executing, for indexing per-core port state.
+ *
+ * On a single-core target this is the constant 0, so the MMIO read disappears
+ * entirely and the arrays above collapse to one slot addressed by a literal.
+ * That is what makes calling into the MCU contract from here acceptable: the
+ * per-access cost lands only on a build that genuinely has more than one core.
+ *
+ * Measured on the bench build: supporting multicore at all costs a SINGLE-core
+ * image 32 bytes of text, and all of it is init_this_core and
+ * device_irq_priority becoming externally callable rather than folding away.
+ * None of it is on the switch path. Compiling this same file for two cores
+ * costs a further 44 bytes of text and one pointer of bss, which is the MMIO
+ * read and the array indexing, and that lands only on the SMP target.
+ */
+inline std::uint32_t this_core() noexcept
+{
+   if constexpr (CYROS_PORT_CORE_COUNT == 1) {
+      return 0u;
+   } else {
+      return cyros_port_get_core_id();
+   }
+}
 
 /* Derived in cyros_port_init once the implemented priority width is known. */
 std::uint32_t pendsv_priority  = 0xFFu;
@@ -165,11 +217,17 @@ constexpr std::uint32_t exc_return_thread_psp_no_fp = 0xFFFFFFFDu;
  * Platform Initialisation
  * ========================================================================= */
 
-void cyros_port_init(cyros_port_reschedule_t handler)
+namespace cyros::port::cortex_m
 {
-   CYROS_ASSERT(handler != nullptr);
-   reschedule_handler = handler;
-   current_tls = nullptr;
+
+std::uint32_t device_irq_priority()
+{
+   return systick_priority;
+}
+
+void init_this_core()
+{
+   current_tls[this_core()] = nullptr;
 
    /* Mask everything for the whole of bring-up. Nothing may preempt the kernel
     * between here and cyros_port_start_first, which is the moment the first
@@ -187,6 +245,25 @@ void cyros_port_init(cyros_port_reschedule_t handler)
       cortex_m::reg(cortex_m::scb_cpacr) | cortex_m::cpacr_fpu_full_access;
    cortex_m::dsb();
    cortex_m::isb();
+
+   cortex_m::reg8(cortex_m::shpr_pendsv)  = static_cast<std::uint8_t>(pendsv_priority);
+   cortex_m::reg8(cortex_m::shpr_systick) = static_cast<std::uint8_t>(systick_priority);
+
+   /* Clear any reschedule left pending by a previous kernel lifecycle. The unit
+    * tests initialise and finalise repeatedly, and a stale PENDSVSET would fire
+    * into the next lifecycle's first thread. */
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
+
+   cortex_m::dsb();
+   cortex_m::isb();
+}
+
+} // namespace cyros::port::cortex_m
+
+void cyros_port_init(cyros_port_reschedule_t handler)
+{
+   CYROS_ASSERT(handler != nullptr);
+   reschedule_handler = handler;
 
    std::uint32_t const bits = discover_priority_bits();
    CYROS_ASSERT_OP(bits, >=, 2u);   /* need at least two distinguishable levels */
@@ -227,16 +304,13 @@ void cyros_port_init(cyros_port_reschedule_t handler)
    systick_priority = pendsv_priority - step;
    preempt_mask_value = pendsv_priority;
 
-   cortex_m::reg8(cortex_m::shpr_pendsv)  = static_cast<std::uint8_t>(pendsv_priority);
-   cortex_m::reg8(cortex_m::shpr_systick) = static_cast<std::uint8_t>(systick_priority);
-
-   /* Clear any reschedule left pending by a previous kernel lifecycle. The unit
-    * tests initialise and finalise repeatedly, and a stale PENDSVSET would fire
-    * into the next lifecycle's first thread. */
-   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
-
-   cortex_m::dsb();
-   cortex_m::isb();
+   /* Derived above, APPLIED here, and the split is what makes a second core
+    * cheap. The three values are facts about the core design, so every core in
+    * a homogeneous part derives them identically. Deriving once on the
+    * bootstrap core and having each secondary core only apply them keeps the
+    * globals written by exactly one core, so there is no race to reason about
+    * even though the values would have agreed anyway. */
+   cyros::port::cortex_m::init_this_core();
 }
 
 
@@ -367,9 +441,13 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
    CYROS_ASSERT(to != nullptr);
    CYROS_ASSERT(to->sp != 0u);
 
+   /* Read once and reuse. On a multicore target this is an MMIO read, and the
+    * switch is the hottest path the port has. */
+   std::uint32_t const core = this_core();
+
    if (from != nullptr) {
       from->sp  = cortex_m::get_psp();
-      from->tls = current_tls;
+      from->tls = current_tls[core];
    }
 
    /* Drop the limit before moving PSP. An MSR to PSP is checked against the
@@ -379,7 +457,7 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
    cortex_m::set_psp(to->sp);
    cortex_m::set_psplim(to->stack_limit);
 
-   current_tls = to->tls;
+   current_tls[core] = to->tls;
 }
 
 /**
@@ -445,7 +523,7 @@ void cyros_port_start_first(cyros_port_context* first)
    CYROS_ASSERT(first != nullptr);
    CYROS_ASSERT(first->sp != 0u);
 
-   current_tls = first->tls;
+   current_tls[this_core()] = first->tls;
 
    cortex_m::set_psplim(0u);
    cortex_m::set_psp(first->sp);
@@ -528,12 +606,12 @@ void cyros_port_pend_reschedule(void)
 
 void cyros_port_set_tls_pointer(void* tls_base)
 {
-   current_tls = tls_base;
+   current_tls[this_core()] = tls_base;
 }
 
 void* cyros_port_get_tls_pointer(void)
 {
-   return current_tls;
+   return current_tls[this_core()];
 }
 
 

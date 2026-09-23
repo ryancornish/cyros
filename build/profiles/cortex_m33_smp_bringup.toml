@@ -1,0 +1,23 @@
+# Cortex-M33 bring-up: the port and the kernel, nothing else.
+#
+# NO time_driver on purpose. The first thing to prove on a new target is that
+# threads are created and switched between, and a time driver adds a second
+# interrupt source to every failure. cortex_m33_periodic.toml adds it once this
+# one is green.
+[profile]
+name = "cortex_m33_smp_bringup"
+toolchain = "../toolchains/arm-none-eabi-debug.toml"
+config_header = "../configs/cortex_m33.hpp"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m33_smp"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"
