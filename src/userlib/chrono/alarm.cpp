@@ -9,13 +9,9 @@
 
 #include <cyros/chrono/alarm.hpp>
 #include <cyros/chrono/chrono.hpp>
+#include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/core.hpp>
 #include <cyros/kernel/thread.hpp>
-// Internal header, reached through the internal include tree. Userlib is meant
-// to build on the PUBLIC kernel API alone (roadmap A1), and this is the last
-// userlib file that does not: it needs port.h only for CYROS_ASSERT, which has
-// no public equivalent until the assert design is settled (roadmap A2).
-#include <cyros/port/port.h>
 
 namespace cyros::chrono
 {
@@ -42,11 +38,11 @@ bool alarm::pending() const noexcept
 
 void alarm::arm_at(time::time_point tp) noexcept
 {
-   CYROS_ASSERT(!pending()); // Re-arming a pending alarm is a cancel-then-arm at the call site
+   CYROS_REQUIRE(!pending()); // Re-arming a pending alarm is a cancel-then-arm at the call site
 
    fired.store(false, std::memory_order_relaxed);
    timer = time::schedule_at(tp, &on_timer, this);
-   CYROS_ASSERT(timer.id != 0); // Timer table full, a config-sized limit
+   CYROS_FATAL(timer.id != 0); // Timer table full, a config-sized limit
 }
 
 void alarm::arm_in(time::duration d) noexcept
