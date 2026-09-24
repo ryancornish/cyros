@@ -46,6 +46,9 @@ public:
 
 }  // namespace cyros::sync
 
-namespace cyros { using sync::cemutex; }
+namespace cyros
+{
+using sync::cemutex;
+}
 
 #endif // CYROS_CEMUTEX_HPP

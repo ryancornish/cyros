@@ -1,0 +1,11 @@
+name = "channel"
+description = "Bounded channels for passing values and work between threads"
+
+dependencies = [
+   "kernel",
+   "sync",
+]
+
+public_headers = [
+   "public_headers/channel.hpp -> cyros/ch/channel.hpp",
+]

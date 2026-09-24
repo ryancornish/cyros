@@ -50,6 +50,9 @@ private:
 
 }  // namespace cyros::sync
 
-namespace cyros { using sync::semaphore; }
+namespace cyros
+{
+using sync::semaphore;
+}
 
 #endif // CYROS_SEMAPHORE_HPP

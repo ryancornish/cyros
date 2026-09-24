@@ -1,0 +1,17 @@
+[test]
+name = "test_linux_preempt_adopt"
+layer = 0
+kind = "unit"
+
+# The subject is the port's adoption of an OS thread's signal mask, which is
+# layer 0. It cannot be observed without bringing the kernel up, because the
+# mask invariant is only checked from inside a critical section.
+harness_debt = { layer = 2, reason = "the mask invariant is only checked once something takes a critical section, which needs the kernel up" }
+source = "test_linux_preempt_adopt.cpp"
+config = "test_linux_preempt_adopt_config.hpp"
+
+[components]
+port = "linux_preempt"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

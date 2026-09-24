@@ -30,6 +30,9 @@ public:
 
 }  // namespace cyros::sync
 
-namespace cyros { using sync::mutex; }
+namespace cyros
+{
+using sync::mutex;
+}
 
 #endif // CYROS_MUTEX_HPP

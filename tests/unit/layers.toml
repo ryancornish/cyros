@@ -26,6 +26,11 @@ prefix = "cyros/"
 "cyros/port/port_mcu.h" = 0
 
 # L1, built directly on the port.
+# assert.hpp is here rather than ungraded because it has an implementation:
+# cyros::panic forwards to the port's system_error, so it is built on the port
+# contract exactly as spinlock is. A test below L1 that wants a hard error uses
+# the internal CYROS_ASSERT, which tests can still see.
+"cyros/kernel/assert.hpp" = 1
 "cyros/kernel/core.hpp" = 1
 "cyros/kernel/spinlock.hpp" = 1
 "cyros/time/time.hpp" = 1
@@ -45,6 +50,10 @@ prefix = "cyros/"
 "cyros/sync/mutex.hpp" = 7
 "cyros/sync/cemutex.hpp" = 7
 "cyros/kernel/diagnostics.hpp" = 7
+
+# L7, userlib channel. Built on semaphore (L6), spinlock (L1) and function
+# (L0), so it sits beside mutex rather than above chrono.
+"cyros/chan/channel.hpp" = 7
 
 # L8, everything coupled to time.
 "cyros/chrono/chrono.hpp" = 8

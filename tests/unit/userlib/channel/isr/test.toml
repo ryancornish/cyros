@@ -1,0 +1,17 @@
+[test]
+name = "test_channel_isr"
+layer = 7
+kind = "integration"
+source = "test_channel_isr.cpp"
+config = "test_channel_isr_config.hpp"
+
+# Preempt + periodic: the send happens in a genuine timer ISR and the job runs
+# in thread context. This is the suite that gives the ISR-safe send claim a
+# consumer, so it asserts order and counts, never exact ticks.
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+features = ["sync", "channel"]
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

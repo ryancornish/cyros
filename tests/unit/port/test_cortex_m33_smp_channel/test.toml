@@ -1,0 +1,22 @@
+[test]
+name = "test_cortex_m33_smp_channel"
+layer = 7
+kind = "unit"
+source = [
+   "test_cortex_m33_smp_channel.cpp",
+   "../arm_bench/startup_mps2_an521.c",
+   "../arm_bench/syscall_stubs.c",
+]
+config = "test_cortex_m33_smp_channel_config.hpp"
+
+# Runs on bare metal. Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m33_smp"
+time_driver = "periodic"
+features = ["sync", "channel"]
+
+[link]
+system_libraries = []
+linker_script = "../arm_bench/mps2_an505.ld"

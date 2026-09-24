@@ -1,0 +1,15 @@
+[test]
+name = "test_channel_death"
+layer = 7
+kind = "unit"
+source = "test_channel_death.cpp"
+config = "test_channel_death_config.hpp"
+
+# A binary of its own, holding ONE death test. See the file header: a death test
+# must be the first thing the process does, so it cannot share a binary.
+[components]
+port = "linux_preempt"
+features = ["sync", "channel"]
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

@@ -559,6 +559,52 @@ static void assert_mask_matches_depths()
 }
 
 /**
+ * @brief Take ownership of this OS thread's mask for the signals cyros owns.
+ *
+ * assert_mask_matches_depths() says the mask is a view of the counters, and
+ * that is only true if something ESTABLISHES it once. Nothing did. It held by
+ * luck: a fresh process starts with these signals unblocked and zeroed
+ * counters, and a second run in the same process inherits counters that already
+ * agree with the mask the first run left behind.
+ *
+ * A thread that arrives with one of them blocked for any other reason breaks
+ * it, and fails on its very first critical section rather than anywhere near
+ * the cause. Two ways in: an application that blocks SIGURG or a realtime
+ * signal for its own purposes, and, less obviously, ANY fork plus exec from a
+ * process that has already run cyros, because the calling thread is left with
+ * both blocked and a child inherits the mask while its counters start at zero.
+ * The second is what a gtest death test does, which is how this was found.
+ *
+ * So found the invariant here instead of assuming it. This is the first port
+ * call of a run, on the thread that is about to use the masking API.
+ */
+static void adopt_os_thread()
+{
+   /* A child inherits the PENDING set as well as the mask, so a signal its
+    * parent blocked can still be pending here. Consume the ones about to be
+    * unblocked: delivering one now would find no cyros handler installed, and
+    * timer_signo's default action is to terminate the process.
+    *
+    * sigtimedwait with a zero timeout rather than sigwait, for two reasons.
+    * It cannot hang if another thread in the process races us for the signal,
+    * where sigwait would block forever inside kernel::initialise(). And it
+    * loops, because timer_signo is a REALTIME signal: instances queue, so one
+    * take does not drain them. */
+   for (auto const& s : owned_signals) {
+      if (should_block(s)) continue;   // staying blocked, leave it pending
+
+      sigset_t only;
+      sigemptyset(&only);
+      sigaddset(&only, s.signo);
+
+      struct timespec const immediately = {};
+      while (sigtimedwait(&only, nullptr, &immediately) >= 0) { }
+   }
+
+   apply_mask();
+}
+
+/**
  * @brief Enter or leave the dormant region on this OS thread.
  *
  * Before a core starts its first thread, and again once its bring-up context is
@@ -746,6 +792,10 @@ void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
 {
    CYROS_ASSERT_OP(global.active_contexts.load(std::memory_order_relaxed), ==, 0u);
    global.reschedule_handler = reschedule_handler;
+
+   // Before anything can take a critical section on this thread. See the
+   // function's comment for what was relying on luck until 2026-09-24.
+   adopt_os_thread();
 }
 
 
