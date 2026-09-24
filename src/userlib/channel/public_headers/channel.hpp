@@ -157,7 +157,9 @@ public:
    void send_overwrite(T v) noexcept
    {
       if (space.try_acquire()) {
-         if (place_owning_space(v) != outcome::queued) { space.release(); }
+         if (place_owning_space(v) != outcome::queued) {
+            space.release();
+         }
          return;
       }
 
@@ -193,7 +195,7 @@ public:
    {
       {
          spinlock_guard guard(lock);
-         if (stopped) { return; }
+         if (stopped) return;
       }
 
       space.acquire();  // a freed slot, or the token stop() left behind
@@ -224,7 +226,7 @@ public:
    {
       {
          spinlock_guard guard(lock);
-         if (occupancy == 0 && stopped) { return std::nullopt; }
+         if (occupancy == 0 && stopped) return std::nullopt;
       }
 
       items.acquire();
@@ -243,7 +245,7 @@ public:
     */
    [[nodiscard]] std::optional<T> try_receive() noexcept
    {
-      if (!items.try_acquire()) { return std::nullopt; }
+      if (!items.try_acquire()) return std::nullopt;
 
       std::optional<T> out;
       {
@@ -283,7 +285,7 @@ public:
    {
       {
          spinlock_guard guard(lock);
-         if (stopped) { return; }
+         if (stopped) return;
          stopped = true;
       }
       items.release();
@@ -305,7 +307,12 @@ public:
    }
 
 private:
-   enum class outcome { queued, full, stopped };
+   enum class outcome
+   {
+      queued,
+      full,
+      stopped,
+   };
 
    static constexpr std::size_t advance(std::size_t index) noexcept
    {
@@ -423,8 +430,7 @@ using work_channel = channel<job<JobSize>, Capacity>;
  * With several workers, jobs START in FIFO order and finish in whatever order
  * they finish.
  */
-template<typename T, std::size_t Capacity>
-   requires std::invocable<T&>
+template<typename T, std::size_t Capacity> requires std::invocable<T&>
 void run(channel<T, Capacity>& ch)
 {
    while (auto work = ch.receive()) {
@@ -437,8 +443,7 @@ void run(channel<T, Capacity>& ch)
  * @return false once the channel is stopped and drained, so `while (run_one(ch))`
  *         is `run(ch)`.
  */
-template<typename T, std::size_t Capacity>
-   requires std::invocable<T&>
+template<typename T, std::size_t Capacity> requires std::invocable<T&>
 [[nodiscard]] bool run_one(channel<T, Capacity>& ch)
 {
    auto work = ch.receive();

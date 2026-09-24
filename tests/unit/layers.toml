@@ -53,7 +53,7 @@ prefix = "cyros/"
 
 # L7, userlib channel. Built on semaphore (L6), spinlock (L1) and function
 # (L0), so it sits beside mutex rather than above chrono.
-"cyros/chan/channel.hpp" = 7
+"cyros/ch/channel.hpp" = 7
 
 # L8, everything coupled to time.
 "cyros/chrono/chrono.hpp" = 8

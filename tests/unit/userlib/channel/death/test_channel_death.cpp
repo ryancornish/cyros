@@ -2,7 +2,7 @@
  * @file test_channel_death.cpp
  * @brief The strict send() really does stop the system on a full channel (L7).
  *
- * Subject: cyros::chan::channel::send
+ * Subject: cyros::ch::channel::send
  *
  * The headline behaviour of `send`, and the only claim in the channel suite
  * that cannot be checked by looking at a return value: the process has to die.
@@ -34,7 +34,7 @@
  * "full is a sizing bug, finished is not".
  */
 
-#include <cyros/chan/channel.hpp>
+#include <cyros/ch/channel.hpp>
 
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/thread.hpp>
@@ -59,7 +59,7 @@ void overfill_a_channel()
    kernel::initialise();
 
    static test::guarded_stack stack;
-   static chan::channel<std::uint32_t, 1> ch;
+   static ch::channel<std::uint32_t, 1> ch;
 
    thread driver(
       [] {

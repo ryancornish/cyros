@@ -1,7 +1,7 @@
 /* ============================================================================
  * channel contract
  *
- * Subject: `cyros::chan::channel` (L7). Trusts spinlock (L1), semaphore
+ * Subject: `cyros::ch::channel` (L7). Trusts spinlock (L1), semaphore
  * (L6) and function (L0), all proved below, plus the harness floor to run
  * cores at all.
  *
@@ -25,7 +25,7 @@
  * `watchdog_core` below says why that is not optional.
  * ========================================================================= */
 
-#include <cyros/chan/channel.hpp>
+#include <cyros/ch/channel.hpp>
 
 #include <cyros/config/config.hpp>
 #include <cyros/kernel/core.hpp>
@@ -55,7 +55,7 @@ static_assert(config::cores >= 4, "Test suite is designed for (at least) quad-co
  * with no startup code and no initialisation-order surface. Both members that
  * could have broken it are the reason: spinlock and semaphore are both
  * constexpr-constructible, and std::array<T, N> value-initialises. */
-constinit static chan::channel<std::uint32_t, 4> constant_initialised_channel;
+constinit static ch::channel<std::uint32_t, 4> constant_initialised_channel;
 
 namespace
 {
@@ -107,7 +107,7 @@ TEST_F(Channel_Test, GivenOneProducerAndOneReceiver_WhenValuesAreSent_ThenTheyCo
 
    struct state
    {
-      chan::channel<std::uint32_t, 4> ch;
+      ch::channel<std::uint32_t, 4> ch;
       std::atomic<bool>        order_held{true};
       std::atomic<std::uint32_t> received{0};
       std::atomic<bool>        empty_when_drained{false};
@@ -157,7 +157,7 @@ TEST_F(Channel_Test, GivenAChannel_WhenFilled_ThenTrySendRefusesExactlyAtCapacit
 
    struct state
    {
-      chan::channel<std::uint32_t, 3> ch;
+      ch::channel<std::uint32_t, 3> ch;
       std::atomic<int>  accepted{0};
       std::atomic<bool> refused_when_full{false};
       std::atomic<bool> accepted_after_one_freed{false};
@@ -203,7 +203,7 @@ TEST_F(Channel_Test, GivenAFullChannel_WhenSendOverwrite_ThenTheOldestIsDroppedA
 
    struct state
    {
-      chan::channel<std::uint32_t, 3> ch;
+      ch::channel<std::uint32_t, 3> ch;
       std::array<std::uint32_t, 3> drained{};
       std::atomic<std::size_t> size_after_overwrite{0};
       std::atomic<int> drained_count{0};
@@ -249,7 +249,7 @@ TEST_F(Channel_Test, GivenRoomToSpare_WhenSendOverwrite_ThenNothingIsDropped)
 
    struct state
    {
-      chan::channel<std::uint32_t, 4> ch;
+      ch::channel<std::uint32_t, 4> ch;
       std::atomic<std::size_t> size_after{0};
       std::atomic<std::uint32_t> first{0};
       std::atomic<int> count{0};
@@ -297,7 +297,7 @@ TEST_F(Channel_Test, GivenQueuedValues_WhenStopped_ThenTheyStillArriveAndLaterSe
     * stop. */
    struct state
    {
-      chan::channel<std::uint32_t, 2> ch;
+      ch::channel<std::uint32_t, 2> ch;
       std::atomic<int>  drained{0};
       std::atomic<bool> order_held{true};
       std::atomic<bool> send_refused{false};
@@ -366,7 +366,7 @@ TEST_F(Channel_Test, GivenBlockedReceivers_WhenStopped_ThenEveryOneOfThemReturns
 
       struct state
       {
-         chan::channel<std::uint32_t, 4> ch;
+         ch::channel<std::uint32_t, 4> ch;
          sync::semaphore   parked{0};   // one release per witness
          std::atomic<int>  returned{0};
          std::atomic<bool> all_parked{false};
@@ -448,7 +448,7 @@ TEST_F(Channel_Test, GivenAFullChannel_WhenSendBlocking_ThenItCompletesOnlyAfter
 
    struct state
    {
-      chan::channel<std::uint32_t, 1> ch;
+      ch::channel<std::uint32_t, 1> ch;
       sync::semaphore   sender_parked{0};
       std::atomic<bool> sender_done{false};
       std::atomic<bool> sender_done_before_receive{true};
@@ -522,7 +522,7 @@ TEST_F(Channel_Test, GivenManyProducersAndReceivers_WhenDraining_ThenEveryValueA
 
    struct state
    {
-      chan::channel<std::uint32_t, 8> ch;
+      ch::channel<std::uint32_t, 8> ch;
       std::atomic<std::uint64_t> sum_sent{0};
       std::atomic<std::uint64_t> sum_received{0};
       std::atomic<std::uint32_t> count_received{0};
@@ -594,7 +594,7 @@ TEST_F(Channel_Test, GivenAConcurrentReceiver_WhenOverwritingHard_ThenNoTokenOut
 
    struct state
    {
-      chan::channel<std::uint32_t, 4> ch;
+      ch::channel<std::uint32_t, 4> ch;
       std::atomic<bool> producer_done{false};
       std::atomic<bool> receiver_exited_early{false};
       std::atomic<bool> order_held{true};
@@ -673,7 +673,7 @@ TEST_F(Channel_Test, GivenSeveralBlockedSenders_WhenStopped_ThenEveryOneOfThemRe
 
    struct state
    {
-      chan::channel<std::uint32_t, 1> ch;
+      ch::channel<std::uint32_t, 1> ch;
       sync::semaphore   filled{0};    // one release per sender
       sync::semaphore   parked{0};    // one release per witness
       std::atomic<int>  returned{0};
@@ -759,7 +759,7 @@ TEST_F(Channel_Test, GivenBlockedSendersAtStop_WhenATrySendTakesTheToken_ThenItI
 
    struct state
    {
-      chan::channel<std::uint32_t, 1> ch;
+      ch::channel<std::uint32_t, 1> ch;
       std::atomic<int> returned{0};
       std::atomic<int> refused{0};
    } s;
@@ -839,7 +839,7 @@ TEST_F(Channel_Test, GivenAStoppedFullChannel_WhenOverwritersRace_ThenTheQueuedV
 
    struct state
    {
-      chan::channel<std::uint32_t, 4> ch;
+      ch::channel<std::uint32_t, 4> ch;
       sync::semaphore   ready{0};        // one release per overwriters
       sync::semaphore   overwriters_done{0};
       std::array<std::uint32_t, 8> drained{};
@@ -921,7 +921,7 @@ TEST_F(Channel_Test, GivenAStoppedFullChannel_WhenStrictSendsRace_ThenTheyAreRef
 
    struct state
    {
-      chan::channel<std::uint32_t, 4> ch;
+      ch::channel<std::uint32_t, 4> ch;
       sync::semaphore   ready{0};        // one release per senders
       sync::semaphore   senders_done{0};
       std::array<std::uint32_t, 8> drained{};
@@ -991,7 +991,7 @@ TEST_F(Channel_Test, GivenAWorkChannel_WhenRun_ThenJobsExecuteInOrderAndRunRetur
 
    struct state
    {
-      chan::work_channel<8> ch;
+      ch::work_channel<8> ch;
       std::atomic<std::uint32_t> order_hash{0};
       std::atomic<int>  ran{0};
       std::atomic<bool> run_returned{false};
@@ -1002,7 +1002,7 @@ TEST_F(Channel_Test, GivenAWorkChannel_WhenRun_ThenJobsExecuteInOrderAndRunRetur
    thread worker(
       [&s] {
          s.worker_thread_id = this_thread::id();
-         chan::run(s.ch);
+         ch::run(s.ch);
          s.run_returned.store(true);
       },
       stacks[0], thread::priority(1), core0);
@@ -1051,7 +1051,7 @@ struct big_capture
 
 // A 16-byte job holds a small lambda and not a 64-byte one. Both directions
 // are asserted, so a bound that stopped rejecting anything is caught too.
-static_assert(std::is_constructible_v<chan::job<32>, void (*)()>,
+static_assert(std::is_constructible_v<ch::job<32>, void (*)()>,
               "a plain function pointer must fit a 32 byte job");
 static_assert(sizeof(big_capture) > 16,
               "the oversized capture must actually be oversized for the check below to mean anything");

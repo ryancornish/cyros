@@ -2,7 +2,7 @@
  * @file test_channel_isr.cpp
  * @brief The reason the feature exists: an ISR hands work to a thread.
  *
- * Subject: cyros::chan::channel (L7), under a real asynchronous timer
+ * Subject: cyros::ch::channel (L7), under a real asynchronous timer
  * Trusts:  the time driver (L1), semaphore (L6), and the ISR-safe wake path
  *
  * The rest of the channel suite runs entirely in thread context, so it proves
@@ -36,7 +36,7 @@
  * a job that never runs fails as a suite hang, not as a flaky margin.
  */
 
-#include <cyros/chan/channel.hpp>
+#include <cyros/ch/channel.hpp>
 
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/thread.hpp>
@@ -67,7 +67,7 @@ constexpr std::size_t channel_slots = 4;
 
 struct shared
 {
-   chan::work_channel<channel_slots> ch;
+   ch::work_channel<channel_slots> ch;
 
    sync::semaphore gate{0};          // the first job blocks here
    sync::semaphore channel_filled{0}; // the ISR reports a full channel here
@@ -166,7 +166,7 @@ TEST_F(ChannelIsr_Test, GivenATimerIsr_WhenItSendsWork_ThenTheJobsRunInThreadCon
 
    thread worker(
       [&] {
-         chan::run(s.ch);
+         ch::run(s.ch);
          s.run_returned.store(true, std::memory_order_release);
       },
       stacks[1], thread::priority(1), core0);
