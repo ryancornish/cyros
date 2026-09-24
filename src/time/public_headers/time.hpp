@@ -122,7 +122,12 @@ CYROS_PUBLIC void initialise(uint32_t frequency_hz);
  * @brief Finalise the active time driver.
  *
  * Releases any driver-owned state and returns the time subsystem to an
- * uninitialised state.
+ * uninitialised state. That includes the timer on every core that called
+ * start(), which is stopped and released here whether or not stop() was called,
+ * so no tick outlives the driver.
+ *
+ * Call it after the kernel has stopped. On a target that keeps time on a single
+ * core, call it on that core.
  */
 CYROS_PUBLIC void finalise();
 

@@ -1,0 +1,18 @@
+[test]
+name = "test_time_teardown_preempt"
+layer = 1
+kind = "unit"
+
+# The subject is the time port's teardown, which is layer 1. On this port every
+# core owns its own POSIX timer and creates it from its own thread, so the
+# multi-core case cannot exist until the kernel has started the cores.
+harness_debt = { layer = 2, reason = "per-core timers are created by per-core threads, which only a running kernel provides" }
+source = "test_time_teardown_preempt.cpp"
+config = "test_time_teardown_preempt_config.hpp"
+
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

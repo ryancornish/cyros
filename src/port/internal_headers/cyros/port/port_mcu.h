@@ -123,6 +123,25 @@ typedef void (*cyros_port_isr_handler_t)(void* arg);
 void cyros_port_time_setup(uint32_t tick_hz);
 
 /**
+ * @brief Stop the OS time source for good, and forget the registered ISR.
+ *
+ * The inverse of cyros_port_time_setup() on every core that called it, plus
+ * cyros_port_time_register_isr_handler(). On return no timer interrupt is
+ * being generated and none is left pending on the calling core, and every
+ * resource setup() acquired has been released.
+ *
+ * Called once, by the selected time driver's finalise(), after the kernel has
+ * stopped. It is global where setup() is per-core, and every current target
+ * can honour that from one core: the hosted ports own their timers
+ * process-wide, and the SMP target keeps time on a single core, which is
+ * therefore where finalise() must run. It must not rely on kernel state,
+ * because an application may finalise the kernel first.
+ *
+ * Safe to call when setup() never ran. A later setup() starts from scratch.
+ */
+void cyros_port_time_teardown(void);
+
+/**
  * @brief Monotonic time source
  * @return Current time in port ticks
  *

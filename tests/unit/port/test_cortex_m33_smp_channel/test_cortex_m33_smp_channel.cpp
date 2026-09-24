@@ -2,7 +2,7 @@
  * @file test_cortex_m33_smp_channel.cpp
  * @brief A work channel across two real Cortex-M33 cores (L7).
  *
- * Subject: cyros::chan::channel, on hardware rather than on pthreads
+ * Subject: cyros::ch::channel, on hardware rather than on pthreads
  * Trusts:  SMP bring-up (L2), the doorbell (L6) and the semaphore (L6)
  * Proves:  a worker PARKED on core 1 is fed by a producer on core 0, a
  *          producer parked on a full channel is fed by the worker, and stop()
@@ -50,7 +50,7 @@
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/thread.hpp>
 #include <cyros/kernel/core.hpp>
-#include <cyros/chan/channel.hpp>
+#include <cyros/ch/channel.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
 
@@ -82,7 +82,7 @@ constexpr int progress_every = 10;
 
 /* Two slots against fifty jobs, deliberately. A channel big enough to hold the
  * run would only ever park the consumer. */
-chan::work_channel<2> work;
+ch::work_channel<2> work;
 
 std::atomic<int>  jobs_run{0};
 std::atomic<bool> ran_on_wrong_core{false};
@@ -97,7 +97,7 @@ void thread_on_core1()
 {
    /* Blocks in receive(). Core 1 has nothing else runnable, so it parks and
     * only a doorbell from core 0 can start it again. */
-   chan::run(work);
+   ch::run(work);
    worker_returned.store(true, std::memory_order_release);
 }
 

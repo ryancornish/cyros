@@ -215,6 +215,12 @@ void initialise(uint32_t frequency_hz)
 void finalise()
 {
    CYROS_ASSERT(tconfig.initialised);
+
+   // Stop every core's one-shot BEFORE clearing what its ISR reads, so no
+   // deadline can fire into a half-cleared timetable. Without this each
+   // one-shot timer outlives the driver.
+   cyros_port_time_teardown();
+
    tconfig = {};
    for (auto& ttable : timetables) {
       ttable = {};

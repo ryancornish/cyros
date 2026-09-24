@@ -179,6 +179,13 @@ void initialise(uint32_t frequency_hz)
 void finalise()
 {
    CYROS_ASSERT(tconfig.initialised);
+
+   // Stop every core's tick BEFORE clearing what its ISR reads, so no tick can
+   // land on a half-cleared timetable. Without this each tick outlives the
+   // driver, and on the hosted port keeps firing at a thread that has left the
+   // kernel.
+   cyros_port_time_teardown();
+
    tconfig = {};
    for (auto& ttable : timetables) {
       ttable = {};

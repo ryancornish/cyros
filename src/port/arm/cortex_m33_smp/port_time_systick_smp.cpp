@@ -118,6 +118,29 @@ void cyros_port_time_setup(std::uint32_t tick_hz)
    cortex_m::isb();
 }
 
+void cyros_port_time_teardown(void)
+{
+   /* The global teardown reaches every core's timer because only one core
+    * has one. SysTick is core-private, so this has to run on that core, and
+    * port_mcu.h says finalise() must be called there. */
+   CYROS_ASSERT_OP(cyros_port_get_core_id(), ==, time_core);
+
+   cyros_mask_token_t const token = cyros_port_irq_save();
+
+   cortex_m::reg(cortex_m::systick_ctrl) = 0u;
+   /* A tick that landed while masked would otherwise still run. */
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
+
+   isr_handler  = nullptr;
+   isr_argument = nullptr;
+
+   /* Both writes complete before interrupts can be taken again. */
+   cortex_m::dsb();
+   cortex_m::isb();
+
+   cyros_port_irq_restore(token);
+}
+
 std::uint64_t cyros_port_time_now(void)
 {
    /* Readable from ANY core, which is the requirement that shaped this file.

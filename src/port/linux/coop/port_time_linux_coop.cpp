@@ -38,6 +38,17 @@ void cyros_port_time_setup(uint32_t tick_hz)
    (void)tick_hz;
 }
 
+void cyros_port_time_teardown(void)
+{
+   // Nothing here generates interrupts, tests pump them, so teardown is the
+   // bookkeeping half: no deadline armed, delivery off, and no handler left for
+   // a later cyros_port_time_fire_isr() to call into a finalised driver.
+   time_instance.irq_enabled.store(false, std::memory_order_release);
+   time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+   time_instance.isr_arg.store(nullptr, std::memory_order_relaxed);
+   time_instance.isr.store(nullptr, std::memory_order_release);
+}
+
 uint64_t cyros_port_time_now(void)
 {
    return time_instance.now.load(std::memory_order_relaxed);

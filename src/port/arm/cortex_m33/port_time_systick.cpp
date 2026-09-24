@@ -329,6 +329,27 @@ void cyros_port_time_setup(std::uint32_t tick_hz)
    cyros_port_irq_restore(token);
 }
 
+void cyros_port_time_teardown(void)
+{
+   cyros_mask_token_t const token = cyros_port_irq_save();
+
+   /* Counter and interrupt both off, in either mode. irq_disable() cannot do
+    * this in tickless, where the wrap interrupt carries `base`, but after
+    * teardown nothing reads now() any more, so there is no clock to keep. */
+   cortex_m::reg(cortex_m::systick_ctrl) = 0u;
+   /* A wrap that landed while masked is still pending, and would otherwise
+    * run the ISR for a timer that has just been stopped. */
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
+
+   active_mode      = timer_mode::none;
+   armed_deadline   = never;
+   delivery_enabled = false;
+   isr_handler      = nullptr;
+   isr_argument     = nullptr;
+
+   cyros_port_irq_restore(token);
+}
+
 std::uint64_t cyros_port_time_now(void)
 {
    /* Masked because the value is two words in periodic mode, and a software

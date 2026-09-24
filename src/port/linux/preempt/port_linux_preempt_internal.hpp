@@ -3,8 +3,9 @@
  * @brief Contract between port_linux_preempt.cpp and its time driver.
  *
  * Port-internal only. Nothing here is part of the kernel-facing port API and no
- * other component may include it. Definitions live in port_linux_preempt.cpp
- * because they touch its thread-local core state, which stays private there.
+ * other component may include it. Definitions live in port_linux_preempt.cpp,
+ * the region calls because they touch its thread-local core state, which stays
+ * private there.
  */
 
 #ifndef CYROS_PORT_LINUX_PREEMPT_INTERNAL_HPP
@@ -65,6 +66,20 @@ struct preempt_region
    preempt_region& operator=(preempt_region const&) = delete;
    preempt_region& operator=(preempt_region&&)      = delete;
 };
+
+/**
+ * @brief Consume every pending instance of a signal on the CALLING thread.
+ *
+ * Only the calling thread's own pending set is reachable, since a signal
+ * directed at another thread can only be taken by that thread. Meant for a
+ * blocked signal: an unblocked one is delivered rather than left pending, so
+ * there is nothing to take.
+ *
+ * Used twice. Adoption consumes whatever an OS thread arrives with before its
+ * mask is opened, and time teardown consumes what a deleted timer already
+ * queued, so a later unmask cannot deliver a tick from a timer that is gone.
+ */
+void drain_pending_signal(int signo);
 
 } // namespace cyros::port
 

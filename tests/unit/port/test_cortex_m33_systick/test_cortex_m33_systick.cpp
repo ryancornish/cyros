@@ -10,7 +10,8 @@
  *          layer 2 proves, which is why this test declares a harness debt.
  * Proves:  that SysTick advances a monotonic clock, and - the part that could
  *          not be written before now - that preemption-disable leaves that
- *          clock running while interrupt-masking stops it.
+ *          clock running while interrupt-masking stops it. Also that
+ *          time::finalise() stops SysTick outright.
  *
  *
  * THE CHECK THIS TEST EXISTS FOR
@@ -292,12 +293,32 @@ void test_irq_masking_does_stop_the_clock()
    CYROS_CHECK(spin_for_a_tick() > 0);
 }
 
+/**
+ * @brief time::finalise() stops SysTick itself, not only its delivery.
+ *
+ * In periodic mode the SysTick ISR increments the count whether or not a
+ * handler is registered, so a count that stops moving is direct evidence that
+ * the interrupt is gone. Reads the port rather than time::now(), because the
+ * driver has just been finalised. Runs last, since nothing restarts time.
+ */
+void test_finalise_stops_systick()
+{
+   cyros::bench::start("time::finalise() stops SysTick");
+
+   time::finalise();
+
+   std::uint64_t const start = cyros_port_time_now();
+   burn(iterations_per_tick);
+   CYROS_CHECK_EQ(cyros_port_time_now() - start, 0u);
+}
+
 void worker()
 {
    test_systick_advances_a_monotonic_clock();
    test_the_tick_rate_is_actually_what_was_configured();
    test_preempt_disable_leaves_the_clock_running();
    test_irq_masking_does_stop_the_clock();
+   test_finalise_stops_systick();
 
    cyros::bench::finish();
 }

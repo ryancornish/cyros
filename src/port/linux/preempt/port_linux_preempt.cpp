@@ -583,26 +583,38 @@ static void adopt_os_thread()
    /* A child inherits the PENDING set as well as the mask, so a signal its
     * parent blocked can still be pending here. Consume the ones about to be
     * unblocked: delivering one now would find no cyros handler installed, and
-    * timer_signo's default action is to terminate the process.
-    *
-    * sigtimedwait with a zero timeout rather than sigwait, for two reasons.
-    * It cannot hang if another thread in the process races us for the signal,
-    * where sigwait would block forever inside kernel::initialise(). And it
-    * loops, because timer_signo is a REALTIME signal: instances queue, so one
-    * take does not drain them. */
+    * timer_signo's default action is to terminate the process. */
    for (auto const& s : owned_signals) {
       if (should_block(s)) continue;   // staying blocked, leave it pending
-
-      sigset_t only;
-      sigemptyset(&only);
-      sigaddset(&only, s.signo);
-
-      struct timespec const immediately = {};
-      while (sigtimedwait(&only, nullptr, &immediately) >= 0) { }
+      cyros::port::drain_pending_signal(s.signo);
    }
 
    apply_mask();
 }
+
+namespace cyros::port
+{
+
+void drain_pending_signal(int signo)
+{
+   /* sigtimedwait with a zero timeout rather than sigwait, for two reasons. It
+    * cannot hang if another thread in the process races us for the signal,
+    * where sigwait would block forever. And it loops, because timer_signo is a
+    * REALTIME signal: instances queue, so one take does not drain them.
+    *
+    * A signal from a POSIX timer that has since been deleted is a third case,
+    * measured on Linux 7.1: it stays in sigpending() until something tries to
+    * dequeue it, and the dequeue then discards it and reports nothing. So the
+    * loop can end having taken nothing and still have cleared it. */
+   sigset_t only;
+   sigemptyset(&only);
+   sigaddset(&only, signo);
+
+   struct timespec const immediately = {};
+   while (sigtimedwait(&only, nullptr, &immediately) >= 0) { }
+}
+
+} // namespace cyros::port
 
 /**
  * @brief Enter or leave the dormant region on this OS thread.

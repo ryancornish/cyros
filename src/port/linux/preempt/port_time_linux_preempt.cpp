@@ -10,7 +10,10 @@
  *
  * Per-core model
  * --------------
- * Every core has its own timer, created by that core when it calls time::start().
+ * Every core has its own timer, created by that core when it calls time::start()
+ * and deleted, all of them at once, by time::finalise() through
+ * cyros_port_time_teardown(). A POSIX timer outlives the thread it targets, so
+ * nothing else would ever delete one.
  * A core's timer is delivered via SIGEV_THREAD_ID to that core's own kernel TID,
  * so the ISR runs on the core the timer belongs to. cyros_port_get_core_id()
  * inside the ISR therefore returns that core, and the driver services that core's
@@ -215,9 +218,9 @@ void cyros_port_time_setup(uint32_t tick_hz)
 
    core_timer& ct = this_core_timer();
 
-   // Idempotent: a repeated setup (e.g. a fresh test's start() after a prior
-   // finalise()) deletes the previous timer before creating a new one, so timers
-   // do not leak across init/finalise cycles.
+   // Idempotent: a repeated setup on the same core, which a stop() then start()
+   // produces, deletes the previous timer before creating a new one. Deleting
+   // them at the end of a lifetime is cyros_port_time_teardown()'s job.
    if (ct.timer_created) {
       timer_delete(ct.timer);
       ct.timer_created = false;
@@ -240,6 +243,36 @@ void cyros_port_time_setup(uint32_t tick_hz)
    if (timer_create(CLOCK_MONOTONIC, &sev, &ct.timer) == 0) {
       ct.timer_created = true;
    }
+}
+
+void cyros_port_time_teardown(void)
+{
+   // Forget the handler first. The driver's ISR reads state that its finalise()
+   // clears next, so nothing may reach it from here on. No delivery can race
+   // this on the calling thread today, since the driver tears down before it
+   // clears anything, so this closes the door rather than fixing a seen bug.
+   ts.isr.store(nullptr, std::memory_order_release);
+   ts.isr_arg.store(nullptr, std::memory_order_relaxed);
+
+   // Every core's timer, not just the calling core's. The kernel has joined the
+   // other cores' threads by now, but a POSIX timer belongs to the process and
+   // outlives the thread it targets, and any thread may delete it.
+   for (auto& ct : ts.core) {
+      if (ct.timer_created) {
+         timer_delete(ct.timer);
+         ct.timer_created = false;
+      }
+      ct.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+      ct.tick_hz = 0;
+      ct.tid     = 0;   // that thread may be gone and its TID reused
+   }
+
+   // Deleting a timer does not retract a signal it has already queued. The
+   // calling thread is normally the one the kernel borrowed as core 0, which
+   // the kernel hands back with timer_signo blocked, so a queued tick would sit
+   // there until something unblocked it. The other cores' threads have exited
+   // and taken theirs with them.
+   cyros::port::drain_pending_signal(timer_signo);
 }
 
 uint64_t cyros_port_time_now(void)

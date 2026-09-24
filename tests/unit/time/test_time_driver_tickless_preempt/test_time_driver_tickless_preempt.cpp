@@ -15,6 +15,8 @@
 #include <cyros/time/time.hpp>
 #include <cyros/port/port_mcu.h>
 
+#include <common/posix_timers.hpp>
+
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -112,6 +114,26 @@ TEST_F(TicklessPreemptTest, CancelDisarmsAndPreventsFire)
    ASSERT_TRUE(cyros::time::cancel(h));
    std::this_thread::sleep_for(70ms);
    EXPECT_EQ(count.load(), 0);
+}
+
+// finalise() deletes the one-shot timer start() created instead of leaving it
+// alive for the rest of the process. No stop() first: finalise has to be
+// enough on its own. The periodic driver's side, and the multi-core case, are
+// test_time_teardown_preempt.
+TEST(TicklessPreemptTeardownTest, FinaliseDeletesTheTimerEvenWithoutStop)
+{
+   cyros::time::initialise(1'000'000 /* Hz */);
+   cyros::time::start();
+
+   int const with_tick = cyros::test::live_posix_timers();
+   if (with_tick < 0) {
+      cyros::time::finalise();
+      GTEST_SKIP() << "/proc/self/timers is unreadable on this kernel";
+   }
+   EXPECT_GE(with_tick, 1) << "the probe cannot see the timer start() created";
+
+   cyros::time::finalise();
+   EXPECT_EQ(cyros::test::live_posix_timers(), with_tick - 1);
 }
 
 }  // namespace
