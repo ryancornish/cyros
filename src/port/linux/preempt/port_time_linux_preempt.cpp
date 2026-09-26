@@ -37,8 +37,9 @@
  * The timer handler runs with the reschedule signal masked (set in sa_mask
  * below), so a reschedule cannot nest into the middle of the ISR. Any wake the
  * ISR performs pends a reschedule that the kernel delivers when the handler
- * returns. The process-wide sigaction is installed once, the first time any core
- * calls setup(); the timers themselves are per-core.
+ * returns. The process-wide sigaction is installed by the first core to call
+ * setup() in a run and removed by teardown, which restores whatever it replaced.
+ * The timers themselves are per-core.
  *
  * Nesting is one-directional. A reschedule cannot nest into a timer ISR (sa_mask
  * above), but a timer ISR can nest into a reschedule, which is the point: on a
@@ -185,21 +186,47 @@ void on_timer_signal(int, siginfo_t*, void*)
    }
 }
 
-/// @brief Install the process-wide timer signal handler exactly once.
+/**
+ * @brief The process-wide timer handler, installed by the first setup() of a run
+ *        and removed by teardown.
+ *
+ * Once per RUN rather than once per process, so that teardown can hand the
+ * disposition back as it found it. Every core calls setup() and they may race,
+ * hence the lock. Neither caller is in signal context.
+ */
+struct timer_handler_install
+{
+   std::mutex       lock;
+   bool             installed{false};
+   struct sigaction prior{};
+};
+timer_handler_install handler_install;
+
 void ensure_signal_handler_installed()
 {
-   static std::once_flag once;
-   std::call_once(once, [] {
-      // The timer ISR runs with the reschedule signal masked so a switch cannot
-      // nest into it, on the altstack to keep off the interrupted thread's stack.
-      struct sigaction sa;
-      memset(&sa, 0, sizeof(sa));
-      sa.sa_sigaction = on_timer_signal;
-      sigemptyset(&sa.sa_mask);
-      sigaddset(&sa.sa_mask, reschedule_signo);
-      sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
-      sigaction(timer_signo, &sa, nullptr);
-   });
+   std::lock_guard const guard(handler_install.lock);
+   if (handler_install.installed) return;
+
+   // The timer ISR runs with the reschedule signal masked so a switch cannot
+   // nest into it, on the altstack to keep off the interrupted thread's stack.
+   struct sigaction sa;
+   memset(&sa, 0, sizeof(sa));
+   sa.sa_sigaction = on_timer_signal;
+   sigemptyset(&sa.sa_mask);
+   sigaddset(&sa.sa_mask, reschedule_signo);
+   sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
+   sigaction(timer_signo, &sa, &handler_install.prior);
+   handler_install.installed = true;
+}
+
+/// @brief Put back the disposition the first setup() of this run replaced.
+void remove_signal_handler()
+{
+   std::lock_guard const guard(handler_install.lock);
+   if (!handler_install.installed) return;
+
+   sigaction(timer_signo, &handler_install.prior, nullptr);
+   handler_install.installed = false;
 }
 
 } // namespace
@@ -273,6 +300,10 @@ void cyros_port_time_teardown(void)
    // there until something unblocked it. The other cores' threads have exited
    // and taken theirs with them.
    cyros::port::drain_pending_signal(timer_signo);
+
+   // Last, with no timer left to raise it: hand the signal's disposition back.
+   // The next run's setup() installs the handler again.
+   remove_signal_handler();
 }
 
 uint64_t cyros_port_time_now(void)

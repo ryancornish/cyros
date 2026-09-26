@@ -318,6 +318,19 @@ struct current_core_state
    {
       if (stack_mapping == nullptr) return;
 
+      // Hand the thread back BEFORE the stacks named in its interceptor config
+      // stop existing: sigctx forgets the config, re-registers the alternate
+      // signal stack the thread had before, and once the last core has done
+      // this, restores the reschedule signal's prior disposition. Core 0 runs
+      // on the CALLER's thread, which outlives this. Without it that thread was
+      // returned pointing at unmapped memory, so any SA_ONSTACK handler the
+      // application ran on it afterwards, for a signal cyros never touches,
+      // died with SIGSEGV, and so did the first reschedule signal once
+      // unblocked (both measured 2026-09-24). Regression test:
+      // test_port_preempt_return.
+      int const uninstalled = sigctx_intercept_uninstall();
+      CYROS_ASSERT_OP(uninstalled, ==, 0); // cannot be on the altstack here
+
       munmap(stack_mapping, stack_mapping_bytes);
       stack_mapping       = nullptr;
       stack_mapping_bytes = 0;
@@ -580,10 +593,16 @@ static void assert_mask_matches_depths()
  */
 static void adopt_os_thread()
 {
-   /* A child inherits the PENDING set as well as the mask, so a signal its
-    * parent blocked can still be pending here. Consume the ones about to be
-    * unblocked: delivering one now would find no cyros handler installed, and
-    * timer_signo's default action is to terminate the process. */
+   /* A signal already pending on this thread would be delivered the moment
+    * the mask opens. Consume the ones about to be unblocked: delivering one
+    * now would find no cyros handler installed, and timer_signo's default
+    * action is to terminate the process.
+    *
+    * How one gets here, measured 2026-09-24: NOT through fork, whose child
+    * starts with an EMPTY pending set and only the mask inherited. Through
+    * exec, which keeps both, and through a thread that already holds a signal
+    * queued behind a blocked mask, as the thread the kernel borrowed does
+    * after a lifetime whose tick outlived it. */
    for (auto const& s : owned_signals) {
       if (should_block(s)) continue;   // staying blocked, leave it pending
       cyros::port::drain_pending_signal(s.signo);
@@ -769,6 +788,7 @@ static int install_interceptor()
 {
    int const mapped = current_core.allocate_signal_stacks();
    if (mapped != 0) return mapped;
+
 
    // No block_extra: the timer stays deliverable through the interception, so it
    // can preempt a reschedule. This is what altstack_depth is sized for.

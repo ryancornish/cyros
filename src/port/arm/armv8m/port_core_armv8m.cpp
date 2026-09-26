@@ -163,6 +163,11 @@ inline std::uint32_t this_core() noexcept
 std::uint32_t pendsv_priority  = 0xFFu;
 std::uint32_t systick_priority = 0xFFu;
 
+/* The AIRCR.PRIGROUP the two priorities above were derived against. AIRCR is
+ * banked per core, and the derivation runs on the bootstrap core only, so every
+ * other core checks its own agrees before it applies them. */
+std::uint32_t derived_prigroup = 0u;
+
 /* The BASEPRI value that masks PendSV and nothing else. Equal to
  * pendsv_priority: BASEPRI masks exceptions whose priority value is greater
  * than or equal to it, and PendSV is alone at the bottom. */
@@ -246,6 +251,13 @@ void init_this_core()
    cortex_m::dsb();
    cortex_m::isb();
 
+   /* The spacing between PendSV and SysTick is a whole preemption GROUP only
+    * under the PRIGROUP it was derived for (see cyros_port_init). A core whose
+    * own AIRCR disagreed could put its SysTick in PendSV's group, and every
+    * critical section there would stop its clock: the 6.0 bug, on one core. */
+   CYROS_ASSERT_OP((cortex_m::reg(cortex_m::scb_aircr) >> cortex_m::aircr_prigroup_shift)
+                      & cortex_m::aircr_prigroup_mask, ==, derived_prigroup);
+
    cortex_m::reg8(cortex_m::shpr_pendsv)  = static_cast<std::uint8_t>(pendsv_priority);
    cortex_m::reg8(cortex_m::shpr_systick) = static_cast<std::uint8_t>(systick_priority);
 
@@ -294,6 +306,7 @@ void cyros_port_init(cyros_port_reschedule_t handler)
    std::uint32_t const prigroup =
       (cortex_m::reg(cortex_m::scb_aircr) >> cortex_m::aircr_prigroup_shift) & cortex_m::aircr_prigroup_mask;
    std::uint32_t const group_step = 1u << (prigroup + 1u);
+   derived_prigroup = prigroup;
 
    std::uint32_t const step = implemented_step > group_step ? implemented_step : group_step;
 

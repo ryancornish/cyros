@@ -68,6 +68,20 @@ using detail::jump_fcontext;
 
 }
 
+/* ThreadSanitizer support, compiled only under -fsanitize=thread (the gcc-tsan
+ * toolchain). TSan models each OS thread as ONE execution, and a cooperative
+ * switch moves that thread onto another stack behind its back, so without help
+ * it would treat a thread's code before and after a switch as one sequence and
+ * everything else as noise. Its fiber API is the help: every context is a TSan
+ * fiber, and every jump switches fibers first. All of it lives in context_handle
+ * below, because every switch in this port goes through its jump(). */
+#if defined(__SANITIZE_THREAD__)
+#include <sanitizer/tsan_interface.h>
+#define CYROS_PORT_COOP_TSAN 1
+#else
+#define CYROS_PORT_COOP_TSAN 0
+#endif
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -93,17 +107,75 @@ class context_handle
 {
 public:
    constexpr context_handle() = default;
-   constexpr explicit context_handle(boost::context::fcontext_t ctx) noexcept : fctx(ctx) {}
    ~context_handle() = default;
 
    context_handle(context_handle const&)            = delete;
    context_handle& operator=(context_handle const&) = delete;
 
-   context_handle(context_handle&& other) noexcept : fctx(std::exchange(other.fctx, nullptr)) {}
+   context_handle(context_handle&& other) noexcept
+      : fctx(std::exchange(other.fctx, nullptr))
+#if CYROS_PORT_COOP_TSAN
+      , tsan_fiber(std::exchange(other.tsan_fiber, nullptr))
+#endif
+   {}
    context_handle& operator=(context_handle&& other) noexcept
    {
       fctx = std::exchange(other.fctx, nullptr);
+#if CYROS_PORT_COOP_TSAN
+      tsan_fiber = std::exchange(other.tsan_fiber, nullptr);
+#endif
       return *this;
+   }
+
+   /**
+    * @brief A handle to a context make_fcontext has just created.
+    */
+   static context_handle fresh(boost::context::fcontext_t ctx) noexcept
+   {
+#if CYROS_PORT_COOP_TSAN
+      return context_handle(ctx, __tsan_create_fiber(0));
+#else
+      return context_handle(ctx);
+#endif
+   }
+
+   /**
+    * @brief A handle to the context that just jumped HERE, from the fctx the
+    *        jump delivered. Every jump site that stores a returned context uses
+    *        this, so the handle carries the fiber that context runs as.
+    */
+   static context_handle came_from(boost::context::fcontext_t ctx) noexcept
+   {
+#if CYROS_PORT_COOP_TSAN
+      return context_handle(ctx, jumped_from_fiber);
+#else
+      return context_handle(ctx);
+#endif
+   }
+
+   /**
+    * @brief TSan bookkeeping for a context abandoned for good. Not the current
+    *        one: a fiber cannot be destroyed while it runs.
+    */
+   static void retire(void* fiber) noexcept
+   {
+#if CYROS_PORT_COOP_TSAN
+      if (fiber != nullptr) __tsan_destroy_fiber(fiber);
+#else
+      (void)fiber;
+#endif
+   }
+
+   /**
+    * @brief The TSan fiber this handle resumes, or null outside a TSan build.
+    */
+   void* fiber() const noexcept
+   {
+#if CYROS_PORT_COOP_TSAN
+      return tsan_fiber;
+#else
+      return nullptr;
+#endif
    }
 
    /**
@@ -119,11 +191,34 @@ public:
    boost::context::transfer_t jump(void* data)
    {
       CYROS_ASSERT(fctx); // Bug: switching to an empty or already-spent context
+#if CYROS_PORT_COOP_TSAN
+      // Tell the receiver who jumped, then become the target's fiber. A switch
+      // on one core is ordered by program order, so it synchronises (flag 0).
+      jumped_from_fiber = __tsan_get_current_fiber();
+      __tsan_switch_to_fiber(std::exchange(tsan_fiber, nullptr), 0);
+#endif
       return boost::context::jump_fcontext(std::exchange(fctx, nullptr), data);
    }
 
 private:
+   /* The fiber exists only in a TSan build, so an ordinary build's handle, and
+    * with it cyros_port_context and CYROS_PORT_CONTEXT_SIZE, is unchanged. */
+#if CYROS_PORT_COOP_TSAN
+   constexpr context_handle(boost::context::fcontext_t ctx, void* fiber) noexcept
+      : fctx(ctx), tsan_fiber(fiber) {}
+#else
+   constexpr explicit context_handle(boost::context::fcontext_t ctx) noexcept : fctx(ctx) {}
+#endif
+
    boost::context::fcontext_t fctx{nullptr};
+#if CYROS_PORT_COOP_TSAN
+   void* tsan_fiber{nullptr};
+
+   /* The fiber of whatever context last jumped on this OS thread, read by the
+    * context it jumped to. Per OS thread is right: contexts never leave the
+    * core, and so the pthread, they were created on. */
+   static inline thread_local void* jumped_from_fiber = nullptr;
+#endif
 };
 
 /* transfer_t::data protocol.
@@ -380,7 +475,7 @@ static void request_shutdown_if_quiesced()
 static void scheduler_trampoline(boost::context::transfer_t entry_transfer)
 {
    auto* core = static_cast<cpu_core*>(entry_transfer.data);
-   current_core.os_caller = context_handle(entry_transfer.fctx);
+   current_core.os_caller = context_handle::came_from(entry_transfer.fctx);
 
    // Run kernel entry for this simulated core (will start first thread etc.)
    core->entry();
@@ -405,13 +500,15 @@ static void start_scheduler()
    auto* const stack_top = static_cast<uint8_t*>(current_core.scheduler_mapping)
                          + current_core.scheduler_mapping_bytes;
 
-   current_core.scheduler_context = context_handle(
+   current_core.scheduler_context = context_handle::fresh(
       boost::context::make_fcontext(stack_top, scheduler_stack_size, &scheduler_trampoline)
    );
+   void* const scheduler_fiber = current_core.scheduler_context.fiber();
 
    // Enter the scheduler context. It jumps back here when this core is done,
    // and jump() has already emptied the handle by then.
    current_core.scheduler_context.jump(&global.cores[current_core.core_id]);
+   context_handle::retire(scheduler_fiber);
 
    // This thread owns the mapping, so this thread releases it.
    current_core.free_scheduler_stack();
@@ -428,7 +525,7 @@ static void switch_to_scheduler_context()
 {
    CYROS_ASSERT(current_core.current_context); // Not inside a thread context
    CYROS_ASSERT(current_core.thread_caller);   // No scheduler context to resume
-   current_core.thread_caller = context_handle(current_core.thread_caller.jump(nullptr).fctx);
+   current_core.thread_caller = context_handle::came_from(current_core.thread_caller.jump(nullptr).fctx);
 }
 
 /* ----------------------------------------------------------------------------
@@ -639,7 +736,7 @@ static void thread_trampoline(boost::context::transfer_t entry_transfer)
 {
    auto* context = static_cast<cyros_port_context*>(entry_transfer.data);
 
-   current_core.thread_caller   = context_handle(entry_transfer.fctx);
+   current_core.thread_caller   = context_handle::came_from(entry_transfer.fctx);
    current_core.current_context = context;
 
    context->entry(context->arg); // Enter user code, which does not come back
@@ -665,7 +762,7 @@ void cyros_port_context_init(cyros_port_context_t* context,
 
    // make_fcontext takes caller-owned memory directly. stack_top is the high
    // address: stacks grow down.
-   context->thread = context_handle(
+   context->thread = context_handle::fresh(
       boost::context::make_fcontext(context->stack_top, context->stack_size, &thread_trampoline)
    );
 }
@@ -685,6 +782,7 @@ void cyros_port_context_destroy(cyros_port_context_t* context)
    // Abandoned, not unwound. An fcontext owns no memory and the stack is the
    // user's buffer, so a suspended one costs nothing to drop. Never unwind one,
    // that is what would need exceptions.
+   context_handle::retire(context->thread.fiber());
    context->thread = context_handle{};
 
    context->~cyros_port_context();
@@ -702,7 +800,7 @@ void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_context_t* to)
 
    // Always resumable: an entry never returns, so this is always a suspend.
    // Only cyros_port_context_destroy empties the handle.
-   to->thread = context_handle(back.fctx);
+   to->thread = context_handle::came_from(back.fctx);
 
    current_core.current_context = nullptr;
 }

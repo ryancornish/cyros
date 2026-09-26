@@ -17,8 +17,16 @@
 /**
  * @def CYROS_PORT_CONTEXT_SIZE
  * @brief Size of `port_context_t` in bytes.
+ *
+ * One pointer more in a ThreadSanitizer build (the gcc-tsan toolchain), where
+ * every context also carries its TSan fiber. A sanitizer build is all or
+ * nothing, so the library and everything built against it always agree.
  */
+#if defined(__SANITIZE_THREAD__)
+#define CYROS_PORT_CONTEXT_SIZE  48
+#else
 #define CYROS_PORT_CONTEXT_SIZE  40
+#endif
 
 /**
  * @def CYROS_PORT_CONTEXT_ALIGN
