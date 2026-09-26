@@ -1,0 +1,9 @@
+name = "gcc-tsan"
+extends = "gcc-debug.toml"
+
+# ThreadSanitizer, for the linux_coop port only. The preempt port switches
+# contexts with signals and sigreturn, which TSan cannot follow. The coop port
+# annotates its switches as TSan fibers when built with this toolchain.
+[flags]
+common_add = ["-fsanitize=thread"]
+link_add = ["-fsanitize=thread"]
