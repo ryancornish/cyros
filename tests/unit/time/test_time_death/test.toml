@@ -1,0 +1,13 @@
+[test]
+name = "test_time_death"
+layer = 1
+kind = "unit"
+source = "test_time_death.cpp"
+config = "test_time_death_config.hpp"
+
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

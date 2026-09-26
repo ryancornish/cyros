@@ -1,0 +1,16 @@
+[test]
+name = "test_chrono_death"
+layer = 8
+kind = "unit"
+source = "test_chrono_death.cpp"
+config = "test_chrono_death_config.hpp"
+
+# Periodic, so arming an alarm goes through a real driver's timetable. Nothing
+# here starts a kernel or a tick: both misuses die inside arm_at().
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+features = ["chrono", "sync"]
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

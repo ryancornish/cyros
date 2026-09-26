@@ -5,9 +5,10 @@ source = "test_sync_semaphore.cpp"
 config = "test_sync_semaphore_config.hpp"
 
 [components]
-port = "linux_preempt"
+# No port filter since 2026-09-25: passes on both ports, and the coop run is
+# the one ThreadSanitizer can instrument (build/toolchains/gcc-tsan.toml).
 time_driver = "tickless"
 features = ["sync"]
 
 [link]
-system_libraries = ["gtest", "gtest_main"]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

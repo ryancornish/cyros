@@ -23,6 +23,10 @@
  * time::finalise() for the same reason: teardown must not depend on anything
  * the kernel has already released.
  *
+ * It also requires every signal's disposition to be back as it found it once
+ * both finalises have run, so neither the reschedule handler nor the timer
+ * handler outlives the run that installed it.
+ *
  * The timer count comes from /proc/self/timers, because from inside the
  * process a deleted timer and a disarmed one look the same. It is checked once
  * while the ticks are live, so a probe that cannot see timers fails there
@@ -56,6 +60,20 @@ namespace
 
 constexpr std::uint32_t tick_hz = 1'000u;   // 1 kHz, so the wait below spans 20 ticks
 
+/// @brief Every signal whose handler differs from `before`, as a readable list.
+std::string changed_dispositions(std::array<struct sigaction, NSIG> const& before)
+{
+   std::string numbers;
+   for (int signo = 1; signo < NSIG; ++signo) {
+      struct sigaction now;
+      sigaction(signo, nullptr, &now);
+      if (now.sa_sigaction != before[static_cast<std::size_t>(signo)].sa_sigaction) {
+         numbers += std::to_string(signo) + " ";
+      }
+   }
+   return numbers;
+}
+
 /// @brief Every signal pending on the calling thread, as a readable list.
 std::string pending_signals()
 {
@@ -77,6 +95,11 @@ TEST(TimeTeardownPreempt_Test, GivenEveryCoreLeftItsTickRunning_WhenTimeIsFinali
 {
    int const before = test::live_posix_timers();
    if (before < 0) GTEST_SKIP() << "/proc/self/timers is unreadable on this kernel";
+
+   std::array<struct sigaction, NSIG> dispositions_before{};
+   for (int signo = 1; signo < NSIG; ++signo) {
+      sigaction(signo, nullptr, &dispositions_before[static_cast<std::size_t>(signo)]);
+   }
 
    kernel::initialise();
    time::initialise(tick_hz);
@@ -113,4 +136,9 @@ TEST(TimeTeardownPreempt_Test, GivenEveryCoreLeftItsTickRunning_WhenTimeIsFinali
    std::this_thread::sleep_for(20ms);
    EXPECT_EQ(pending_signals(), "")
       << "signals still pending on the thread the kernel borrowed as core 0";
+
+   // And the handlers cyros installed are gone: the reschedule signal's by the
+   // core port as the cores stopped, the timer signal's by time teardown.
+   EXPECT_EQ(changed_dispositions(dispositions_before), "")
+      << "signals whose disposition is still the one cyros installed";
 }

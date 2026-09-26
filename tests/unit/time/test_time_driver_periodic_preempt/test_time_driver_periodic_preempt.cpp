@@ -20,6 +20,8 @@
 #include <cyros/time/time.hpp>
 #include <cyros/port/port_mcu.h>
 
+#include <common/posix_timers.hpp>
+
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -113,6 +115,36 @@ TEST_F(PeriodicPreemptTest, CancelBeforeDeadlinePreventsFire)
    ASSERT_TRUE(cyros::time::cancel(h));
    std::this_thread::sleep_for(80ms);
    EXPECT_EQ(count.load(), 0);
+}
+
+// stop() then start() on the same core, the sequence for retuning a clock,
+// reprograms that core's timer. The port deletes the old timer before making
+// the new one, so there is still exactly one, and it still delivers.
+TEST(PeriodicPreemptRestartTest, StopThenStartKeepsOneTimerAndItStillFires)
+{
+   cyros::time::initialise(1'000 /* Hz */);
+   cyros::time::start();
+
+   int const with_tick = cyros::test::live_posix_timers();
+   if (with_tick < 0) {
+      cyros::time::finalise();
+      GTEST_SKIP() << "/proc/self/timers is unreadable on this kernel";
+   }
+
+   cyros::time::stop();
+   cyros::time::start();
+   EXPECT_EQ(cyros::test::live_posix_timers(), with_tick)
+      << "restarting time left the previous timer alive";
+
+   std::atomic<int> count{0};
+   auto h = cyros::time::schedule_at(cyros::time::now() + cyros::time::from_milliseconds(5),
+                                     counting_callback, &count);
+   EXPECT_NE(h.id, 0u);
+   std::this_thread::sleep_for(60ms);
+   EXPECT_EQ(count.load(), 1) << "the restarted tick does not deliver";
+
+   cyros::time::stop();
+   cyros::time::finalise();
 }
 
 // now() advances on its own from the real monotonic clock.

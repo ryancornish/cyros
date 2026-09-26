@@ -30,26 +30,10 @@
  *
  * The real_time-mode branches (the `mode == real_time` arms of start(), stop(),
  * now()/realtime_now_ticks(), and the realtime_thread_main loop) are exercised
- * ONLY by the DISABLED_ real_time tests at the end of this file. They are
- * disabled because they depend on wall-clock sleeps and would make the suite
- * timing-flaky. Consequently those branches are NOT hit by the default run.
- *
- * Those disabled tests were RUN and all 4 passed on 2026-09-18 (Arch box, 502ms
- * for the set), so they are current rather than bit-rotted. Re-run them by hand
- * after touching this driver:
- *   ./test_time_driver_simulation --gtest_also_run_disabled_tests --gtest_filter='*RealTime*'
- * They are what keeps real_time mode honest, and they are the reason the 24
- * uncovered lines in this translation unit are a deliberate choice rather than
- * a gap.
- *
- * To keep the coverage gate honest, the real_time-only blocks in
- * time_driver_simulation.cpp should be wrapped in coverage-exclusion markers
- * (for gcov/lcov: LCOV_EXCL_START / LCOV_EXCL_STOP), namely:
- *   - the `if (mode == real_time) { ... }` block in start()
- *   - the `if (mode == real_time) { ... }` block in stop()
- *   - the real_time return path in now()
- *   - realtime_now_ticks() and realtime_thread_main() in their entirety
- * With those markers, "100%" means 100% of the deterministically tested paths.
+ * by `test_time_driver_simulation_realtime`, a separate integration binary, so
+ * this one stays fully deterministic. They lived here as DISABLED_ tests until
+ * 2026-09-24, when 600 runs on the Arch box, half of them with every core
+ * saturated, showed no failure and they were moved there and enabled.
  */
 
 #include <cyros/time/time.hpp>
@@ -532,70 +516,6 @@ TEST_F(SimulationDriverTest, OnTimerIsrFiresDueCallbacks)
    EXPECT_EQ(count.load(), 1);
 }
 
-/* ============================================================================
- * real_time mode  (DISABLED -- timing-dependent, see file header)
- *
- * These cover the wall-clock branches: the real_time arms of start()/stop(),
- * the real_time return path of now()/realtime_now_ticks(), and the background
- * realtime_thread_main loop. They use generous sleeps and assert only loose,
- * monotonic properties. They are DISABLED so the default suite stays
- * deterministic; run them manually with
- *   --gtest_also_run_disabled_tests
- * The corresponding source blocks should carry LCOV_EXCL markers so the
- * coverage gate is not skewed by their absence.
- * ========================================================================= */
-
-// real_time mode: now() advances on its own as wall-clock time passes.
-TEST_F(SimulationDriverTest, DISABLED_RealTimeModeTimeProgresses)
-{
-   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
-   cyros::time::start();
-
-   const time::time_point t1 = cyros::time::now();
-   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-   const time::time_point t2 = cyros::time::now();
-
-   EXPECT_GT(t2.value, t1.value);
-
-   cyros::time::stop();
-}
-
-// real_time mode: a scheduled callback fires on its own once wall-clock time
-// reaches the deadline (the background thread pumps the ISR).
-TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCallbackFiresAutonomously)
-{
-   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
-   cyros::time::start();
-
-   std::atomic<int> count{0};
-   // 1 kHz: 10 ticks ~= 10 ms. Sleep well past it.
-   const uint64_t deadline = cyros::time::now().value + 10;
-   ASSERT_NE(cyros::time::schedule_at(time::time_point{deadline}, counting_callback, &count).id, 0u);
-
-   std::this_thread::sleep_for(std::chrono::milliseconds(200));
-   EXPECT_GE(count.load(), 1);
-
-   cyros::time::stop();
-}
-
-// real_time mode: cancelling before the deadline prevents the autonomous fire.
-TEST_F(SimulationDriverTest, DISABLED_RealTimeModeCancelBeforeAutonomousFire)
-{
-   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
-   cyros::time::start();
-
-   std::atomic<int> count{0};
-   const uint64_t deadline = cyros::time::now().value + 100;  // ~100 ms out
-   time::handle h = cyros::time::schedule_at(time::time_point{deadline}, counting_callback, &count);
-   ASSERT_NE(h.id, 0u);
-
-   EXPECT_TRUE(cyros::time::cancel(h));
-
-   std::this_thread::sleep_for(std::chrono::milliseconds(250));
-   EXPECT_EQ(count.load(), 0);
-
-   cyros::time::stop();
-}
 
 /* ============================================================================
  * Recurring timers  (virtual_time mode)
@@ -742,17 +662,5 @@ TEST_F(SimulationDriverTest, FromMicrosecondsRoundsUpToAWholeTick)
    EXPECT_EQ(cyros::time::from_microseconds(1'001).value, 2u);
 }
 
-// real_time mode: start() is idempotent -- a second start() while the thread is
-// already running hits the `compare_exchange_strong` false branch.
-TEST_F(SimulationDriverTest, DISABLED_RealTimeModeStartIsIdempotent)
-{
-   cyros::time::simulation::set_mode(time::simulation::mode::real_time);
-   cyros::time::start();
-   cyros::time::start();  // already running -> early return
-
-   cyros::time::stop();
-   cyros::time::stop();   // already stopped -> early return
-   SUCCEED();
-}
 
 }  // namespace

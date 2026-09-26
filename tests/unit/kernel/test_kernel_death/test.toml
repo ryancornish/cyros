@@ -1,0 +1,11 @@
+[test]
+name = "test_kernel_death"
+layer = 2
+kind = "unit"
+source = "test_kernel_death.cpp"
+config = "test_kernel_death_config.hpp"
+
+# No port filter: the checks under test are kernel code, and the panic path is
+# common to both Linux ports, so running on both costs nothing.
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

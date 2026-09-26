@@ -1,0 +1,16 @@
+[test]
+name = "test_linux_preempt_return"
+layer = 0
+kind = "unit"
+
+# The subject is what the port leaves behind on the OS thread it borrowed as
+# core 0, which is layer 0. It only exists once a kernel has run on that thread.
+harness_debt = { layer = 2, reason = "the thread is only borrowed, and so only returned, by a complete kernel lifetime" }
+source = "test_linux_preempt_return.cpp"
+config = "test_linux_preempt_return_config.hpp"
+
+[components]
+port = "linux_preempt"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

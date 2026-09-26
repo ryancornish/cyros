@@ -1,0 +1,13 @@
+[test]
+name = "test_time_driver_simulation_realtime"
+layer = 1
+kind = "integration"
+source = "test_time_driver_simulation_realtime.cpp"
+config = "test_time_driver_simulation_realtime_config.hpp"
+
+# Wall-clock time, so kept apart from the deterministic simulation binary.
+[components]
+time_driver = "simulation"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

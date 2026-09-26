@@ -9,25 +9,20 @@
  * This is the first death test in the project, and it is in a binary of its own
  * for a reason that took a while to find.
  *
- * WHY IT CANNOT SHARE A BINARY. A death test forks and re-executes, and the
- * child inherits the forking thread's signal mask. On the preempt port ONE
- * completed kernel lifecycle in the parent is enough to leave that mask in a
- * state the port's own invariant rejects, so the child panics inside
- * `kernel::initialise()` at `port_linux_preempt.cpp:554` before it ever reaches
- * the channel. The death then happens for the wrong reason, which is worse than
- * no test at all. Measured 2026-09-23 on the Arch box: with zero prior tests
- * the right panic fires, with one prior test the wrong one does.
+ * WHY IT WAS ALONE IN ITS BINARY, and why that no longer matters. A death
+ * test forks and re-executes, and the child inherits the forking thread's
+ * signal mask. Until 2026-09-24 ONE completed kernel lifecycle in the parent
+ * left that mask in a state the preempt port's own invariant rejected, so the
+ * child panicked inside `kernel::initialise()` before it reached the channel.
+ * The port now adopts the thread's mask in `cyros_port_init` instead of
+ * assuming it (`preempt-masking-model.md`), and this test now matches the
+ * panic's location as well as the signal, so a death for the wrong reason
+ * FAILS it rather than passing.
  *
- * That is a finding about the PORT, not about the channel, and it is written up
- * in `channel-proposal.md` section 16i. Keeping this test alone sidesteps it
- * without hiding it.
- *
- * WHY THE REGEX IS EMPTY. gtest matches a death test's message against the
- * child's STDERR. The linux port's panic goes to stdout (`std::printf` in
- * `port_linux_common.cpp:97`), so there is nothing on stderr to match beyond
- * the abort itself. `KilledBySignal(SIGABRT)` is therefore the assertion, and
- * it is a stronger one than a text match would be: it says the process aborted,
- * not merely that it exited.
+ * HOW THE LOCATION IS SEEN. gtest matches against the child's stderr, and the
+ * port's panic goes to stdout. `CYROS_EXPECT_PANIC` (`common/death.hpp`)
+ * points the child's stdout at stderr first, then requires both SIGABRT and a
+ * panic raised on the strict-send check in `channel.hpp`.
  *
  * Test 8f in the main suite is the other half of the same distinction: a send
  * that loses a race with stop() must NOT die. Together they pin both sides of
@@ -39,6 +34,7 @@
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/thread.hpp>
 
+#include <common/death.hpp>
 #include <common/guarded_stack.hpp>
 
 #include <gtest/gtest.h>
@@ -76,12 +72,7 @@ void overfill_a_channel()
 
 TEST(ChannelDeath_Test, GivenAFullChannel_WhenStrictSend_ThenItStopsTheSystem)
 {
-   /* Re-executes the binary for the child. The default `fast` style forks the
-    * already-threaded process, which is exactly the unsafe thing once a kernel
-    * has spawned core threads. Roadmap A2 section 8 step 4 asks for this style
-    * for the same reason. */
-   GTEST_FLAG_SET(death_test_style, "threadsafe");
-
-   EXPECT_EXIT(overfill_a_channel(), ::testing::KilledBySignal(SIGABRT), "")
+   CYROS_EXPECT_PANIC(overfill_a_channel(),
+                      test::panicked_at("channel.hpp", "CYROS_REQUIRE1(result != outcome::full"))
       << "send() accepted a value into a full channel instead of stopping the system";
 }
