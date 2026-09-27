@@ -100,6 +100,17 @@ inline constexpr std::uint32_t systick_ctrl_countflag = 1u << 16;
  * is a whole class of "my tick rate is wrong" bugs. */
 inline constexpr std::uint32_t systick_reload_max = 0x00FFFFFFu;
 
+/* The DWT's cycle counter, the measurement clock. It counts core clock cycles
+ * once DEMCR.TRCENA powers the trace blocks and DWT_CTRL.CYCCNTENA starts it.
+ * It is optional in ARMv8-M Mainline (DWT_CTRL.NOCYCCNT says so), and QEMU does
+ * not model it: there it reads zero. */
+inline constexpr std::uintptr_t dcb_demcr  = 0xE000EDFCu;  /* Debug Exception and Monitor Control */
+inline constexpr std::uintptr_t dwt_ctrl   = 0xE0001000u;
+inline constexpr std::uintptr_t dwt_cyccnt = 0xE0001004u;
+
+inline constexpr std::uint32_t demcr_trcena        = 1u << 24;
+inline constexpr std::uint32_t dwt_ctrl_cyccntena  = 1u << 0;
+
 
 /* ============================================================================
  * Core register access and barriers

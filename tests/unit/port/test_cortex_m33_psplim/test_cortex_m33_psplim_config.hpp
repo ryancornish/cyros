@@ -6,7 +6,7 @@
 #ifndef CYROS_CONFIG_HPP
 #define CYROS_CONFIG_HPP
 
-#include <cstdint>
+#include <cstddef>
 
 namespace cyros::config
 {
@@ -29,6 +29,13 @@ inline constexpr std::size_t max_wait_nodes = 8;
  * @brief Number of scheduling priorities.
  */
 inline constexpr std::size_t max_priorities = 31;
+
+/**
+ * @brief Enable trace points around the kernel
+ *
+ * Disabled when 0. Sizes each cores buffer. Must be a power of 2
+ */
+inline constexpr std::size_t trace_records_per_core = 0;
 
 }  // namespace cyros::config
 

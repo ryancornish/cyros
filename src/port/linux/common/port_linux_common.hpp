@@ -12,8 +12,9 @@
  * -----------------
  * Code that is identical between coop and preempt because it is about Linux or
  * the host CPU, not about scheduling: panic reporting, debugger hooks, CPU hints,
- * and plain per-thread storage. If a candidate differs between the two ports for
- * any reason other than a stray comment, it does NOT belong here.
+ * the measurement clock, and plain per-thread storage. If a candidate differs
+ * between the two ports for any reason other than a stray comment, it does NOT
+ * belong here.
  *
  * WHAT DOES NOT
  * -------------

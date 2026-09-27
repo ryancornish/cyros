@@ -486,6 +486,32 @@ void cyros_port_idle(void);
 
 
 /* ----------------------------------------------------------------------------
+ * Measurement
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief A free-running count on the calling core, for measurement only.
+ * @return The count, in the port's own unit
+ *
+ * Monotonic on the calling core and never an input to scheduling. The kernel
+ * reads it only to stamp trace records (cyros/kernel/trace.hpp), so a port
+ * should make it as cheap and as fine-grained as the hardware allows. The unit
+ * is the port's own:
+ *  - Linux: nanoseconds of CLOCK_MONOTONIC. It is one clock for the whole
+ *    process, so stamps taken on different cores compare directly.
+ *  - Cortex-M: core clock cycles from the DWT cycle counter. Each core counts
+ *    its own, so stamps from different cores do not compare.
+ *
+ * Callable from any context, with or without interrupts masked.
+ *
+ * Not cyros_port_time_now(). That is the time DRIVER's clock, which exists only
+ * in a build with a time driver and is often a tick, far too coarse to see a
+ * context switch.
+ */
+uint64_t cyros_port_timestamp(void);
+
+
+/* ----------------------------------------------------------------------------
  * Debug & Diagnostics
  * ------------------------------------------------------------------------- */
 

@@ -13,6 +13,7 @@
 
 #include "scheduler.hpp"
 #include "threading_subsystem.hpp"
+#include "trace_points.hpp"
 
 #include <algorithm>
 
@@ -73,8 +74,9 @@ void base_mutex::claim_slot(thread_control_block& tcb) noexcept
    held_slot.store(static_cast<std::uint8_t>(slot), std::memory_order_relaxed);
    // The slot pointer is published by the CAS above, so setting the bit second
    // means a reader that sees the bit can always see the pointer.
-   tcb.held_mask.fetch_or(static_cast<std::uint8_t>(1U << slot),
-                          std::memory_order_release);
+   tcb.held_mask.fetch_or(static_cast<std::uint8_t>(1U << slot), std::memory_order_release);
+
+   trace::mutex_acquired(tcb, *this);
 }
 
 void base_mutex::retire_held(thread_control_block& tcb) noexcept
@@ -90,6 +92,8 @@ void base_mutex::retire_held(thread_control_block& tcb) noexcept
                            std::memory_order_release);
    tcb.held_slots[slot].store(nullptr, std::memory_order_release);
    held_slot.store(not_held, std::memory_order_relaxed);
+
+   trace::mutex_released(tcb, *this);
 }
 
 void base_mutex::register_held(thread_control_block& tcb) noexcept

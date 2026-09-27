@@ -12,6 +12,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <string>
 #include <unistd.h>
@@ -85,6 +86,20 @@ void cyros_port_cpu_relax(void)
 #elif defined(__aarch64__) || defined(__arm__)
    __asm__ __volatile__("yield");
 #endif
+}
+
+
+/* ----------------------------------------------------------------------------
+ * Measurement
+ * ------------------------------------------------------------------------- */
+
+uint64_t cyros_port_timestamp(void)
+{
+   // A vDSO read rather than a system call, and async-signal-safe, so it is
+   // fine from the preempt port's signal handlers.
+   timespec now{};
+   clock_gettime(CLOCK_MONOTONIC, &now);
+   return static_cast<uint64_t>(now.tv_sec) * 1'000'000'000u + static_cast<uint64_t>(now.tv_nsec);
 }
 
 

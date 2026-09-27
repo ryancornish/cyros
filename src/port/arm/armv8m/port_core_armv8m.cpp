@@ -648,6 +648,56 @@ void cyros_port_idle(void)
 
 
 /* ============================================================================
+ * Measurement
+ * ========================================================================= */
+
+namespace
+{
+
+/* The cycle counter is 32 bits and the contract is 64, so each core extends
+ * its own count by noticing when a read comes back smaller than the last one.
+ * That misses a wrap only if two reads on one core are a whole period apart:
+ * 2^32 cycles, about 27 seconds at 160 MHz and 18 minutes at 4 MHz. A trace
+ * with a gap that long shows time jumping backwards by a period, which is
+ * visible rather than silent. */
+struct cycle_extension
+{
+   std::uint32_t last;
+   std::uint32_t wraps;
+};
+
+cycle_extension cycle_extensions[CYROS_PORT_CORE_COUNT] = {};
+
+} // namespace
+
+uint64_t cyros_port_timestamp(void)
+{
+   /* Masked so that reading the counter and extending it are one step: an
+    * interrupt taking its own stamp in between would see the same wrap and
+    * count it twice. */
+   auto const token = cyros_port_irq_save();
+
+   /* Started on first use, per core, because the DWT is per core and nothing
+    * else in cyros needs it. A debugger that resets the DWT is caught here too. */
+   if ((cortex_m::reg(cortex_m::dwt_ctrl) & cortex_m::dwt_ctrl_cyccntena) == 0u) {
+      cortex_m::reg(cortex_m::dcb_demcr) |= cortex_m::demcr_trcena;
+      cortex_m::reg(cortex_m::dwt_ctrl) |= cortex_m::dwt_ctrl_cyccntena;
+   }
+
+   auto& extension = cycle_extensions[this_core()];
+   std::uint32_t const now = cortex_m::reg(cortex_m::dwt_cyccnt);
+   if (now < extension.last) {
+      ++extension.wraps;
+   }
+   extension.last = now;
+   std::uint64_t const stamp = (std::uint64_t{extension.wraps} << 32) | now;
+
+   cyros_port_irq_restore(token);
+   return stamp;
+}
+
+
+/* ============================================================================
  * Debug & Diagnostics
  * ========================================================================= */
 

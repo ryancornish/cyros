@@ -1,7 +1,7 @@
 #ifndef CYROS_CONFIG_HPP
 #define CYROS_CONFIG_HPP
 
-#include <cstdint>
+#include <cstddef>
 
 namespace cyros::config
 {

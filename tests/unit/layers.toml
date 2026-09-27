@@ -51,6 +51,11 @@ prefix = "cyros/"
 "cyros/sync/cemutex.hpp" = 7
 "cyros/kernel/diagnostics.hpp" = 7
 
+# L7 too, for the same reason as diagnostics: a trace records mutex ownership
+# and priority inheritance's urgency, so what it reports is only as proved as
+# the mutex is.
+"cyros/kernel/trace.hpp" = 7
+
 # L7, userlib channel. Built on semaphore (L6), spinlock (L1) and function
 # (L0), so it sits beside mutex rather than above chrono.
 "cyros/ch/channel.hpp" = 7

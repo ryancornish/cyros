@@ -133,6 +133,18 @@ inline void print_hex(std::uint32_t value) noexcept
    print(buffer);
 }
 
+inline void print_dec(std::uint64_t value) noexcept
+{
+   char buffer[21];
+   int  at = 20;
+   buffer[at] = '\0';
+   do {
+      buffer[--at] = static_cast<char>('0' + value % 10u);
+      value /= 10u;
+   } while (value != 0u);
+   print(&buffer[at]);
+}
+
 
 /* ---------------------------------------------------------------------------
  * Results

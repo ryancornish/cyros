@@ -1220,6 +1220,14 @@ void cyros_port_idle(void)
 
 
 /* ----------------------------------------------------------------------------
+ * Measurement
+ *
+ * Absent (located in ../common/port_linux_common.cpp instead):
+ * - cyros_port_timestamp()
+ * ------------------------------------------------------------------------- */
+
+
+/* ----------------------------------------------------------------------------
  * Debug & Diagnostics
  *
  * Absent (located in ../common/port_linux_common.cpp instead):

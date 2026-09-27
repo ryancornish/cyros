@@ -1,5 +1,5 @@
 #include "scheduler.hpp"
-
+#include "trace_points.hpp"
 
 #include <cyros/kernel/core.hpp>
 
@@ -89,6 +89,8 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
 
    tcb.state = thread_state::ready;
 
+   trace::thread_ready(tcb);
+
    // Idle thread does not belong in the ready_matrix,
    // but DOES follow state transition semantics
    if (&tcb == idle_thread) {
@@ -118,6 +120,8 @@ void scheduler::set_thread_running(thread_control_block& tcb)
 
    tcb.state = thread_state::running;
    current_thread = &tcb;
+
+   trace::thread_running(tcb);
 }
 
 void scheduler::set_thread_blocked(thread_control_block& tcb)
@@ -129,6 +133,8 @@ void scheduler::set_thread_blocked(thread_control_block& tcb)
 
    tcb.disposition = thread_disposition::none;
    tcb.state = thread_state::blocked;
+
+   trace::thread_blocked(tcb);
 }
 
 void scheduler::set_thread_terminated(thread_control_block& tcb)
@@ -141,6 +147,8 @@ void scheduler::set_thread_terminated(thread_control_block& tcb)
    CYROS_ASSERT(tcb.holds_nothing()); // Thread cannot own a base_mutex on termination
 
    tcb.state = thread_state::terminated;
+
+   trace::thread_terminated(tcb); // Before terminate(), after which the TCB may be gone
 
    thread_registry::unregister_thread(tcb);
 

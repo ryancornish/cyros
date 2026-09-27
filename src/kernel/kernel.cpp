@@ -5,6 +5,7 @@
 
 #include "scheduler.hpp"
 #include "threading_subsystem.hpp"
+#include "trace_points.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -125,6 +126,7 @@ schedule_hint global_ready_thread(thread_control_block& tcb)
 
    auto const this_core = cyros_port_get_core_id();
    if (this_core != tcb.pinned_core) {
+      trace::remote_wake(tcb);
       scheduler.post_intake(tcb, thread_request::make_ready);
       return schedule_hint::unwarranted;
    }
@@ -192,6 +194,9 @@ void register_thread(thread_control_block& tcb)
       spinlock_guard guard(k.lock);
       pin_thread_to_core(tcb);
    }
+
+   trace::thread_created(tcb);
+
    auto& scheduler = scheduler_for_core(tcb.pinned_core);
 
    // If cores are not running yet, enqueue directly (even for remote cores)
@@ -224,6 +229,8 @@ void initialise() noexcept
    CYROS_ASSERT(!k.initialised); // Cannot invoke kernel::initialise twice (without finalising down in between)
 
    cyros_port_init(reschedule_this_core);
+
+   trace::lifecycle_begins();
 
    for (auto& scheduler : k.schedulers) {
       scheduler.init_idle_thread();
