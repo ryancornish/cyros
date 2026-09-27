@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Build the NUCLEO-U575ZI-Q image.
 #
+#   ./build.sh               the 4 MHz reset clock
+#   U575_MHZ=160 ./build.sh  160 MHz from PLL1 (board.h)
+#
 # A script on top of cyros-builder rather than a builder feature, because this
 # produces an APPLICATION and the builder has never linked one. It uses the
 # builder for what the builder is for (assembling libcyros.a from the manifests)
@@ -30,13 +33,16 @@ mkdir -p "$out"
 # changes the ABI, so an image whose application objects disagree with
 # libcyros.a will not link, and if it did it would pass arguments in the wrong
 # registers. The STM32U575's FPU is the same FPv5-SP-D16 the bench models.
+mhz="${U575_MHZ:-4}"
+case "$mhz" in 4|160) ;; *) echo "U575_MHZ must be 4 or 160" >&2; exit 2 ;; esac
 common=(-mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16
-        -ffunction-sections -fdata-sections -Og -g3)
+        -ffunction-sections -fdata-sections -Og -g3 "-DBOARD_SYSCLK_HZ=$((mhz * 1000000))u")
 cxx=("${common[@]}" -std=gnu++26 -fno-exceptions -fno-rtti
      -Wall -Werror -Wextra -Wpedantic)
 
 arm-none-eabi-gcc "${common[@]}" -c "$here/startup_stm32u575.c" -o "$out/startup.o"
 arm-none-eabi-gcc "${common[@]}" -c "$here/board_clock.c"       -o "$out/board_clock.o"
+arm-none-eabi-gcc "${common[@]}" -c "$here/console.c"           -o "$out/console.o"
 # The bench's newlib stubs, referenced rather than copied. They are board
 # independent (they exist to PANIC if anything reaches a heap or a file
 # descriptor) and a second copy here would drift from the one the QEMU tests use.
@@ -50,7 +56,7 @@ arm-none-eabi-g++ "${cxx[@]}" \
 # the QEMU toolchain carries, for the same reason.
 arm-none-eabi-g++ "${common[@]}" -nostartfiles -nostdlib++ -Wl,--gc-sections \
    -T "$here/stm32u575.ld" \
-   "$out/startup.o" "$out/board_clock.o" "$out/syscall_stubs.o" "$out/main.o" \
+   "$out/startup.o" "$out/board_clock.o" "$out/console.o" "$out/syscall_stubs.o" "$out/main.o" \
    "$lib_dir/lib/libcyros.a" \
    -o "$out/cyros-u575.elf" -Wl,-Map="$out/cyros-u575.map"
 
@@ -59,4 +65,4 @@ arm-none-eabi-objcopy -O binary "$out/cyros-u575.elf" "$out/cyros-u575.bin"
 echo
 arm-none-eabi-size "$out/cyros-u575.elf"
 echo
-echo "image: $out/cyros-u575.elf"
+echo "image: $out/cyros-u575.elf (${mhz} MHz). Watch its output with ./console.sh"

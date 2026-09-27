@@ -23,11 +23,12 @@
  *   p baton                      which thread ran last
  *   p switch_count               how many context switches have happened
  *
- * Output goes out over SEMIHOSTING, the same channel the QEMU bench uses.
- * `openocd.cfg` arms it from an examine-end event, so it is on whoever drives
- * OpenOCD. It appears on OPENOCD's stdout, not gdb's, which under an IDE means
- * the terminal running the gdb server rather than the debug console. Each call
- * halts the core briefly, so nothing timing-sensitive should print.
+ * Output goes to the board's console, USART1 through the ST-LINK's virtual COM
+ * port (console.c). Watch it with ./console.sh, in a terminal of its own,
+ * whether or not a debugger is attached. A print is polled and waits only
+ * while the 8-byte FIFO is full, so it does not halt the core the way the
+ * semihosting it replaced did. The port's panic report is the one thing still
+ * on semihosting, and appears on OPENOCD's output.
  */
 
 #include <cyros/kernel/kernel.hpp>

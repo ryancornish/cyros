@@ -59,18 +59,20 @@ uint32_t cyros_port_systick_clock_hz(void)
 #define SYS_WRITE0        0x04
 #define ADP_STOPPED_APPLICATION_EXIT 0x20026u
 
-static void bench_write0(char const* text)
+/* bench.hpp's two board hooks. On this bench both are semihosting, which QEMU
+ * services natively and cheaply, and the exit status is what the runner reads. */
+void cyros_bench_write(char const* text)
 {
    register long r0 __asm__("r0") = SYS_WRITE0;
    register void const* r1 __asm__("r1") = text;
    __asm__ volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
 }
 
-__attribute__((noreturn)) static void bench_exit(unsigned code)
+__attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
 {
-   volatile unsigned block[2] = { ADP_STOPPED_APPLICATION_EXIT, code };
+   volatile uint32_t block[2] = { ADP_STOPPED_APPLICATION_EXIT, code };
    register long r0 __asm__("r0") = SYS_EXIT_EXTENDED;
-   register volatile unsigned* r1 __asm__("r1") = block;
+   register volatile uint32_t* r1 __asm__("r1") = block;
    __asm__ volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
    __builtin_unreachable();
 }
@@ -96,7 +98,7 @@ __attribute__((noreturn)) void Reset_Handler(void)
       (*ctor)();
    }
 
-   bench_exit((unsigned)cyros_bench_main());
+   cyros_bench_exit((uint32_t)cyros_bench_main());
 }
 
 /**
@@ -130,22 +132,22 @@ __attribute__((noreturn)) void Fault_Handler(void)
    uint32_t ipsr;
    __asm__ volatile("mrs %0, ipsr" : "=r"(ipsr));
 
-   bench_write0("\n*** FAULT, exception number ");
+   cyros_bench_write("\n*** FAULT, exception number ");
    char digits[4];
    digits[0] = (char)('0' + ((ipsr / 100u) % 10u));
    digits[1] = (char)('0' + ((ipsr / 10u) % 10u));
    digits[2] = (char)('0' + (ipsr % 10u));
    digits[3] = '\0';
-   bench_write0(digits);
-   bench_write0(" ***\n");
+   cyros_bench_write(digits);
+   cyros_bench_write(" ***\n");
 
-   bench_exit(3u);
+   cyros_bench_exit(3u);
 }
 
 __attribute__((noreturn)) static void Default_Handler(void)
 {
-   bench_write0("\n*** unexpected interrupt ***\n");
-   bench_exit(4u);
+   cyros_bench_write("\n*** unexpected interrupt ***\n");
+   cyros_bench_exit(4u);
 }
 
 /* The ARMv8-M vector table. Sixteen system entries, then device IRQs, of which

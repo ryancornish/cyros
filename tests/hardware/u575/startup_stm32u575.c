@@ -1,6 +1,6 @@
 /**
  * @file startup_stm32u575.c
- * @brief Reset path and vector table for the QEMU NUCLEO-U575ZI-Q board.
+ * @brief Reset path and vector table for the NUCLEO-U575ZI-Q board.
  *
  * THIS IS NOT PART OF THE PORT, and this file is the proof of that claim.
  * It is the bench's startup with the board-specific parts changed and NOTHING
@@ -8,18 +8,19 @@
  * BASEPRI, PRIMASK, PSPLIM), and all of that is identical on the MPS2 model
  * and on real U575 silicon.
  *
- * NO CLOCK SETUP, deliberately, for this first bring-up. The U575 comes out of
- * reset running from MSIS at 4 MHz and that is perfectly good enough to step
- * through code. Consequently the board tells cyros its SysTick input is 4 MHz
- * (see board_clock.c), which is exactly what the weak
- * cyros_port_systick_clock_hz symbol exists for. Raising the clock to 160 MHz
- * means PLL configuration plus flash wait states plus voltage scaling, and
- * that is a separate piece of work with its own ways to go wrong.
+ * The clock is the board's choice, not the port's. Reset_Handler brings it to
+ * BOARD_SYSCLK_HZ (board.h), either the 4 MHz reset clock or 160 MHz from
+ * PLL1, and board_clock.c tells cyros the same number through
+ * cyros_port_systick_clock_hz. Then the console comes up, USART1 to the
+ * ST-LINK's virtual COM port, and everything the image prints goes there,
+ * faults and the final exit status included (console.c).
  *
  * It follows that libcyros.a contains no vector table and no reset handler. An
  * application supplies those, exactly as it would with any other RTOS, and only
  * has to route two entries at cyros.
  */
+
+#include "board.h"
 
 #include <stdint.h>
 
@@ -46,25 +47,30 @@ extern int cyros_bench_main(void);
 extern void (*__init_array_start[])(void);
 extern void (*__init_array_end[])(void);
 
-/* Semihosting, open-coded so the reset path depends on nothing. */
-#define SYS_EXIT_EXTENDED 0x20
-#define SYS_WRITE0        0x04
-#define ADP_STOPPED_APPLICATION_EXIT 0x20026u
-
-static void bench_write0(char const* text)
+/**
+ * @brief End the image, bench.hpp's host_exit on this board.
+ *
+ * There is no host to hand a status to, so the status is PRINTED, as the last
+ * line the image ever writes, and run_test.sh reads it. Then the core parks. It
+ * does not trap: an unserviced BKPT would become a HardFault the moment no
+ * debugger is attached.
+ */
+__attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
 {
-   register long r0 __asm__("r0") = SYS_WRITE0;
-   register void const* r1 __asm__("r1") = text;
-   __asm__ volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
-}
-
-__attribute__((noreturn)) static void bench_exit(unsigned code)
-{
-   volatile unsigned block[2] = { ADP_STOPPED_APPLICATION_EXIT, code };
-   register long r0 __asm__("r0") = SYS_EXIT_EXTENDED;
-   register volatile unsigned* r1 __asm__("r1") = block;
-   __asm__ volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
-   __builtin_unreachable();
+   char digits[11];
+   char* p = &digits[sizeof digits - 1];
+   *p = '\0';
+   do {
+      *--p = (char)('0' + code % 10u);
+      code /= 10u;
+   } while (code != 0u);
+   cyros_bench_write("EXIT: ");
+   cyros_bench_write(p);
+   cyros_bench_write("\n");
+   board_console_drain();
+   for (;;) {
+      __asm__ volatile("wfi");
+   }
 }
 
 __attribute__((noreturn)) void Reset_Handler(void)
@@ -84,11 +90,16 @@ __attribute__((noreturn)) void Reset_Handler(void)
     * in that bucket, and they want completely different investigations. */
    *(volatile uint32_t*)0xE000ED24u |= (1u << 16) | (1u << 17) | (1u << 18);
 
+   /* The clock first, because the console's baud divisor is computed from it,
+    * and both before any constructor, which may print. */
+   board_clock_init();
+   board_console_init();
+
    for (void (**ctor)(void) = __init_array_start; ctor != __init_array_end; ++ctor) {
       (*ctor)();
    }
 
-   bench_exit((unsigned)cyros_bench_main());
+   cyros_bench_exit((uint32_t)cyros_bench_main());
 }
 
 /**
@@ -122,22 +133,22 @@ __attribute__((noreturn)) void Fault_Handler(void)
    uint32_t ipsr;
    __asm__ volatile("mrs %0, ipsr" : "=r"(ipsr));
 
-   bench_write0("\n*** FAULT, exception number ");
+   cyros_bench_write("\n*** FAULT, exception number ");
    char digits[4];
    digits[0] = (char)('0' + ((ipsr / 100u) % 10u));
    digits[1] = (char)('0' + ((ipsr / 10u) % 10u));
    digits[2] = (char)('0' + (ipsr % 10u));
    digits[3] = '\0';
-   bench_write0(digits);
-   bench_write0(" ***\n");
+   cyros_bench_write(digits);
+   cyros_bench_write(" ***\n");
 
-   bench_exit(3u);
+   cyros_bench_exit(3u);
 }
 
 __attribute__((noreturn)) static void Default_Handler(void)
 {
-   bench_write0("\n*** unexpected interrupt ***\n");
-   bench_exit(4u);
+   cyros_bench_write("\n*** unexpected interrupt ***\n");
+   cyros_bench_exit(4u);
 }
 
 /* The ARMv8-M vector table. Sixteen system entries, then device IRQs, of which

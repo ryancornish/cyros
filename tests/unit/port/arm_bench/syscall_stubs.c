@@ -24,32 +24,20 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#define SYS_WRITE0        0x04
-#define SYS_EXIT_EXTENDED 0x20
-#define ADP_STOPPED_APPLICATION_EXIT 0x20026u
+#include <stdint.h>
 
-static void stub_write0(char const* text)
-{
-   register long r0 __asm__("r0") = SYS_WRITE0;
-   register void const* r1 __asm__("r1") = text;
-   __asm__ volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
-}
-
-__attribute__((noreturn)) static void stub_exit(unsigned code)
-{
-   volatile unsigned block[2] = { ADP_STOPPED_APPLICATION_EXIT, code };
-   register long r0 __asm__("r0") = SYS_EXIT_EXTENDED;
-   register volatile unsigned* r1 __asm__("r1") = block;
-   __asm__ volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
-   __builtin_unreachable();
-}
+/* The board's console and exit, from whichever startup file this image links
+ * (bench.hpp describes them). Semihosting on the QEMU bench, USART1 and a
+ * printed status on the U575. */
+void cyros_bench_write(char const* text);
+__attribute__((noreturn)) void cyros_bench_exit(uint32_t code);
 
 __attribute__((noreturn)) static void unsupported(char const* name)
 {
-   stub_write0("\n*** cyros reached a libc facility it must not use: ");
-   stub_write0(name);
-   stub_write0(" ***\n");
-   stub_exit(6u);
+   cyros_bench_write("\n*** cyros reached a libc facility it must not use: ");
+   cyros_bench_write(name);
+   cyros_bench_write(" ***\n");
+   cyros_bench_exit(6u);
 }
 
 /* The one with a real meaning. newlib's abort() arrives here, and so does any
@@ -57,7 +45,7 @@ __attribute__((noreturn)) static void unsupported(char const* name)
  * with a status the runner can see. */
 __attribute__((noreturn)) void _exit(int status)
 {
-   stub_exit((unsigned)status);
+   cyros_bench_exit((uint32_t)status);
 }
 
 /* abort() calls raise(), which needs these two. */
@@ -89,7 +77,7 @@ int _getentropy(void* buffer, size_t length)
    unsupported("_getentropy");
 }
 
-/* Files. Output goes through semihosting, never through a descriptor. */
+/* Files. Output goes through the board's console, never through a descriptor. */
 int _close(int file)                          { (void)file; unsupported("_close"); }
 int _fstat(int file, struct stat* st)         { (void)file; (void)st; unsupported("_fstat"); }
 int _isatty(int file)                         { (void)file; unsupported("_isatty"); }

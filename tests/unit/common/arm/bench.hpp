@@ -5,7 +5,8 @@
  * Subject / Trusts / Proves
  * -------------------------
  * Subject: nothing. This is harness, not a test.
- * Trusts:  ARM semihosting, and that the host propagates an exit status.
+ * Trusts:  the board's console and exit (below), and that the runner reads
+ *          the exit status the board reports.
  * Proves:  nothing.
  *
  * WHY THIS EXISTS RATHER THAN GTEST. gtest does not run bare metal: it wants a
@@ -19,8 +20,13 @@
  * worthwhile thing to have later, and is a different piece of work from getting
  * a port off the ground.
  *
- * Output goes out one semihosting trap at a time, which costs microseconds per
- * call. Nothing in a timing-sensitive region may check anything.
+ * Output goes to whatever console the BOARD supplies, and its cost is the
+ * board's. On the QEMU bench it is semihosting, a trap QEMU services in
+ * microseconds. On the U575 it is USART1 to the ST-LINK's virtual COM port,
+ * about a hundred cycles for a short print and 20 microseconds a character past
+ * the 8-byte FIFO. Semihosting there would halt the core for about 130 ms a
+ * call (arm-port-notes 15i). Either way, nothing in a timing-sensitive region
+ * may check anything.
  */
 
 #ifndef CYROS_TEST_ARM_BENCH_HPP
@@ -28,21 +34,40 @@
 
 #include <cstdint>
 
+/* ---------------------------------------------------------------------------
+ * The board's console and exit
+ *
+ * Supplied by the startup file the image links, which is the board: the QEMU
+ * bench's startup_mps2_an505.c and _an521.c implement both with semihosting,
+ * and the U575's console.c and startup_stm32u575.c with USART1 and a printed
+ * "EXIT: n" line. The harness never knows which, which is what lets one test
+ * source run on both unchanged.
+ * ------------------------------------------------------------------------ */
+
+extern "C" void cyros_bench_write(char const* text) noexcept;
+extern "C" [[noreturn]] void cyros_bench_exit(std::uint32_t code) noexcept;
+
 namespace cyros::bench
 {
 
+inline void print(char const* text) noexcept
+{
+   cyros_bench_write(text);
+}
+
+[[noreturn]] inline void host_exit(std::uint32_t code) noexcept
+{
+   cyros_bench_exit(code);
+}
+
 /* ---------------------------------------------------------------------------
- * Semihosting
+ * Semihosting, for the elapsed-time reference only
  *
  * Duplicated from the port's own cortex_m.hpp on purpose. That header is port
  * internal and a test must not reach into it: the harness has to be able to
  * report that the port is broken, which it cannot do if it is built out of the
  * thing under test.
  * ------------------------------------------------------------------------ */
-
-inline constexpr long sys_write0        = 0x04;
-inline constexpr long sys_exit_extended = 0x20;
-inline constexpr std::uint32_t adp_stopped_application_exit = 0x20026u;
 
 /**
  * @brief Issue one semihosting call.
@@ -63,18 +88,6 @@ inline constexpr std::uint32_t adp_stopped_application_exit = 0x20026u;
    return r0;
 }
 
-inline void print(char const* text) noexcept
-{
-   semihost(sys_write0, const_cast<char*>(text));
-}
-
-[[noreturn]] inline void host_exit(std::uint32_t code) noexcept
-{
-   volatile std::uint32_t block[2] = { adp_stopped_application_exit, code };
-   semihost(sys_exit_extended, block);
-   __builtin_unreachable();
-}
-
 /**
  * @brief Host-observed nanoseconds since the image started running.
  *
@@ -89,7 +102,10 @@ inline void print(char const* text) noexcept
  * per cent, as this one did, passes every relative check.
  *
  * It costs a semihosting trap per call, so it belongs at the edges of a
- * measurement and never inside one.
+ * measurement and never inside one. It stays semihosting on every board
+ * because it is a HOST service by nature. On the U575 OpenOCD does not
+ * implement it, so the checks that need it skip, and it needs OpenOCD attached
+ * to answer even that, which run_test.sh keeps.
  */
 inline constexpr long sys_elapsed  = 0x30;
 inline constexpr long sys_tickfreq = 0x31;
