@@ -13,6 +13,8 @@ time_driver = "simulation"
 
 [features]
 enable = [
+   "channel",
+   "chrono",
    "round_robin",
    "sync",
 ]
