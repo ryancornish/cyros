@@ -1,6 +1,13 @@
 #include <cyros/kernel/function.hpp>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <new>
+#include <type_traits>
+
 using namespace cyros;
 
 
@@ -388,4 +395,286 @@ TEST_F(FunctionTest, DestructorCleansUp)
    }  // f destroyed here
 
    EXPECT_EQ(destructor_count, 2);  // Once for temporary, once for stored copy
+}
+
+/* ============================================================================
+ * Storage and Lifetime
+ *
+ * A trivially copyable callable is moved by copying bytes and has nothing to
+ * destroy. Anything else goes through a manager. These pin that split: a
+ * callable with a real move constructor or destructor must see every one of
+ * them, exactly once each.
+ * ========================================================================= */
+
+namespace
+{
+
+/// Not trivially copyable, so it takes the manager path.
+struct LifetimeCounter
+{
+   static inline int moves        = 0;
+   static inline int destructions = 0;
+
+   int* calls;
+
+   explicit LifetimeCounter(int* calls) : calls(calls) {}
+   LifetimeCounter(LifetimeCounter&& other) noexcept : calls(other.calls) { ++moves; }
+   ~LifetimeCounter() { ++destructions; }
+
+   void operator()() const { ++*calls; }
+
+   static void zero() { moves = 0; destructions = 0; }
+};
+
+static_assert(!std::is_trivially_copyable_v<LifetimeCounter>);
+
+}  // namespace
+
+// The two pointers take the padding a single pointer would leave before the
+// max_align_t buffer, so this holds on both a 32-bit and a 64-bit target.
+static_assert(sizeof(function<void(), 32>) == 32 + 2 * sizeof(void*));
+static_assert(sizeof(function<void(), 48>) == 48 + 2 * sizeof(void*));
+
+// A default-constructed function must stay constant-initialisable.
+constinit function<void()> constant_initialised;
+
+TEST_F(FunctionTest, DefaultConstructedIsConstantInitialised)
+{
+   EXPECT_FALSE(constant_initialised);
+}
+
+TEST_F(FunctionTest, NonTrivialCallable_MoveRunsItsMoveAndDestructor)
+{
+   LifetimeCounter::zero();
+   int calls = 0;
+   {
+      function<void()> f1(LifetimeCounter{&calls});
+      EXPECT_EQ(LifetimeCounter::moves, 1);         // temporary into the buffer
+      EXPECT_EQ(LifetimeCounter::destructions, 1);  // the temporary
+
+      function<void()> f2(std::move(f1));
+      EXPECT_EQ(LifetimeCounter::moves, 2);
+      EXPECT_EQ(LifetimeCounter::destructions, 2);  // f1's, at the move
+      EXPECT_FALSE(f1);
+
+      f2();
+      EXPECT_EQ(calls, 1);
+   }
+   // f2's copy, once. f1 had nothing left to destroy.
+   EXPECT_EQ(LifetimeCounter::destructions, 3);
+}
+
+TEST_F(FunctionTest, NonTrivialCallable_MoveAssignmentDestroysTheReplacedOne)
+{
+   int first = 0;
+   int second = 0;
+   function<void()> a(LifetimeCounter{&first});
+   function<void()> b(LifetimeCounter{&second});
+
+   LifetimeCounter::zero();
+   a = std::move(b);
+   EXPECT_EQ(LifetimeCounter::moves, 1);
+   EXPECT_EQ(LifetimeCounter::destructions, 2);  // a's old callable, and b's after the move
+   EXPECT_FALSE(b);
+
+   a();
+   EXPECT_EQ(first, 0);
+   EXPECT_EQ(second, 1);
+}
+
+TEST_F(FunctionTest, AssigningACallableConstructsItInPlace)
+{
+   int first = 0;
+   int second = 0;
+   function<void()> f(LifetimeCounter{&first});
+
+   LifetimeCounter::zero();
+   f = LifetimeCounter{&second};
+   // One move, straight into the buffer. Going through a temporary function
+   // would move twice.
+   EXPECT_EQ(LifetimeCounter::moves, 1);
+   EXPECT_EQ(LifetimeCounter::destructions, 2);  // the replaced callable, and the temporary
+
+   f();
+   EXPECT_EQ(first, 0);
+   EXPECT_EQ(second, 1);
+}
+
+TEST_F(FunctionTest, AssigningNullptrDestroysTheCallable)
+{
+   int calls = 0;
+   function<void()> f(LifetimeCounter{&calls});
+
+   LifetimeCounter::zero();
+   f = nullptr;
+   EXPECT_FALSE(f);
+   EXPECT_EQ(LifetimeCounter::destructions, 1);
+}
+
+TEST_F(FunctionTest, TriviallyCopyableCallableFillingTheBufferSurvivesMoves)
+{
+   std::array<std::uint64_t, 4> const values{1, 20, 300, 4000};
+   auto sum = [values]() { return values[0] + values[1] + values[2] + values[3]; };
+   static_assert(std::is_trivially_copyable_v<decltype(sum)>);
+   static_assert(sizeof(sum) == 32);
+
+   function<std::uint64_t(), 32> f1(sum);
+   function<std::uint64_t(), 32> f2(std::move(f1));
+   function<std::uint64_t(), 32> f3;
+   f3 = std::move(f2);
+
+   EXPECT_FALSE(f1);
+   EXPECT_FALSE(f2);
+   ASSERT_TRUE(f3);
+   EXPECT_EQ(f3(), 4321u);
+}
+
+/* ============================================================================
+ * Heap Policies, Observed
+ *
+ * A callable with its own operator new shows whether it was placed on the heap
+ * without replacing the global one.
+ * ========================================================================= */
+
+namespace
+{
+
+struct HeapCounted
+{
+   static inline int allocations   = 0;
+   static inline int deallocations = 0;
+
+   static void* operator new(std::size_t size) { ++allocations; return ::operator new(size); }
+   static void operator delete(void* p) noexcept { ++deallocations; ::operator delete(p); }
+
+   static void zero() { allocations = 0; deallocations = 0; }
+};
+
+struct SmallHeapCallable : HeapCounted
+{
+   int* calls;
+   void operator()() const { ++*calls; }
+};
+
+struct LargeHeapCallable : HeapCounted
+{
+   int* calls;
+   std::array<std::byte, 64> payload{};
+   void operator()() const { ++*calls; }
+};
+
+/// Small, but aligned more strictly than the inline buffer can promise.
+struct alignas(2 * alignof(std::max_align_t)) OverAlignedCallable
+{
+   static inline int allocations = 0;
+
+   static void* operator new(std::size_t size, std::align_val_t al) { ++allocations; return ::operator new(size, al); }
+   static void operator delete(void* p, std::align_val_t al) noexcept { ::operator delete(p, al); }
+
+   bool* aligned;
+   void operator()() const
+   {
+      *aligned = reinterpret_cast<std::uintptr_t>(this) % alignof(OverAlignedCallable) == 0;
+   }
+};
+
+}  // namespace
+
+TEST_F(FunctionTest, MustUseHeap_AllocatesOnceAndMovesWithoutAllocating)
+{
+   HeapCounted::zero();
+   int calls = 0;
+   {
+      function<void(), 32, heap_policy::must_use_heap> f1(SmallHeapCallable{{}, &calls});
+      EXPECT_EQ(HeapCounted::allocations, 1);
+
+      function<void(), 32, heap_policy::must_use_heap> f2(std::move(f1));
+      EXPECT_EQ(HeapCounted::allocations, 1);
+      EXPECT_EQ(HeapCounted::deallocations, 0);
+
+      f2();
+      EXPECT_EQ(calls, 1);
+   }
+   EXPECT_EQ(HeapCounted::deallocations, 1);
+}
+
+TEST_F(FunctionTest, CanUseHeap_SmallCallableStaysInline)
+{
+   HeapCounted::zero();
+   int calls = 0;
+   {
+      function<void(), 32, heap_policy::can_use_heap> f(SmallHeapCallable{{}, &calls});
+      f();
+   }
+   EXPECT_EQ(calls, 1);
+   EXPECT_EQ(HeapCounted::allocations, 0);
+}
+
+TEST_F(FunctionTest, CanUseHeap_LargeCallableGoesToHeap)
+{
+   HeapCounted::zero();
+   int calls = 0;
+   {
+      function<void(), 32, heap_policy::can_use_heap> f(LargeHeapCallable{{}, &calls, {}});
+      EXPECT_EQ(HeapCounted::allocations, 1);
+      f();
+   }
+   EXPECT_EQ(calls, 1);
+   EXPECT_EQ(HeapCounted::deallocations, 1);
+}
+
+TEST_F(FunctionTest, CanUseHeap_OverAlignedCallableGoesToHeapAndStaysAligned)
+{
+   static_assert(sizeof(OverAlignedCallable) <= 32);
+
+   OverAlignedCallable::allocations = 0;
+   bool aligned = false;
+
+   function<void(), 32, heap_policy::can_use_heap> f(OverAlignedCallable{&aligned});
+   EXPECT_EQ(OverAlignedCallable::allocations, 1);
+
+   f();
+   EXPECT_TRUE(aligned);
+}
+
+/* ============================================================================
+ * Argument Passing and Return
+ * ========================================================================= */
+
+TEST_F(FunctionTest, ReferenceArgumentReachesTheCaller)
+{
+   function<void(int&)> f([](int& x) { x = 7; });
+
+   int value = 0;
+   f(value);
+   EXPECT_EQ(value, 7);
+}
+
+TEST_F(FunctionTest, MoveOnlyArgument)
+{
+   function<int(std::unique_ptr<int>)> f([](std::unique_ptr<int> p) { return *p; });
+
+   EXPECT_EQ(f(std::make_unique<int>(5)), 5);
+}
+
+TEST_F(FunctionTest, LargeTriviallyCopyableArgument)
+{
+   struct large { std::array<std::uint32_t, 16> v; };
+   static_assert(std::is_trivially_copyable_v<large> && sizeof(large) > 2 * sizeof(void*));
+
+   function<std::uint32_t(large)> f([](large l) { return l.v[0] + l.v[15]; });
+
+   large l{};
+   l.v[0]  = 3;
+   l.v[15] = 4;
+   EXPECT_EQ(f(l), 7u);
+}
+
+TEST_F(FunctionTest, VoidSignatureDiscardsTheResult)
+{
+   int calls = 0;
+   function<void()> f([&calls]() { return ++calls; });
+
+   f();
+   EXPECT_EQ(calls, 1);
 }

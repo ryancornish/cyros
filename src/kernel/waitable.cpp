@@ -293,7 +293,7 @@ void wait_queue::wake_all(reschedule_policy policy, inheritance_cache* pi) noexc
    cyros_port_preempt_enable(token);
 }
 
-bool wait_queue::wake_one_and_commit(commit_fn const& commit, reschedule_policy policy, inheritance_cache* pi) noexcept
+bool wait_queue::wake_one_and_commit(commit_fn commit, reschedule_policy policy, inheritance_cache* pi) noexcept
 {
    thread_control_block* chosen = nullptr;
    {
@@ -328,7 +328,7 @@ bool wait_queue::wake_one_and_commit(commit_fn const& commit, reschedule_policy 
    return true;
 }
 
-bool wait_queue::wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy, inheritance_cache* pi) noexcept
+bool wait_queue::wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy, inheritance_cache* pi) noexcept
 {
    return wake_one_and_commit(
       [&transfer](thread_control_block* chosen) {
@@ -357,7 +357,7 @@ void waitable::wake_all(reschedule_policy policy) noexcept
    queue.wake_all(policy);
 }
 
-bool waitable::wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy) noexcept
+bool waitable::wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy) noexcept
 {
    return queue.wake_one_and_transfer(transfer, policy);
 }

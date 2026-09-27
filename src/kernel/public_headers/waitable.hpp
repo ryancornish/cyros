@@ -2,12 +2,12 @@
 #define CYROS_WAITABLE_HPP
 
 #include <cyros/kernel/thread.hpp>
-#include <cyros/kernel/function.hpp>
 #include <cyros/kernel/spinlock.hpp>
 #include <cyros/kernel/visibility.hpp>
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 
 namespace cyros
@@ -87,8 +87,8 @@ class CYROS_PUBLIC wait_queue
       wait_node*            next {nullptr};
    };
 
-   using transfer_fn = function<void(thread::id), 32, heap_policy::no_heap>;
-   using commit_fn   = function<void(thread_control_block*), 32, heap_policy::no_heap>;
+   using transfer_fn = std::function_ref<void(thread::id)>;
+   using commit_fn   = std::function_ref<void(thread_control_block*)>;
    constexpr wait_queue() noexcept = default;
 
    wait_queue(wait_queue&&)                 = delete;
@@ -106,7 +106,7 @@ class CYROS_PUBLIC wait_queue
 
    void wake_one(reschedule_policy policy) noexcept { wake_one(policy, nullptr); }
    void wake_all(reschedule_policy policy) noexcept { wake_all(policy, nullptr); }
-   bool wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy) noexcept
+   bool wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy) noexcept
    {
       return wake_one_and_transfer(transfer, policy, nullptr);
    }
@@ -121,8 +121,8 @@ class CYROS_PUBLIC wait_queue
 
    void wake_one(reschedule_policy policy, inheritance_cache* pi) noexcept;
    void wake_all(reschedule_policy policy, inheritance_cache* pi) noexcept;
-   bool wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy, inheritance_cache* pi) noexcept;
-   bool wake_one_and_commit(commit_fn const& commit, reschedule_policy policy, inheritance_cache* pi) noexcept;
+   bool wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy, inheritance_cache* pi) noexcept;
+   bool wake_one_and_commit(commit_fn commit, reschedule_policy policy, inheritance_cache* pi) noexcept;
 
    [[nodiscard]] bool empty() const noexcept;
 
@@ -211,7 +211,7 @@ class CYROS_PUBLIC pi_wait_queue
 
    [[nodiscard]] bool empty() const noexcept { return queue.empty(); }
 
-   bool wake_one_and_commit(commit_fn const& commit, reschedule_policy policy) noexcept
+   bool wake_one_and_commit(commit_fn commit, reschedule_policy policy) noexcept
    {
       return queue.wake_one_and_commit(commit, policy, &pi);
    }
@@ -355,7 +355,7 @@ protected:
     * transfer runs under a spinlock. It must be tiny, must not block, must
     * not wake, and must not touch this waitable's queue.
     */
-   bool wake_one_and_transfer(transfer_fn const& transfer, reschedule_policy policy = reschedule_policy::automatic) noexcept;
+   bool wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
    /**
     * @brief Group-wait handback hook.
