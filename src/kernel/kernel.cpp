@@ -23,6 +23,8 @@ namespace
  * @brief Global state of the kernel
  *
  * All globals required in the kernel layer must live within here.
+ * To keep this object placed in .bss (for ROM efficiency), all members
+ * should be zero-initialised.
  */
 struct kernel_state
 {
@@ -31,7 +33,7 @@ struct kernel_state
    std::atomic<bool> initialised{false};
    std::atomic<bool> running{false};
    std::atomic<std::uint32_t> active_threads{0};
-   std::atomic<std::uint32_t> thread_id_generator{1};
+   std::atomic<std::uint32_t> thread_id_generator{0};
 
    // Compile-time construct the scheduler list with incrementing core id's.
    template<std::size_t... is>
@@ -235,6 +237,12 @@ void initialise() noexcept
    for (auto& scheduler : k.schedulers) {
       scheduler.init_idle_thread();
    }
+
+   // Id 0 is the idle thread's (scheduler::idle_thread_id), so the first
+   // registered thread must get 1. The generator starts at zero to keep
+   // kernel_state in .bss
+   k.thread_id_generator.fetch_add(1, std::memory_order_relaxed);
+
    k.initialised.store(true, std::memory_order_relaxed);
 }
 
@@ -253,7 +261,7 @@ void finalise() noexcept
    CYROS_ASSERT(k.initialised);
 
    k.running.store(false, std::memory_order_relaxed);
-   k.thread_id_generator.store(1, std::memory_order_relaxed);
+   k.thread_id_generator.store(0, std::memory_order_relaxed);   // initialise() steps past the idle id
    k.active_threads.store(0, std::memory_order_relaxed);;
 
    for (auto& scheduler : k.schedulers) {

@@ -163,3 +163,30 @@ TEST(SingleCoreSingleThread_Test,
 
    kernel::finalise();
 }
+
+TEST(SingleCoreSingleThread_Test,
+     GivenTwoKernelLifecycles_WhenOneThreadRegistersInEach_ThenBothGetTheFirstUserId)
+{
+   // Id 0 is reserved for the idle thread. kernel::initialise() steps the
+   // generator past it and kernel::finalise() rewinds it, so the first thread of
+   // EVERY lifecycle is id 1, whatever ran in this process before. Two
+   // lifecycles inside one test, so the rewind is checked without depending on
+   // the order gtest runs cases in.
+
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
+
+   for (int lifecycle = 0; lifecycle < 2; ++lifecycle) {
+      kernel::initialise();
+
+      // GIVEN:
+
+      thread thread([]{}, stack, thread::priority(0), core0);
+
+      // THEN:
+
+      EXPECT_EQ(thread.get_id(), thread::id{1}) << "in lifecycle " << lifecycle;
+
+      kernel::start();
+      kernel::finalise();
+   }
+}
