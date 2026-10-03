@@ -1,0 +1,17 @@
+[test]
+name = "test_chrono_condition_variable_sim"
+layer = 8
+source = "test_chrono_condition_variable_sim.cpp"
+config = "test_chrono_condition_variable_sim_config.hpp"
+
+# The timed condition_variable methods live in chrono, like the timed
+# semaphore ones. Simulation + coop for the same reason as test_chrono_alarm_sim:
+# every deadline fires at an exact tick, so the assertions are about tick
+# values, never wall-clock timing.
+[components]
+port = "linux_coop"
+time_driver = "simulation"
+features = ["chrono", "sync"]
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

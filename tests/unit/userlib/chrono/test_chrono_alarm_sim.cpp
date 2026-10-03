@@ -427,3 +427,39 @@ TEST_F(ChronoAlarmSim_Test, GivenZeroDuration_WhenTryAcquireForRuns_ThenItDegrad
 
    EXPECT_FALSE(got);
 }
+
+/* Two timers due on one tick: the releaser's sleep and the waiter's deadline.
+ * The pump dequeues both, then runs their callbacks in turn. The first wakes
+ * the releaser, which is more urgent than the pumper, so it runs before the
+ * second callback has, releases, and readies the waiter. The waiter wins its
+ * token and disarms a deadline whose timer is already dequeued but whose
+ * callback has not run. The pump must not be switched away from in the middle
+ * of a batch, or that disarm waits for a callback that can never run on this
+ * core. On hardware the batch is one timer ISR, which nothing preempts. */
+TEST_F(ChronoAlarmSim_Test, GivenAReleaseWokenOnTheDeadlineTick_WhenTheWaiterDisarms_ThenItDoesNotWaitOnThePump)
+{
+   struct state
+   {
+      sync::semaphore sem{0};
+      bool got = false;
+   } s;
+
+   thread waiter(
+      [&s]{ s.got = s.sem.try_acquire_until(time::time_point{30}); },
+      s_a, thread::priority(5)
+   );
+
+   thread releaser(
+      [&s]{
+         this_thread::sleep_until(time::time_point{30});
+         s.sem.release();
+      },
+      s_b, thread::priority(1)
+   );
+
+   thread pumper([]{ pump_until(time::time_point{60}); }, s_pump, thread::priority(20));
+
+   kernel::start();
+
+   EXPECT_TRUE(s.got);
+}

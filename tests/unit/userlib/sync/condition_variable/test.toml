@@ -1,0 +1,14 @@
+[test]
+name = "test_sync_condition_variable"
+layer = 8
+source = "test_sync_condition_variable.cpp"
+config = "test_sync_condition_variable_config.hpp"
+
+# No port filter: passes on both ports, and the coop run is the one
+# ThreadSanitizer can instrument (build/toolchains/gcc-tsan.toml).
+[components]
+time_driver = "tickless"
+features = ["sync"]
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

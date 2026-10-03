@@ -24,7 +24,7 @@ class thread_termination final : public waitable
    std::atomic<bool> terminated{false};
 
 protected:
-   bool try_satisfy() noexcept override
+   bool try_satisfy(waiter_record*) noexcept override
    {
       return terminated.load(std::memory_order_acquire);
    }
@@ -243,6 +243,17 @@ struct thread_control_block
 
    // Thread-joining waitable
    thread_termination termination;
+
+   /* The waiter_record this thread has installed, or null. Per thread rather
+    * than per wait because a thread is in one wait at a time, and it is what
+    * lets a record reach the kernel's poll without a second way to wait.
+    * Owned by the thread itself: set and cleared only by waiter_record's
+    * constructor and destructor, read only by this thread's own wait_on_any.
+    *
+    * Placed here on purpose: it fills the hole before the aligned port context
+    * on both targets (16 bytes on x86-64, 4 on the M33), so it costs no size.
+    * Moving it may cost a 64-byte step, see thread.hpp. */
+   waiter_record* wait_record{nullptr};
 
    // Opaque, in-place port context storage
    alignas(CYROS_PORT_CONTEXT_ALIGN) std::array<std::byte, CYROS_PORT_CONTEXT_SIZE> context_storage{};

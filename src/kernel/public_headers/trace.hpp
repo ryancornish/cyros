@@ -12,13 +12,14 @@
  * @file trace.hpp
  * @brief What the kernel did, in order, for a tool to read afterwards.
  *
- * Off unless the configuration asks for it, and off means ABSENT: every trace
- * point in the kernel compiles to nothing, and read() finds nothing to read.
- * Turn it on by declaring, in the application's config header,
+ * Every config header declares the capacity of each core's buffer, and 0 is
+ * off:
  *
  *    inline constexpr std::size_t trace_records_per_core = 256;
  *
- * A power of two, the capacity of each core's buffer. Each core records into
+ * There is no default, so every configuration states whether it traces. Off
+ * means ABSENT: every trace point in the kernel compiles to nothing, and read()
+ * finds nothing to read. When on, a power of two. Each core records into
  * its own buffer, so recording takes no lock and no core waits on another.
  *
  * What is recorded is the kernel's own transitions: a thread created, readied,

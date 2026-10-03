@@ -1,0 +1,11 @@
+[test]
+name = "test_waitable_death"
+layer = 4
+kind = "unit"
+source = "test_waitable_death.cpp"
+config = "test_waitable_death_config.hpp"
+
+# No port filter: the checks under test are kernel code, and the panic path is
+# common to both Linux ports.
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

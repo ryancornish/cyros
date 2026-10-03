@@ -47,6 +47,8 @@ prefix = "cyros/"
 # L6 and L7, userlib sync. Semaphore first: the mutex and diagnostics tests use
 # semaphores as gates, and the semaphore tests use no mutex.
 "cyros/sync/semaphore.hpp" = 6
+# event_flags is built on waitable alone, as the semaphore is.
+"cyros/sync/event_flags.hpp" = 6
 "cyros/sync/mutex.hpp" = 7
 "cyros/sync/cemutex.hpp" = 7
 "cyros/kernel/diagnostics.hpp" = 7
@@ -59,6 +61,9 @@ prefix = "cyros/"
 # L7, userlib channel. Built on semaphore (L6), spinlock (L1) and function
 # (L0), so it sits beside mutex rather than above chrono.
 "cyros/ch/channel.hpp" = 7
+
+# L8, condition_variable. Built on mutex (L7): it releases and re-acquires one.
+"cyros/sync/condition_variable.hpp" = 8
 
 # L8, everything coupled to time.
 "cyros/chrono/chrono.hpp" = 8

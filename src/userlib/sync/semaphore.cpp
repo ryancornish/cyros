@@ -36,7 +36,7 @@ void semaphore::acquire() noexcept
    return false;
 }
 
-bool semaphore::try_satisfy() noexcept
+bool semaphore::try_satisfy(waiter_record*) noexcept
 {
    return try_acquire();
 }

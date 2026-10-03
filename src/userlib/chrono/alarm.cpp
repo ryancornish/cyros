@@ -72,7 +72,7 @@ bool alarm::expired() const noexcept
    return fired.load(std::memory_order_acquire);
 }
 
-bool alarm::try_satisfy() noexcept
+bool alarm::try_satisfy(waiter_record*) noexcept
 {
    return fired.load(std::memory_order_acquire);
 }

@@ -68,7 +68,7 @@ public:
    void wake_all_no_set() noexcept { wake_all(); }
 
 protected:
-   bool try_satisfy() noexcept override
+   bool try_satisfy(waiter_record*) noexcept override
    {
       return condition.load(std::memory_order_acquire);
    }

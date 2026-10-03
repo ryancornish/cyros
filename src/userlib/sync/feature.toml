@@ -7,10 +7,14 @@ dependencies = [
 
 sources = [
    "semaphore.cpp",
+   "condition_variable.cpp",
+   "event_flags.cpp",
 ]
 
 public_headers = [
    "public_headers/mutex.hpp -> cyros/sync/mutex.hpp",
    "public_headers/cemutex.hpp -> cyros/sync/cemutex.hpp",
    "public_headers/semaphore.hpp -> cyros/sync/semaphore.hpp",
+   "public_headers/condition_variable.hpp -> cyros/sync/condition_variable.hpp",
+   "public_headers/event_flags.hpp -> cyros/sync/event_flags.hpp",
 ]

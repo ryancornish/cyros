@@ -24,6 +24,7 @@
  */
 
 #include <cyros/kernel/waitable.hpp>
+#include <cyros/kernel/assert.hpp>
 #include <cyros/port/port.h>
 
 #include "base_mutex_access.hpp"
@@ -213,18 +214,24 @@ void wait_queue::arm(wait_node& node, inheritance_cache* pi) noexcept
 
 /**
  * @brief Remove an armed node, idempotent against a racing wake.
- * @return true when the queue's best-waiter priority changed. Nothing acts on
- *         this today: leaving a queue can only LOWER a holder's urgency, and a
- *         de-boost needs no prompt because urgency is folded at the point of
- *         use. Kept because it is free and a caller that needs to know a top
- *         moved has no other way to find out.
+ * @return true if this removed the node, false if it was already gone.
+ *
+ * A node leaves a queue two ways: its owner disarms it, or a wake takes it
+ * (every wake unlinks the node it chooses). So when the owner disarms each
+ * node exactly once per arm, false means a wake chose that waiter.
+ * waitable_arm_guard relies on exactly that, see the note there.
+ *
+ * Leaving a queue can only LOWER a holder's urgency, and a de-boost needs no
+ * prompt because urgency is folded at the point of use, so nothing here
+ * reports whether the queue's top moved.
  */
-void wait_queue::disarm(wait_node& node, inheritance_cache* pi) noexcept
+bool wait_queue::disarm(wait_node& node, inheritance_cache* pi) noexcept
 {
    spinlock_guard guard(lock);
 
-   if (!unlink(node)) return;
+   if (!unlink(node)) return false;
    refresh_top(pi);
+   return true;
 }
 
 void wait_queue::refresh_top(inheritance_cache* pi) noexcept
@@ -362,6 +369,29 @@ bool waitable::wake_one_and_transfer(transfer_fn transfer, reschedule_policy pol
    return queue.wake_one_and_transfer(transfer, policy);
 }
 
+/* ============================================================================
+ * waiter_record
+ * ========================================================================= */
+
+waiter_record::waiter_record(waitable& source) noexcept
+   : source(&source), installed_on(&scheduler_for_this_core().get_current_thread())
+{
+   CYROS_REQUIRE(installed_on->wait_record == nullptr); // One record per thread at a time
+   installed_on->wait_record = this;
+}
+
+waiter_record::~waiter_record()
+{
+   // Uninstalls from the thread that installed it, wherever this runs, so no
+   // thread can be left holding a destroyed record. Not looking up the current
+   // thread here is measured: about 23 cycles a wait on the U575.
+   //
+   // Unreachable as a caller error: the constructor refuses a second record on
+   // a thread, so while this one lives its thread's slot holds exactly it.
+   CYROS_ASSERT(installed_on->wait_record == this);
+   installed_on->wait_record = nullptr;
+}
+
 
 
 std::uint8_t urgency(thread_control_block const& tcb) noexcept
@@ -452,6 +482,13 @@ namespace this_thread
    auto& tcb = scheduler_for_this_core().get_current_thread();
    wait_node_vector nodes(waitables.size(), tcb);
 
+   // The caller's record, if it installed one, goes to the one waitable it
+   // names and to no other source. Bound by identity, not by position.
+   waiter_record* const record = tcb.wait_record;
+   auto const record_for = [record](waitable const& w) noexcept -> waiter_record* {
+      return (record != nullptr && record->source == &w) ? record : nullptr;
+   };
+
    while (true) {
       tcb.disposition = thread_disposition::prepared;
       std::optional<std::size_t> chosen;
@@ -460,13 +497,13 @@ namespace this_thread
          // All waitable wakes are serialised on the arm_guard.
          // If a wake fires BEFORE the arm_guard:
          // - Thread is not readied because we are not registered.
-         waitable_arm_guard arm_guard(waitables, nodes);
+         waitable_arm_guard arm_guard(waitables, nodes, record);
          // If a wake fires AFTER the arm_guard:
          // - Thread is readied and we are no longer 'prepared' to block.
 
          // Lowest-index wins on ties
          for (std::size_t i = 0; waitable& waitable : waitables) {
-            if (waitable.try_satisfy()) {
+            if (waitable.try_satisfy(record_for(waitable))) {
                tcb.disposition = thread_disposition::none;
                chosen = i;
 
@@ -483,7 +520,7 @@ namespace this_thread
                // Safe to do early: we own it, so no release can transfer it to
                // us in the meantime, which is the only thing the other nodes
                // have to stay armed for.
-               waitable.queue.disarm(nodes[i]);
+               arm_guard.leave(i);
                break;
             }
             ++i;
@@ -493,7 +530,7 @@ namespace this_thread
             // Nothing was satisfied. Park, unless a wake beat us to it.
             commit_to_block(tcb);
          }
-      } // arm_guard: disarm all (and de-boost any holder whose top we lowered)
+      } // arm_guard: disarm every node not already left, noting which a wake took
 
       if (chosen) {
          // The sweep must run here, AFTER the disarm above: while any node of

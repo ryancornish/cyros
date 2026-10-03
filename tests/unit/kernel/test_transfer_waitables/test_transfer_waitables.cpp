@@ -75,7 +75,7 @@ public:
    void barge_wake_one() noexcept { wake_one(); }
 
 protected:
-   bool try_satisfy() noexcept override
+   bool try_satisfy(waiter_record*) noexcept override
    {
       std::uint32_t expected = 0;
       if (owner.compare_exchange_strong(expected, this_thread::id(), std::memory_order_acq_rel)) {
@@ -557,7 +557,7 @@ TEST_F(MultiCoreTransfer_Test,
       public:
          std::atomic<bool> condition{false};
       protected:
-         bool try_satisfy() noexcept override
+         bool try_satisfy(waiter_record*) noexcept override
          {
             return condition.load(std::memory_order_acquire);
          }

@@ -42,7 +42,7 @@ public:
    [[nodiscard]] bool try_acquire_until(time::time_point tp) noexcept;
 
 protected:
-   bool try_satisfy() noexcept override;
+   bool try_satisfy(waiter_record*) noexcept override;
 
 private:
    std::atomic<std::size_t> counter;

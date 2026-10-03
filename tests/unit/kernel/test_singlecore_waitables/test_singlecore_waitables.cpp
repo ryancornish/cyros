@@ -68,7 +68,7 @@ public:
    }
 
 protected:
-   bool try_satisfy() noexcept override
+   bool try_satisfy(waiter_record*) noexcept override
    {
       return condition.load(std::memory_order_acquire);
    }
@@ -388,7 +388,7 @@ public:
    }
 
 protected:
-   bool try_satisfy() noexcept override
+   bool try_satisfy(waiter_record*) noexcept override
    {
       // try_satisfy runs in the calling thread's context, so this_thread::id()
       // is the waiter's identity. That is the contract a transfer-shaped
@@ -558,4 +558,257 @@ TEST_F(SingleCoreWaitables_Test,
       << "the never policy still preempted the waker";
    EXPECT_TRUE(waiter_done.load())
       << "the woken thread never ran, so never lost the wake rather than deferring it";
+}
+
+/* ============================================================================
+ * Per-waiter records, and chosen()
+ *
+ * A waiter_record names one waitable and is built on the waiting thread, which
+ * installs it. An ordinary wait that includes that waitable then hands the
+ * record to that waitable's polls and to no other source's, wherever it sits
+ * in the group, and the waiter's own disarm marks it chosen() when a wake of
+ * that waitable took its node. chosen() rests on two facts documented at
+ * waitable_arm_guard: a node leaves its queue only by one disarm or one wake
+ * per pass, and each node is disarmed at most once per pass. These cases pin
+ * both, the binding by identity, and that a record is gone once destroyed.
+ *
+ * RecordWaitable answers from the record alone: the flag it points at, or
+ * chosen() when answer_by_chosen is set, as a condition variable does. The
+ * bail flag lets a broken kernel still quiesce instead of hanging.
+ * ========================================================================= */
+
+namespace
+{
+
+struct tagged_record : waiter_record
+{
+   tagged_record(waitable& source, std::atomic<bool>& ready) noexcept
+      : waiter_record(source), ready(&ready) {}
+
+   std::atomic<bool>* ready;
+};
+
+class RecordWaitable final : public waitable
+{
+public:
+   std::atomic<bool>           bail{false};
+   bool                        answer_by_chosen{false};
+   std::atomic<waiter_record*> last_polled{nullptr};
+
+   void wake_best() noexcept { wake_one(); }
+   void wake_everyone() noexcept { wake_all(); }
+
+   void release_everyone() noexcept
+   {
+      bail.store(true, std::memory_order_release);
+      wake_all();
+   }
+
+protected:
+   bool try_satisfy(waiter_record* record) noexcept override
+   {
+      last_polled.store(record, std::memory_order_relaxed);
+      if (bail.load(std::memory_order_acquire)) return true;
+      if (record == nullptr) return false;
+      if (answer_by_chosen) return record->chosen();
+      return static_cast<tagged_record*>(record)->ready->load(std::memory_order_acquire);
+   }
+};
+
+}  // namespace
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenARecordNamingOneWaitable_WhenAnotherSourceWakes_ThenOnlyTheNamedWaitableSeesItAndItIsNotChosen)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waker_stack{};
+
+   struct state
+   {
+      RecordWaitable    self;
+      RecordWaitable    other;
+      std::atomic<bool> never{false};
+      std::size_t       index{99};
+      bool              self_saw_record{false};
+      bool              other_saw_null{false};
+      bool              chosen_by_other_wake{true};
+      waiter_record*    seen_after_destroy{reinterpret_cast<waiter_record*>(1)};
+   } s;
+
+   thread poller(
+      [&s]{
+         {
+            // Named waitable listed SECOND: the binding is by identity. Neither
+            // source is satisfied, so this parks until the waker wakes `other`,
+            // whose polls must never see the record, and whose wake must not
+            // mark it.
+            tagged_record record(s.self, s.never);
+            s.index = this_thread::wait_on_any(s.other, s.self);
+            s.self_saw_record      = s.self.last_polled.load() == &record;
+            s.other_saw_null       = s.other.last_polled.load() == nullptr;
+            s.chosen_by_other_wake = record.chosen();
+         }
+
+         // Destroyed, so no longer installed: a plain wait gets null.
+         s.self.bail = true;
+         this_thread::wait_on(s.self);
+         s.seen_after_destroy = s.self.last_polled.load();
+      },
+      stack, thread::priority(0), core0);
+
+   // Less urgent on the same core, so it runs only once the poller has parked.
+   thread waker([&s]{ s.other.release_everyone(); }, waker_stack, thread::priority(1), core0);
+
+   kernel::start();
+
+   EXPECT_EQ(s.index, 0u)               << "the wait did not return the other source's index";
+   EXPECT_TRUE(s.self_saw_record)       << "the named waitable did not receive the record in position 1";
+   EXPECT_TRUE(s.other_saw_null)        << "a source the record does not name received it";
+   EXPECT_FALSE(s.chosen_by_other_wake) << "a wake of another source marked the record chosen";
+   EXPECT_EQ(s.seen_after_destroy, nullptr) << "a destroyed record still reached a poll";
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenWaitersWithTheirOwnRecords_WhenAllAreWoken_ThenEachPollAnswersForItsOwnWaiter)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s2{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> sd{};
+
+   struct state
+   {
+      RecordWaitable w;
+      std::array<std::atomic<bool>, 3> ready{};
+      std::array<bool, 3> done{};
+      int  returned{0};
+      bool only_middle{false};
+   } s;
+
+   std::array<std::array<std::byte, STACK_SIZE>*, 3> stacks{ &s0, &s1, &s2 };
+   std::array<thread, 3> waiters{};
+   for (std::size_t i = 0; i < 3; ++i) {
+      waiters[i] = thread(
+         [&s, i]{
+            {
+               tagged_record record(s.w, s.ready[i]);
+               this_thread::wait_on(s.w);
+            }
+            s.done[i] = true;
+            ++s.returned;
+         },
+         *stacks[i], thread::priority(static_cast<std::uint8_t>(1 + i)), core0);
+   }
+
+   // Least urgent on the only core, so it runs once all three are parked. Every
+   // waiter is woken, but only the one whose record is ready may return: the
+   // others must each read their OWN record and park again.
+   thread driver(
+      [&s]{
+         s.ready[1] = true;
+         s.w.wake_everyone();
+         this_thread::yield();
+         s.only_middle = s.returned == 1 && s.done[1] && !s.done[0] && !s.done[2];
+
+         s.ready[0] = true;
+         s.ready[2] = true;
+         s.w.wake_everyone();
+         this_thread::yield();
+         s.w.release_everyone(); // quiesce whatever a broken poll stranded
+      },
+      sd, thread::priority(4), core0);
+
+   kernel::start();
+
+   EXPECT_TRUE(s.only_middle) << "a poll answered from a record other than its own waiter's";
+   EXPECT_EQ(s.returned, 3);
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenWaitersThatAnswerByChosen_WhenWakeOne_ThenOnlyTheBestWaiterIsChosenAndReturns)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s2{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> sd{};
+
+   struct state
+   {
+      RecordWaitable w;
+      std::array<std::atomic<bool>, 3> never{};
+      std::array<int, 3>  order{};
+      std::array<bool, 3> was_chosen{};
+      int returned{0};
+      int returned_after_first{-1};
+   } s;
+
+   s.w.answer_by_chosen = true;
+
+   // Priorities 3, 1, 2, so the wakes must choose waiter 1, then 2, then 0.
+   constexpr std::array<std::uint8_t, 3> prio{ 3, 1, 2 };
+   std::array<std::array<std::byte, STACK_SIZE>*, 3> stacks{ &s0, &s1, &s2 };
+   std::array<thread, 3> waiters{};
+   for (std::size_t i = 0; i < 3; ++i) {
+      waiters[i] = thread(
+         [&s, i]{
+            bool chosen = false;
+            {
+               tagged_record record(s.w, s.never[i]);
+               this_thread::wait_on(s.w);
+               chosen = record.chosen();
+            }
+            s.was_chosen[i] = chosen;
+            s.order[static_cast<std::size_t>(s.returned++)] = static_cast<int>(i);
+         },
+         *stacks[i], thread::priority(prio[i]), core0);
+   }
+
+   // Least urgent on the only core, so it runs once all three are parked, and
+   // each woken waiter, being more urgent, runs before this resumes.
+   thread driver(
+      [&s]{
+         s.w.wake_best();
+         s.returned_after_first = s.returned;
+         s.w.wake_best();
+         s.w.wake_best();
+         s.w.release_everyone(); // quiesce whatever a broken mark stranded
+      },
+      sd, thread::priority(4), core0);
+
+   kernel::start();
+
+   EXPECT_EQ(s.returned_after_first, 1) << "one wake_one released a count other than one";
+   EXPECT_EQ(s.order[0], 1) << "the first wake did not choose the most urgent waiter";
+   EXPECT_EQ(s.order[1], 2);
+   EXPECT_EQ(s.order[2], 0);
+   EXPECT_TRUE(s.was_chosen[0] && s.was_chosen[1] && s.was_chosen[2])
+      << "a waiter a wake returned was not marked chosen";
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenAWaiterSatisfiedByItsOwnPoll_WhenItReturns_ThenItIsNotChosen)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack{};
+
+   struct state
+   {
+      RecordWaitable    w;
+      std::atomic<bool> ready{true};
+      bool              chosen{true};
+   } s;
+
+   // Satisfied on the first poll, so the node is left early and then must not
+   // be disarmed again: a second disarm would find it gone and mark a wake
+   // that never happened.
+   thread waiter(
+      [&s]{
+         tagged_record record(s.w, s.ready);
+         this_thread::wait_on(s.w);
+         s.chosen = record.chosen();
+      },
+      stack, thread::priority(0), core0);
+
+   kernel::start();
+
+   EXPECT_FALSE(s.chosen) << "a waiter nobody woke was marked chosen (a node disarmed twice)";
 }

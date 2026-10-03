@@ -10,6 +10,8 @@ dependencies = [
 sources = [
    "alarm.cpp",
    "semaphore_timed.cpp",
+   "condition_variable_timed.cpp",
+   "event_flags_timed.cpp",
 ]
 
 public_headers = [

@@ -117,13 +117,21 @@ public:
     */
    /* Bump if sizeof(thread_control_block) grows.
     *
-    * MEASURED 2026-08-09, do not re-derive this by counting fields. The TCB is
-    * 64-byte aligned and sizeof() lands on 3840 with the port context included,
-    * which is exactly the budget. There is NO trailing slack: adding a single
-    * byte anywhere pushes sizeof to 3904. Removing active_waits changed sizeof
-    * by nothing at all, because it sat in an interior padding hole rather than
-    * at the end, so the field count and the byte count move independently. Any
-    * future claim about headroom has to come from a probe, not arithmetic.
+    * MEASURED 2026-09-30, do not re-derive this by counting fields. Probe with
+    * gdb on any built test: ptype /o cyros::thread_control_block.
+    *
+    *    port           sizeof   port context   kernel part (this budget)
+    *    linux_preempt    768        512          256, exactly the budget
+    *    linux_coop       288         40          248
+    *    cortex_m33       176         16          160
+    *
+    * linux_preempt is the port at the limit. Its context is 64-byte aligned, so
+    * a field that fits no interior hole pushes sizeof to the next 64-byte step
+    * and fails the static_assert until this is raised. The holes are where a
+    * field goes for free: wait_record sits in the one before the context (see
+    * threading_subsystem.hpp), and removing active_waits once changed sizeof by
+    * nothing because it sat in one too. So the field count and the byte count
+    * move independently, and a claim about headroom must come from a probe.
     *
     * Raising this is allowed and is a judgement call, not a wall. It feeds
     * min_stack_size and therefore every user's stack, so the cost is real and

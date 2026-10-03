@@ -27,8 +27,8 @@ using cyros::time::simulation::mode;
  * @brief One scheduled callback.
  *
  * period == 0 is a one-shot consumed once at 'when'. period > 0 is recurring
- * and re-arms itself every 'period' ticks. A consumed or cancelled event is
- * erased from the vector after each fire pass.
+ * and re-arms itself every 'period' ticks. A fired one-shot is erased as it is
+ * taken, and a cancelled event at the next fire pass.
  */
 struct event
 {
@@ -107,35 +107,43 @@ uint32_t next_handle_id(per_core_state& pc) noexcept
  * core, simulation owns global time and pumps it centrally, so one advance fires
  * every now-due timer regardless of which core scheduled it. Callbacks run in
  * the pump / caller context.
+ *
+ * ONE event is taken off the table per pass, and fired before the next is
+ * taken. The pump runs in thread context, so a callback's wake can switch this
+ * core to a more urgent thread before the pump resumes. Whatever that thread
+ * cancels must then still be in the table for cancel() to find. Dequeuing a
+ * whole batch up front left the later events in limbo, dequeued and unfired,
+ * and alarm::disarm waits out exactly that state, forever on one core. A
+ * hardware timer ISR runs its batch unpreempted, so it has no such window.
  */
 void fire_due_callbacks(uint64_t now_ticks) noexcept
 {
    for (auto& pc : driver_instance->per_core) {
-      std::vector<event> due;
+      while (true) {
+         event due{};
 
-      {
-         std::lock_guard lk(pc.mutex);
+         {
+            std::lock_guard lk(pc.mutex);
 
-         for (auto& e : pc.events) {
-            if (e.id != 0 && !e.cancelled && e.when <= now_ticks) {
-               due.push_back(e);
+            std::erase_if(pc.events, [](event const& e) { return e.cancelled; });
 
-               if (e.period == 0) {
-                  e.cancelled = true;
-               } else {
-                  do {
-                     e.when += e.period;
-                  } while (e.when <= now_ticks);
-               }
+            auto it = std::find_if(pc.events.begin(), pc.events.end(), [now_ticks](event const& e) {
+               return e.id != 0 && !e.cancelled && e.when <= now_ticks;
+            });
+            if (it == pc.events.end()) break;
+
+            due = *it;
+            if (it->period == 0) {
+               pc.events.erase(it);
+            } else {
+               do {
+                  it->when += it->period;
+               } while (it->when <= now_ticks);
             }
          }
 
-         std::erase_if(pc.events, [](event const& e) { return e.cancelled; });
-      }
-
-      for (auto& e : due) {
-         if (e.cb) {
-            e.cb(e.arg);
+         if (due.cb) {
+            due.cb(due.arg);
          }
       }
    }

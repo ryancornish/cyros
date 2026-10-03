@@ -25,6 +25,61 @@ enum class reschedule_policy
 };
 
 /**
+ * @brief A waiter's per-wait record, for a waitable whose answer depends on
+ *        WHICH waiter is asking.
+ *
+ * A primitive derives its waiter record from this (the mutex a condition
+ * variable must release, the bits an event-flags waiter wants) and builds it
+ * on the waiting thread's stack, naming the waitable it belongs to. Building
+ * it installs it on the calling thread, and destroying it uninstalls it. While
+ * installed, any ordinary wait_on / wait_on_any that includes that waitable
+ * hands the record to that waitable's polls (and to no other source's), and
+ * records on it whether a wake of that waitable chose this waiter.
+ *
+ *    waiter self(*this, m);         // a waiter_record naming this waitable
+ *    this_thread::wait_on(*this);   // an ordinary wait
+ *
+ * One record per thread at a time, since a thread is in one wait at a time,
+ * which is checked. Build it on the waiting thread, in thread context, around
+ * the wait.
+ */
+class CYROS_PUBLIC waiter_record
+{
+public:
+   explicit waiter_record(waitable& source) noexcept;
+   ~waiter_record();
+
+   waiter_record(waiter_record&&) = delete;
+   waiter_record(waiter_record const&) = delete;
+   waiter_record& operator=(waiter_record&&) = delete;
+   waiter_record& operator=(waiter_record const&) = delete;
+
+   /**
+    * @brief True once a wake of the source waitable has chosen this waiter.
+    *        Sticky for the life of the record.
+    *
+    * The waker records nothing. A wake takes the waiter's node off the queue
+    * and readies it, as every wake always has, and the WAITER discovers it
+    * was chosen when its own disarm finds that node already gone
+    * (waitable_arm_guard, where the rule this rests on is written down).
+    * Written and read only by the waiting thread, so it needs no atomic.
+    *
+    * Discovered at the end of the pass the wake landed in, so the poll in
+    * that same pass may still read false. The waiter was readied, so it does
+    * not park, and the next pass's poll reads true.
+    */
+   [[nodiscard]] bool chosen() const noexcept { return chosen_by_wake; }
+
+private:
+   waitable const*       source{nullptr};
+   thread_control_block* installed_on{nullptr};
+   bool                  chosen_by_wake{false};
+
+   friend class waitable_arm_guard;
+   friend std::size_t this_thread::wait_on_any(std::span<waitable_ref>) noexcept;
+};
+
+/**
  * @brief The priority-inheritance state of a base_mutex's wait_queue.
  *
  * Owned by the base_mutex and passed through the wait_queue API to be
@@ -102,7 +157,7 @@ class CYROS_PUBLIC wait_queue
     * Generic waitable variant - no inheritance cache
     */
    void arm   (wait_node& node) noexcept { arm(node, nullptr); }
-   void disarm(wait_node& node) noexcept { disarm(node, nullptr); }
+   bool disarm(wait_node& node) noexcept { return disarm(node, nullptr); }
 
    void wake_one(reschedule_policy policy) noexcept { wake_one(policy, nullptr); }
    void wake_all(reschedule_policy policy) noexcept { wake_all(policy, nullptr); }
@@ -117,7 +172,7 @@ class CYROS_PUBLIC wait_queue
     * base_mutex variant - permits an inheritance cache
     */
    void arm   (wait_node& node, inheritance_cache* pi) noexcept;
-   void disarm(wait_node& node, inheritance_cache* pi) noexcept;
+   bool disarm(wait_node& node, inheritance_cache* pi) noexcept;
 
    void wake_one(reschedule_policy policy, inheritance_cache* pi) noexcept;
    void wake_all(reschedule_policy policy, inheritance_cache* pi) noexcept;
@@ -207,7 +262,7 @@ class CYROS_PUBLIC pi_wait_queue
    using commit_fn = wait_queue::commit_fn;
 
    void arm   (wait_node& node) noexcept { queue.arm(node, &pi); }
-   void disarm(wait_node& node) noexcept { queue.disarm(node, &pi); }
+   void disarm(wait_node& node) noexcept { (void)queue.disarm(node, &pi); }
 
    [[nodiscard]] bool empty() const noexcept { return queue.empty(); }
 
@@ -236,13 +291,13 @@ class CYROS_PUBLIC pi_wait_queue
  * (semaphore, event, thread-termination, a future alarm). The base owns a
  * private wait_queue and exposes to the derived class:
  *
- *   try_satisfy()           virtual. Attempt to satisfy the caller without
+ *   try_satisfy(record)     virtual. Attempt to satisfy the caller without
  *                           blocking, consuming the resource if that is what
  *                           satisfaction means. wait_on_any polls it between
  *                           arm and park, which is the two-phase block that
  *                           closes the lost-wakeup window. Runs in the calling
- *                           thread's context, so an implementation that needs
- *                           the caller's identity uses this_thread::id().
+ *                           thread's context, with the caller's waiter_record
+ *                           for this waitable, or null.
  *   wake_one / wake_all     signal waiters. ISR-safe.
  *   wake_one_and_transfer   barge-free handoff, see the protocol note below.
  *
@@ -274,6 +329,21 @@ class CYROS_PUBLIC pi_wait_queue
  * hands its datum to exactly one waiter). test_transfer_waitables is its
  * conformance test and is what keeps the dual-satisfaction contract honest.
  *
+ * Per-waiter state
+ * ----------------
+ * Most waitables answer the same for every waiter. One that does not (a
+ * condition variable must release the caller's mutex, event flags test the
+ * caller's own mask) has its waiters build a waiter_record naming it before an
+ * ordinary wait, from its own member functions. Users never see the record,
+ * so such a type usually inherits waitable privately: a user's plain wait_on
+ * would poll it with a null record.
+ *
+ * The record also answers waiter_record::chosen(): did a wake of this waitable
+ * pick this waiter? A wake still carries nothing and writes nothing into the
+ * waiter. The waiter works it out from its own wait node, which a wake takes
+ * off the queue. That is what a primitive needs when the wake is itself the
+ * event, as for a condition variable, whose notify_one is a plain wake_one.
+ *
  * Spurious wakeups
  * ----------------
  * A woken thread is not guaranteed its condition holds: the resource may have
@@ -303,9 +373,11 @@ protected:
     * this_thread::id()). Runs in the calling thread's context with no queue
     * lock held.
     *
+    * @param record The caller's waiter_record if it installed one naming this
+    *        waitable, otherwise null. A waitable that needs none ignores it.
     * @return true when the caller is satisfied and will not block.
     */
-   virtual bool try_satisfy() noexcept = 0;
+   virtual bool try_satisfy(waiter_record* record) noexcept = 0;
 
    /**
     * @brief Wake the single highest-priority waiting thread (if any).
@@ -393,7 +465,7 @@ private:
 class CYROS_PUBLIC non_blocking_token : public waitable
 {
 protected:
-   bool try_satisfy() noexcept override
+   bool try_satisfy(waiter_record*) noexcept override
    {
       return true;
    }

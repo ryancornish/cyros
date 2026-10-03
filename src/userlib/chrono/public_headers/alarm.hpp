@@ -68,7 +68,7 @@ public:
 
 protected:
    /// Non-consuming: a fired alarm satisfies every waiter that asks.
-   bool try_satisfy() noexcept override;
+   bool try_satisfy(waiter_record*) noexcept override;
 
 private:
    static void on_timer(void* self) noexcept;
