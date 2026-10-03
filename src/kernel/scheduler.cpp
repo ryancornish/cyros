@@ -13,8 +13,11 @@ void scheduler::pin_thread(thread_control_block& tcb)
    pinned_thread_counter.fetch_add(1, std::memory_order_relaxed);
 }
 
-void scheduler::init_idle_thread()
+void scheduler::initialise(std::uint32_t const core)
 {
+   CYROS_ASSERT_OP(core, <, config::cores);
+   core_id = core;
+
    stack_layout slayout(idle_stack, 0);
    idle_thread = ::new (slayout.tcb) thread_control_block(
       config::max_priorities-1,
@@ -30,7 +33,7 @@ void scheduler::init_idle_thread()
 
 void scheduler::start()
 {
-   CYROS_ASSERT(idle_thread != nullptr); // init_idle_thread() must run before start()
+   CYROS_ASSERT(idle_thread != nullptr); // initialise() must run before start()
 
    auto* first = ready_matrix.pop_best_thread();
    if (first == nullptr) {

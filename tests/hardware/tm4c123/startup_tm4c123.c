@@ -12,10 +12,8 @@
  * virtual COM port, and everything the image prints goes there, faults and the
  * final exit status included (console.c).
  *
- * One image serves both of run_test.sh's ways in: programmed into flash, or
- * loaded into SRAM by OpenOCD with flash untouched. The linker script is the
- * only difference, which is why Reset_Handler points VTOR at this table rather
- * than trusting that the table is at address 0.
+ * The image runs from flash, the table at address 0 where the core looks for
+ * it at reset (tm4c123.ld).
  */
 
 #include "board.h"
@@ -72,21 +70,8 @@ __attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
    }
 }
 
-typedef union
-{
-   void (*handler)(void);
-   uintptr_t value;
-} vector_entry;
-
-extern vector_entry const vector_table[];
-
 __attribute__((noreturn)) void Reset_Handler(void)
 {
-   /* Exceptions vector through THIS table, wherever the image was linked. An
-    * SRAM image is entered by the debugger with flash's own table at 0. */
-   *(volatile uint32_t*)0xE000ED08u = (uint32_t)(uintptr_t)vector_table;
-   __asm__ volatile("dsb\n isb" ::: "memory");
-
    uint32_t const* source = &__etext;
    for (uint32_t* target = &__data_start__; target < &__data_end__; ) {
       *target++ = *source++;
@@ -166,6 +151,12 @@ __attribute__((noreturn)) static void Default_Handler(void)
  * initial stack POINTER, not a handler, and ISO C forbids converting an object
  * pointer to a function pointer. The union states the real shape of the table
  * instead of casting past the rule. */
+typedef union
+{
+   void (*handler)(void);
+   uintptr_t value;
+} vector_entry;
+
 __attribute__((section(".vectors"), used))
 vector_entry const vector_table[] = {
    { .value   = (uintptr_t)&__stack_top }, /*  0 initial MSP              */

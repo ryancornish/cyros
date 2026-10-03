@@ -1,11 +1,9 @@
-/* Linker script for the TM4C123GH6PM on an EK-TM4C123GXL, from flash.
+/* Linker script for the TM4C123GH6PM on an EK-TM4C123GXL.
  *
- * 256 KB of flash at 0 and 32 KB of SRAM at 0x20000000 (SPMS376E, table 2-4).
- * Same shape as the mps2-an386 bench's script, whose core this is.
- *
- * Programming flash erases what is there, which on a LaunchPad straight from
- * the box is TI's demo. run_test.sh uses tm4c123_sram.ld whenever the image
- * fits, and only falls back to this when asked to. */
+ * ROM + RAM: code and read-only data execute in place from the 256 KB of flash
+ * at 0, and .data, .bss and the main stack take the 32 KB of SRAM at
+ * 0x20000000 (SPMS376E, table 2-4). .data is copied out of flash at reset.
+ * Same shape as the mps2-an386 bench's script, whose core this is. */
 
 MEMORY
 {

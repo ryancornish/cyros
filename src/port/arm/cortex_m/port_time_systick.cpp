@@ -169,15 +169,25 @@ void*                    isr_argument = nullptr;
  * ALREADY reloaded and VAL belongs to the next interval. Reading VAL first and
  * then testing COUNTFLAG means a wrap landing between the two is caught, and
  * the re-read picks up a VAL that is consistent with the period being added.
+ *
+ * @p val_out, when given, receives the VAL the result corresponds to, for
+ * restart_from_now_locked() to measure the cycles that pass after it.
  */
-std::uint64_t now_tickless_locked() noexcept
+std::uint64_t now_tickless_locked(std::uint32_t* val_out = nullptr) noexcept
 {
    std::uint32_t val = cortex_m::reg(cortex_m::systick_val);
 
    if ((cortex_m::reg(cortex_m::systick_ctrl) & cortex_m::systick_ctrl_countflag) != 0u) {
       /* Wrapped. VAL above may predate the reload, so take it again. */
       val = cortex_m::reg(cortex_m::systick_val);
+      if (val_out != nullptr) { *val_out = val; }
       return base + (std::uint64_t{current_reload} + 1u) + (current_reload - val);
+   }
+
+   if (val_out != nullptr) {
+      /* The post-write zero below is "one count before the reload", so it
+       * corresponds to current_reload + 1, not to 0. */
+      *val_out = (val == 0u) ? current_reload + 1u : val;
    }
 
    if (val == 0u) {
@@ -211,16 +221,26 @@ std::uint64_t now_tickless_locked() noexcept
  * interval rather than being delivered from here, which keeps callback
  * delivery in exactly one place: the ISR.
  *
- * THE SHORTEST POSSIBLE INTERVAL IS TWO CYCLES, NOT ONE. The reload is the
+ * THE SHORTEST INTERVAL IS 64 CYCLES. Never below 2: the reload is the
  * interval minus one, and SysTick raises its exception and COUNTFLAG only when
  * the counter goes from 1 to 0, so a reload of 0 stops it dead (ARMv7-M and
- * ARMv8-M ARM, SYST_RVR). It once asked for exactly that for a deadline due now
- * or one cycle away: `now()` froze and nothing fired again. A deadline one
- * cycle off is delivered a cycle late instead, which the contract allows.
+ * ARMv8-M ARM, SYST_RVR). It once asked for exactly that for a deadline due
+ * now: `now()` froze and nothing fired again.
+ *
+ * Why 64 rather than 2. A due deadline is usually armed inside a masked
+ * section, and while interrupts are masked a short interval wraps repeatedly
+ * with only one exception pending, so every wrap but one is lost to `now()`.
+ * Measured on a TM4C123 (~/cyros-claude/arm-port-notes.md 10b): 64 delivers a
+ * due deadline exactly as soon as 2 does, because arming, the ISR and the time
+ * layer cost about 1,150 cycles anyway, and it halves what a due sleep costs
+ * `now()`, 187 cycles against 349, the sleep path staying masked about 160
+ * cycles after the arm. Larger values protect `now()` from longer masked
+ * sections at a latency of about the interval plus 1,100 cycles. Ryan's
+ * choice, 2026-10-03. Late delivery is within the contract, early is not.
  */
 std::uint32_t desired_reload(std::uint64_t from) noexcept
 {
-   constexpr std::uint64_t min_period = 2u;
+   constexpr std::uint64_t min_period = 64u;
    std::uint64_t interval = max_period;
 
    if (armed_deadline != never) {
@@ -272,7 +292,26 @@ void restart_interval_locked(std::uint64_t from) noexcept
 }
 
 /**
- * @brief Fold the running interval into `base` and start a new one from now.
+ * @brief Fold the running interval into `base` and start a new one from now,
+ *        losing only the few cycles between the last read of VAL and the
+ *        write that restarts it.
+ *
+ * Writing VAL discards everything counted since VAL was last read, so a
+ * restart built as "read the clock, size the interval, write VAL" loses the
+ * whole of the middle step. That was about 140 cycles a restart, two restarts
+ * to every timer event (the arm, and the ISR sizing the next interval), and it
+ * made `now()` run slow by about 140 cycles per timer wake: 886 ppm for a
+ * 1 ms periodic task at 160 MHz, 3.4 per cent at 4 MHz (U575, 2026-10-03).
+ *
+ * So VAL is read twice, as Zephyr's SysTick driver does: once to fold the
+ * count, and again immediately before the writes, and the cycles between the
+ * two reads are added back. At most one wrap can fall between them, because
+ * they are closer together than the shortest interval (desired_reload), and a
+ * wrap shows as the second reading being HIGHER than the first, the counter
+ * having reloaded.
+ *
+ * @p only_if_changed leaves a running interval alone when it already has the
+ * wanted length, which is what the ISR wants (see the handler).
  *
  * The cancel at the end of the restart is load-bearing and is the subtlety
  * this whole file is built around. `now_tickless_locked()` accounts for a wrap
@@ -281,10 +320,30 @@ void restart_interval_locked(std::uint64_t from) noexcept
  * the period a SECOND time. Cancelling it is correct precisely because its
  * effect has already been applied.
  */
+void restart_from_now_locked(bool only_if_changed) noexcept
+{
+   std::uint32_t first = 0;
+   std::uint64_t const from = now_tickless_locked(&first);
+   std::uint32_t const next = desired_reload(from);
+   if (only_if_changed && next == current_reload) {
+      return;
+   }
+
+   std::uint32_t const second = cortex_m::reg(cortex_m::systick_val);
+   cortex_m::reg(cortex_m::systick_load) = next;
+   cortex_m::reg(cortex_m::systick_val) = 0u;
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
+
+   std::uint64_t const between = (second <= first)
+      ? std::uint64_t{first - second}
+      : std::uint64_t{first} + (std::uint64_t{current_reload} + 1u - second);
+   base = from + between;
+   current_reload = next;
+}
+
 void retime_locked() noexcept
 {
-   base = now_tickless_locked();
-   restart_interval_locked(base);
+   restart_from_now_locked(false);
 }
 
 } // namespace
@@ -549,12 +608,9 @@ extern "C" void SysTick_Handler(void)
        * reload and this handler was larger than the one taken after it.
        *
        * When a resize is genuinely needed, the elapsed part is folded through
-       * now() first, which is what keeps the invariant true. */
-      std::uint64_t const n = now_tickless_locked();
-      if (desired_reload(n) != current_reload) {
-         base = n;
-         restart_interval_locked(base);
-      }
+       * now() first, which is what keeps the invariant true, and the cycles
+       * the resize itself takes are added back. */
+      restart_from_now_locked(true);
 
       /* Delivered last, so the callback re-enters arm() against an interval
        * that is already consistent rather than one this handler half updated. */

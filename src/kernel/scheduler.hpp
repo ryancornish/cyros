@@ -31,7 +31,9 @@ void idle_task();
 class scheduler
 {
 private:
-   std::uint32_t const core_id;
+   /* Assigned by initialise(), not at construction, so that the scheduler, and
+    * kernel_state around it, is all zeros at startup (kernel.cpp). */
+   std::uint32_t core_id{0};
    std::atomic<uint32_t> pinned_thread_counter{0};
    thread_control_block* current_thread{nullptr};
    thread_control_block*    idle_thread{nullptr};
@@ -86,7 +88,7 @@ private:
 public:
    static constexpr thread::id idle_thread_id = 0; // Reserved
 
-   constexpr explicit scheduler(std::size_t core_id) : core_id(core_id) {};
+   constexpr scheduler() noexcept = default;
 
    ~scheduler() = default;
    scheduler(scheduler&&) = delete;
@@ -121,7 +123,11 @@ public:
 
    void pin_thread(thread_control_block& tcb);
 
-   void init_idle_thread();
+   /**
+    * @brief Bind this scheduler to its core and create the core's idle thread.
+    *        kernel::initialise() calls it once per core, and reset() undoes it.
+    */
+   void initialise(std::uint32_t core);
 
    void start();
 

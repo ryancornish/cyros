@@ -29,17 +29,15 @@ namespace
 struct kernel_state
 {
    spinlock lock;
-   std::array<scheduler, config::cores> schedulers;
+   std::array<scheduler, config::cores> schedulers{};
    std::atomic<bool> initialised{false};
    std::atomic<bool> running{false};
    std::atomic<std::uint32_t> active_threads{0};
    std::atomic<std::uint32_t> thread_id_generator{0};
+};
 
-   // Compile-time construct the scheduler list with incrementing core id's.
-   template<std::size_t... is>
-   constexpr explicit kernel_state(std::index_sequence<is...>) noexcept : schedulers{ scheduler{is}... } {}
-   constexpr kernel_state() noexcept : kernel_state(std::make_index_sequence<config::cores>{}) {}
-} constinit k; // Global kernel singleton
+[[gnu::section(".bss.cyros_kernel_state")]]
+constinit kernel_state k; // Global kernel singleton
 
 // Use this to examine how much memory the kernel uses.
 [[maybe_unused]] constexpr auto kernel_memory = sizeof(k);
@@ -234,8 +232,8 @@ void initialise() noexcept
 
    trace::lifecycle_begins();
 
-   for (auto& scheduler : k.schedulers) {
-      scheduler.init_idle_thread();
+   for (std::uint32_t core = 0; core < config::cores; ++core) {
+      k.schedulers[core].initialise(core);
    }
 
    // Id 0 is the idle thread's (scheduler::idle_thread_id), so the first

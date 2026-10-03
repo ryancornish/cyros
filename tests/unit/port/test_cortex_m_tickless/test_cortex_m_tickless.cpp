@@ -238,8 +238,8 @@ void test_a_deadline_beyond_one_period_still_fires()
  * @brief A deadline that is already due, or a cycle or two off, fires once, on
  *        time, and the clock neither stops nor leaps.
  *
- * Such a deadline gets the shortest interval SysTick can count, and two
- * defects lived there, found together on 2026-10-03.
+ * Such a deadline gets the driver's shortest interval, and two defects lived
+ * there, found together on 2026-10-03 when that interval was 2 cycles.
  *
  * The reload is the interval minus one, and a reload of 0 does not count at
  * all: the architecture raises the exception only when the counter goes from
@@ -322,6 +322,61 @@ void test_a_deadline_already_due_still_fires()
    CYROS_CHECK(none_leapt);
 }
 
+/**
+ * @brief now() keeps pace with the core clock across timer wakes.
+ *
+ * Every wake restarts the counter twice, once when the deadline is armed and
+ * once when the ISR sizes the next interval, and writing VAL discards whatever
+ * was counted since VAL was last read. The driver used to read it, size the
+ * interval and only then write it, so each wake lost about 140 cycles: a 1 ms
+ * periodic task ran `now()` 886 ppm slow at 160 MHz and 3.4 per cent slow at
+ * 4 MHz on the U575 (2026-10-03). It now re-reads VAL just before the write
+ * and adds back what passed, leaving about 10 cycles a wake.
+ *
+ * The reference is the DWT cycle counter, which counts the same clock in
+ * hardware. QEMU does not model it, so this checks only on a board.
+ */
+void test_now_keeps_pace_with_the_core_clock()
+{
+   cyros::bench::start("now() keeps pace with the core clock across timer wakes");
+
+   std::uint64_t const probe = cyros_port_timestamp();
+   for (int i = 0; i < 1000; ++i) { asm volatile("" ::: "memory"); }
+   if (cyros_port_timestamp() == probe) {
+      cyros::bench::print("  no cycle counter (QEMU), skipping\n");
+      return;
+   }
+
+   constexpr int wakes = 200;
+   std::uint64_t const period = cyros_port_time_freq_hz() / 1000u;   /* 1 ms */
+   std::uint64_t const c0 = cyros_port_timestamp();
+   std::uint64_t const n0 = time::now().value;
+   std::uint64_t next = n0;
+   bool all_fired = true;
+   for (int i = 0; i < wakes; ++i) {
+      next += period;
+      fired_count = 0;
+      auto const handle = time::schedule_at(time::time_point{next}, on_deadline, nullptr);
+      (void)handle;
+      std::uint64_t const give_up = cyros_port_timestamp() + 4u * period;
+      while (fired_count == 0 && cyros_port_timestamp() < give_up) { }
+      all_fired = all_fired && fired_count == 1;
+   }
+   std::uint64_t const real = cyros_port_timestamp() - c0;
+   std::uint64_t const counted = time::now().value - n0;
+   std::int64_t const lost_per_wake = (static_cast<std::int64_t>(real) - static_cast<std::int64_t>(counted)) / wakes;
+
+   cyros::bench::print("  now() lost per wake, in cycles = ");
+   cyros::bench::print_hex(static_cast<std::uint32_t>(lost_per_wake));
+   cyros::bench::print("\n");
+
+   CYROS_CHECK(all_fired);
+   /* About 10 measured. Never negative: a now() that runs FAST would deliver
+    * deadlines early, which the contract forbids outright. */
+   CYROS_CHECK(lost_per_wake >= 0);
+   CYROS_CHECK(lost_per_wake < 40);
+}
+
 void test_repeated_arming_does_not_corrupt_the_clock()
 {
    cyros::bench::start("repeated re-arming keeps now() honest");
@@ -381,6 +436,7 @@ void worker()
    test_a_one_shot_fires_at_the_requested_time();
    test_a_deadline_beyond_one_period_still_fires();
    test_a_deadline_already_due_still_fires();
+   test_now_keeps_pace_with_the_core_clock();
    test_repeated_arming_does_not_corrupt_the_clock();
 
    cyros::bench::finish();
