@@ -53,6 +53,31 @@
 #define CYROS_PORT_STACK_ALIGN 8
 
 /**
+ * @def CYROS_PORT_MIN_FRAME
+ * @brief Stack headroom, in bytes, every thread gets beyond its context and TCB.
+ *
+ * Feeds thread::min_stack_size, and through it the idle stack every scheduler
+ * embeds, so on a part with 32 KB of SRAM it decides which images fit at all.
+ * At the Linux ports' 4096 two of the on-target tests needed 53 KB of RAM.
+ *
+ * Inside the kernel only the idle thread runs on exactly min_stack_size. On
+ * the single-core cortex_m target its measured peak is 108 bytes, on both
+ * architectures and both time drivers at -Og (2026-10-03, by stack scan after
+ * 200 sleeps). It is unmeasured here: no dual-core test lets either core's
+ * idle thread run, and here idle's yield can drain requests posted by the
+ * other core, a path single core never takes. The thread's exception
+ * frames are in that figure: idle never touches the FPU, so the hardware frame
+ * is the basic 32 bytes, and PendSV pushes 36 below it. An FP thread's frames
+ * are larger, 104 bytes for the extended frame plus 100 from PendSV.
+ *
+ * On ARMv7-M the MPU guard also takes its 128 bytes, plus up to 120 more to
+ * align it, from the bottom of the buffer, though not on this ARMv8-M target.
+ * 1024 leaves idle about ten times the single-core peak, and gives an
+ * application a kilobyte as the smallest stack it can ask for.
+ */
+#define CYROS_PORT_MIN_FRAME 1024
+
+/**
  * @def CYROS_PORT_CACHE_LINE
  * @brief Cache line size in bytes.
  *
@@ -77,7 +102,7 @@
  *
  * Raising this above 1 is what makes the core layer index its per-core state
  * by cyros_port_get_core_id rather than by a constant. See this_core() in
- * port_core_armv8m.cpp.
+ * port_core_armv7m_armv8m.cpp.
  */
 #define CYROS_PORT_CORE_COUNT 2
 

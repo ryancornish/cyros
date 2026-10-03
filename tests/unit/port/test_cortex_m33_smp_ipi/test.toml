@@ -2,14 +2,11 @@
 name = "test_cortex_m33_smp_ipi"
 layer = 6
 kind = "unit"
-source = [
-   "test_cortex_m33_smp_ipi.cpp",
-   "../arm_bench/startup_mps2_an521.c",
-   "../arm_bench/syscall_stubs.c",
-]
+source = "test_cortex_m33_smp_ipi.cpp"
 config = "test_cortex_m33_smp_ipi_config.hpp"
 
-# Runs on bare metal. Skipped by every hosted profile.
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
 hosted = false
 
 [components]
@@ -19,4 +16,3 @@ features = ["sync"]
 
 [link]
 system_libraries = []
-linker_script = "../arm_bench/mps2_an505.ld"

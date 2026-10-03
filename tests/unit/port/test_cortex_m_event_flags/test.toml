@@ -1,0 +1,18 @@
+[test]
+name = "test_cortex_m_event_flags"
+layer = 6
+kind = "unit"
+source = "test_cortex_m_event_flags.cpp"
+config = "test_cortex_m_event_flags_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m"
+time_driver = "periodic"
+features = ["sync"]
+
+[link]
+system_libraries = []

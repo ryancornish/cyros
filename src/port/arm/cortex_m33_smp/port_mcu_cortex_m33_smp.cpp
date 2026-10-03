@@ -2,7 +2,7 @@
  * @file port_mcu_cortex_m33_smp.cpp
  * @brief Dual Cortex-M33 on an SSE-200 subsystem: identity, bring-up, the IPI.
  *
- * The SMP sibling of port_mcu_cortex_m33.cpp. Both extend `armv8m` and share
+ * The SMP sibling of port_mcu_cortex_m.cpp. Both extend `armv7m_armv8m` and share
  * every line of the core contract with it, which is the claim the split of
  * port_core.h from port_mcu.h was made to support: two targets whose processor
  * core is identical and whose MCU is not.

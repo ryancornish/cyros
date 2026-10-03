@@ -112,9 +112,10 @@ __attribute__((noreturn)) void Reset_Handler(void)
  * signal this bench exists to be able to see.
  */
 /* Each fault gets its own weakly-aliased symbol so a test can replace ONE of
- * them and leave the rest reporting. test_cortex_m33_psplim overrides
- * UsageFault_Handler, because a PSPLIM stack overflow arrives there and the
- * whole point of that test is that the fault HAPPENS. Without the split it
+ * them and leave the rest reporting. test_cortex_m_stack_guard overrides
+ * UsageFault_Handler and MemManage_Handler, because a stack overflow arrives at
+ * one of them (PSPLIM on ARMv8-M, the MPU guard on ARMv7-M) and the whole point
+ * of that test is that the fault HAPPENS. Without the split it
  * would have to replace the reporting for every fault at once, and then a
  * genuine BusFault during the test would look like success. */
 __attribute__((noreturn)) void Fault_Handler(void);

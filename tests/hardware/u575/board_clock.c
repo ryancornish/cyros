@@ -4,8 +4,9 @@
  *
  * The port declares `cyros_port_systick_clock_hz()` and deliberately supplies
  * NO default, so every image must answer. See the declaration in
- * port_time_cortex_m33.cpp for why. The answer here is BOARD_SYSCLK_HZ, the
- * same constant board_clock_init() configures, so the two cannot drift apart.
+ * src/port/arm/cortex_m/port_time_systick.cpp for why. The answer here is
+ * BOARD_SYSCLK_HZ, the same constant board_clock_init() configures, so the two
+ * cannot drift apart.
  *
  * Configure the clock BEFORE `time::start()`. The port reads the rate once,
  * when the timer is programmed. Reset_Handler does it before any constructor.

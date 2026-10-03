@@ -1,0 +1,25 @@
+name = "cortex_m"
+
+description = "Generic single-core Cortex-M (ARMv7-M or ARMv8-M Mainline): core peripherals only."
+
+# One target for the M33 and the M4 alike: everything here is SysTick and the
+# single-core identity trio, which no Mainline part answers differently. The
+# toolchain's -mcpu picks the architecture, and the core layer picks its stack
+# guard from that. Serves QEMU's mps2-an505 (M33), the STM32U575 and the
+# TM4C123 (M4F), the boards through their own startup files.
+extends = "armv7m_armv8m"
+
+# The MCU half of the contract, split by topic. The identity/bring-up trio is
+# what a multicore part varies; the time source is what a vendor part varies
+# (LPTIM rather than SysTick). A target usually replaces one and keeps the
+# other.
+sources = [
+   "port_mcu_cortex_m.cpp",
+   "port_time_systick.cpp",
+]
+
+# Overrides the layer's traits rather than joining them: CYROS_PORT_CORE_COUNT
+# is an MCU-level fact even though CYROS_PORT_STACK_ALIGN next to it is not.
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

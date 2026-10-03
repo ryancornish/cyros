@@ -123,7 +123,7 @@ public:
     *    port           sizeof   port context   kernel part (this budget)
     *    linux_preempt    768        512          256, exactly the budget
     *    linux_coop       288         40          248
-    *    cortex_m33       176         16          160
+    *    cortex_m         176         16          160
     *
     * linux_preempt is the port at the limit. Its context is 64-byte aligned, so
     * a field that fits no interior hole pushes sizeof to the next 64-byte step
@@ -146,8 +146,11 @@ public:
 
    /**
     * @brief Headroom reserved for the first call frame on a fresh stack.
+    *
+    * A port trait, because the right number is a property of the target: a
+    * page on a host, a kilobyte on a Cortex-M. See CYROS_PORT_MIN_FRAME.
     */
-   static constexpr std::size_t min_frame = 4096;
+   static constexpr std::size_t min_frame = CYROS_PORT_MIN_FRAME;
 
    /**
     * @brief Minimal size (bytes) a stack must be for a thread to execute on

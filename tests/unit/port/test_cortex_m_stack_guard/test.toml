@@ -1,0 +1,21 @@
+[test]
+name = "test_cortex_m_stack_guard"
+layer = 0
+kind = "unit"
+
+# The guard is programmed by the port in context_init and reloaded on every
+# switch, so its subject is layer 0. It cannot be observed until a thread is
+# actually running on the stack it guards, which needs the kernel up.
+harness_debt = { layer = 2, reason = "the stack guard covers a RUNNING thread's stack, so it cannot be observed until the kernel has started one" }
+source = "test_cortex_m_stack_guard.cpp"
+config = "test_cortex_m_stack_guard_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m"
+
+[link]
+system_libraries = []

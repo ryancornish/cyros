@@ -1,0 +1,21 @@
+# Unit-test profile for the bare-metal Cortex-M port on ARMv7-M.
+#
+# The same port and the same tests as unit_test_cortex_m33.toml, built for a
+# Cortex-M4F and run on QEMU's mps2-an386. A separate profile because the
+# machine is a property of the toolchain, and the toolchain is what differs.
+[profile]
+name = "unit_test_cortex_m4"
+toolchain = "../toolchains/arm-none-eabi-debug-m4.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

@@ -11,7 +11,7 @@ source_root = "../../src"
 output_root = "../../out"
 
 [components]
-port = "cortex_m33"
+port = "cortex_m"
 
 [features]
 enable = []

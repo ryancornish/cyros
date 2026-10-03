@@ -63,6 +63,10 @@ extern "C" {
 # error "Port must define CYROS_PORT_STACK_ALIGN"
 #endif
 
+#ifndef CYROS_PORT_MIN_FRAME
+# error "Port must define CYROS_PORT_MIN_FRAME"
+#endif
+
 #ifndef CYROS_PORT_CACHE_LINE
 # error "Port must define CYROS_PORT_CACHE_LINE"
 #endif
@@ -89,6 +93,10 @@ extern "C" {
 
 #if (CYROS_PORT_STACK_ALIGN) <= 0
 # error "CYROS_PORT_STACK_ALIGN must be > 0"
+#endif
+
+#if (CYROS_PORT_MIN_FRAME) <= 0
+# error "CYROS_PORT_MIN_FRAME must be > 0"
 #endif
 
 #if (CYROS_PORT_CACHE_LINE) <= 0

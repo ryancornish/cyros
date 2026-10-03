@@ -1,0 +1,23 @@
+# Cortex-M4F bring-up: the port and the kernel, nothing else, built for ARMv7-M.
+#
+# The ARMv7-M twin of cortex_m33_bringup.toml, and the reason it exists is
+# ~/cyros-claude/tools-port-layers.py: the core layer must export the same
+# contract on both architectures it serves, and only a build for each shows
+# that. The config is the M33's, whose contents name no core.
+[profile]
+name = "cortex_m4_bringup"
+toolchain = "../toolchains/arm-none-eabi-debug-m4.toml"
+config_header = "../configs/cortex_m33.hpp"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

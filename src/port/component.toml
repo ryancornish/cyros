@@ -4,7 +4,7 @@ kind = "port"
 variants = [
    "linux_coop",
    "linux_preempt",
-   "cortex_m33",
+   "cortex_m",
    "cortex_m33_smp",
 ]
 

@@ -1,0 +1,41 @@
+name = "arm-none-eabi-debug-m4"
+extends = "arm-none-eabi-debug.toml"
+
+# The ARMv7-M bench: a Cortex-M4F, so the same port's other stack guard (the
+# MPU region rather than PSPLIM) and the older FPv4 FPU. The hardware it stands
+# in for is the TM4C123GH6PM on the EK-TM4C123GXL.
+#
+# A separate toolchain from the M33's for two reasons, either of which would
+# do. -mcpu is an ABI and architecture choice every object in the image must
+# share, and the core layer picks its stack guard from the architecture macros
+# it sets. And the machine is a property of the toolchain because the runner
+# is: nothing built for mps2-an505 runs on mps2-an386.
+#
+# Float stays hard. FPv4-SP-D16 has the same sixteen double-word registers
+# FPv5-SP-D16 does, so the extended frame and the s16-s31 save in PendSV are
+# identical.
+[flags]
+common_add = ["-mcpu=cortex-m4", "-mfpu=fpv4-sp-d16"]
+common_remove = ["-mcpu=cortex-m33", "-mfpu=fpv5-sp-d16"]
+
+# The AN386 shares nothing with the AN505's memory map: code and data sit in
+# two 4 MB SSRAMs at 0 and 0x20000000, with no secure aliases.
+[board]
+linker_script = "../../tests/unit/port/arm_bench/mps2_an386.ld"
+sources = [
+   "../../tests/unit/port/arm_bench/startup_mps2_an386.c",
+   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+]
+
+# mps2-an386 is QEMU's Cortex-M4 MPS2 image. Its CPU has the 8-region PMSAv7
+# MPU the TM4C123 has, which is what the guard needs. mps2-an385 is the M3
+# image and has no FPU, so the hard-float image faults on its first FP access.
+[runner]
+command = [
+   "qemu-system-arm",
+   "-M", "mps2-an386",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+timeout = 30

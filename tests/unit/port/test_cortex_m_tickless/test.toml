@@ -1,0 +1,21 @@
+[test]
+name = "test_cortex_m_tickless"
+layer = 1
+kind = "unit"
+
+# time::start() is per-core and requires a running kernel, exactly as for the
+# periodic test next door.
+harness_debt = { layer = 2, reason = "time::start() is per-core and requires a running kernel, so a real SysTick cannot be observed below layer 2" }
+source = "test_cortex_m_tickless.cpp"
+config = "test_cortex_m_tickless_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m"
+time_driver = "tickless"
+
+[link]
+system_libraries = []

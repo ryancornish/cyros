@@ -45,6 +45,16 @@
 #define CYROS_PORT_STACK_ALIGN 16
 
 /**
+ * @def CYROS_PORT_MIN_FRAME
+ * @brief Stack headroom, in bytes, every thread gets beyond its context and TCB.
+ *
+ * Feeds thread::min_stack_size, and through it the idle stack every scheduler
+ * embeds. A page, which costs nothing that matters on a host. Signal handlers
+ * do not run here: the port gives each core its own sigaltstack.
+ */
+#define CYROS_PORT_MIN_FRAME 4096
+
+/**
  * @def CYROS_PORT_CACHE_LINE
  * @brief Cache line size in bytes.
  *

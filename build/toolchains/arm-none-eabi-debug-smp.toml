@@ -12,6 +12,12 @@ extends = "arm-none-eabi-debug.toml"
 # unchanged from the single-core bench, which keeps the difference between the
 # two benches to the startup file and the machine name. mps3-an524, musca-a and
 # musca-b1 all have different maps and all fault on this image.
+[board]
+sources = [
+   "../../tests/unit/port/arm_bench/startup_mps2_an521.c",
+   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+]
+
 [runner]
 command = [
    "qemu-system-arm",

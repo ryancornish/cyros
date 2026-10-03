@@ -22,7 +22,7 @@ name = "arm-none-eabi-base"
 # Hard float changes the ABI, so every object in the image must agree, which
 # is why it lives here rather than in a per-target flag. The port enables the
 # FPU in cyros_port_init (CPACR) and PendSV saves s16-s31 conditionally on
-# EXC_RETURN.FType. See port_core_armv8m.cpp.
+# EXC_RETURN.FType. See port_core_armv7m_armv8m.cpp.
 #
 # The STM32U575's FPU is the same FPv5-SP-D16, so this matches the hardware.
 
@@ -70,6 +70,19 @@ warnings_as_errors = false
 # of failing to build every one of them. A test that runs here says so with
 # `hosted = false` in its own test.toml.
 hosted = false
+
+# The machine's startup file and linker script, for every test that names no
+# linker script of its own. They follow the runner because they ARE the
+# machine: an image boots only through its vector table and only from its
+# memory map. A child toolchain for another machine replaces them along with
+# the runner. syscall_stubs.c is newlib's OS interface, and every bare-metal
+# board here needs it.
+[board]
+linker_script = "../../tests/unit/port/arm_bench/mps2_an505.ld"
+sources = [
+   "../../tests/unit/port/arm_bench/startup_mps2_an505.c",
+   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+]
 
 # How a binary built by this toolchain is executed. Without this the runner
 # would exec a Cortex-M ELF on x86-64 and report "Exec format error".

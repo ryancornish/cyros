@@ -2,7 +2,7 @@
 # Run one of the on-target unit tests on the NUCLEO-U575ZI-Q instead of QEMU.
 #
 #   ./run_test.sh <test name> [--mhz 4|160] [--build-only]
-#   ./run_test.sh test_cortex_m33_systick --mhz 160
+#   ./run_test.sh test_cortex_m_systick --mhz 160
 #
 # The builder builds every on-target test for QEMU's mps2-an505 and runs it
 # there. The same test runs on the real part unchanged, because a test is
@@ -26,10 +26,10 @@
 #
 # OpenOCD stays attached while the test runs, although no test output goes
 # through it, because two things still use semihosting: the PORT's panic report
-# (src/port/arm/armv8m/cortex_m.hpp) and bench.hpp's elapsed-time reference. A
+# (src/port/arm/armv7m_armv8m/cortex_m.hpp) and bench.hpp's elapsed-time reference. A
 # panic therefore still arrives, on OpenOCD's output, and this script shows it.
 #
-# Single-core tests only (the cortex_m33 port). The U575 has one core.
+# Single-core tests only (the cortex_m port). The U575 has one core.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,14 +72,14 @@ cxxflags=("${common[@]}" -std=gnu++26 -Wall -Werror -Wextra -Wpedantic -fno-exce
 includes=(-I "$build_root/include" -I "$cyros_root/src/port/internal_headers"
           -I "$cyros_root/tests/unit" -I "$test_dir")
 
-# The test's sources, minus the bench's startup, which the U575's replaces.
+# The test's own sources. A test.toml lists no board files: the builder takes
+# the bench's from its toolchain, and the U575's replace them below.
 mapfile -t sources < <(python3 - "$test_dir/test.toml" <<'PY'
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
     src = tomllib.load(f)["test"]["source"]
 for s in ([src] if isinstance(src, str) else src):
-    if "arm_bench/startup" not in s:
-        print(s)
+    print(s)
 PY
 )
 
@@ -97,6 +97,7 @@ done
 compile "$here/startup_stm32u575.c" startup_stm32u575.o
 compile "$here/board_clock.c"       board_clock.o
 compile "$here/console.c"           console.o
+compile "$cyros_root/tests/unit/port/arm_bench/syscall_stubs.c" syscall_stubs.o
 
 elf="$out/$test.elf"
 arm-none-eabi-g++ "${common[@]}" -nostartfiles -nostdlib++ -Wl,--gc-sections \

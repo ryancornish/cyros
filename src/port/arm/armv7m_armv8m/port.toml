@@ -1,0 +1,23 @@
+name = "armv7m_armv8m"
+
+# One layer for both architectures because they differ in one mechanism, the
+# stack guard (PSPLIM on ARMv8-M, an MPU region on ARMv7-M), which cortex_m.hpp
+# selects from the compiler's architecture macros. Which architecture a build
+# targets is the toolchain's -mcpu, not a manifest choice. ARMv6-M differs in
+# far more (no BASEPRI, Thumb-1 PendSV, no LDREX) and would be a layer of its
+# own.
+description = "ARMv7-M and ARMv8-M Mainline CORE LAYER. Not selectable: targets extend it."
+
+# Deliberately absent from port/component.toml `variants`, which is what makes
+# this a layer rather than a port. It implements port_core.h and nothing else,
+# so on its own it would link with the whole of port_mcu.h missing. A target
+# variant names it with `extends` and supplies the other half.
+sources = [
+   "port_core_armv7m_armv8m.cpp",
+]
+
+# So that a target extending this layer can reach cortex_m.hpp. `extends` unions
+# private_includes, which is the mechanism that makes a shared core header
+# usable from the MCU layer without either tree reaching into the other by
+# relative path.
+private_includes = ["."]

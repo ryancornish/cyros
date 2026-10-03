@@ -1,0 +1,16 @@
+[test]
+name = "test_cortex_m_fpu"
+layer = 2
+kind = "unit"
+source = "test_cortex_m_fpu.cpp"
+config = "test_cortex_m_fpu_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m"
+
+[link]
+system_libraries = []

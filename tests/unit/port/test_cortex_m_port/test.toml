@@ -1,0 +1,20 @@
+[test]
+name = "test_cortex_m_port"
+layer = 0
+kind = "unit"
+source = "test_cortex_m_port.cpp"
+config = "test_cortex_m_port_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+# Locked to the bare-metal port. It reads PRIMASK and BASEPRI directly, so it
+# is meaningless anywhere else and is skipped on a host run.
+port = "cortex_m"
+
+[link]
+# No gtest: it does not run bare metal, and this test uses the tiny harness in
+# tests/unit/common/arm/bench.hpp instead.
+system_libraries = []

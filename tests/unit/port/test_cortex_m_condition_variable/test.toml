@@ -1,0 +1,18 @@
+[test]
+name = "test_cortex_m_condition_variable"
+layer = 8
+kind = "unit"
+source = "test_cortex_m_condition_variable.cpp"
+config = "test_cortex_m_condition_variable_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m"
+time_driver = "periodic"
+features = ["sync"]
+
+[link]
+system_libraries = []
