@@ -83,6 +83,17 @@ for s in ([src] if isinstance(src, str) else src):
 PY
 )
 
+# And its own link flags ([link].flags), which the builder passes to the link
+# too. test_cortex_m_idle observes idle through a --wrap there.
+mapfile -t link_flags < <(python3 - "$test_dir/test.toml" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    flags = tomllib.load(f).get("link", {}).get("flags", [])
+for flag in flags:
+    print(flag)
+PY
+)
+
 objects=()
 compile() {  # <source path> <object name>
    case "$1" in
@@ -101,7 +112,7 @@ compile "$cyros_root/tests/unit/port/arm_bench/syscall_stubs.c" syscall_stubs.o
 
 elf="$out/$test.elf"
 arm-none-eabi-g++ "${common[@]}" -nostartfiles -nostdlib++ -Wl,--gc-sections \
-   -T "$here/stm32u575.ld" "${objects[@]}" "$build_root/lib/libcyros.a" \
+   -T "$here/stm32u575.ld" "${objects[@]}" "$build_root/lib/libcyros.a" "${link_flags[@]}" \
    -o "$elf" -Wl,-Map="$out/$test.map"
 echo "== built $elf (${mhz} MHz)"
 arm-none-eabi-size "$elf" | tail -n 1

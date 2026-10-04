@@ -329,10 +329,25 @@ void restart_from_now_locked(bool only_if_changed) noexcept
       return;
    }
 
-   std::uint32_t const second = cortex_m::reg(cortex_m::systick_val);
+   std::uint32_t const raw_second = cortex_m::reg(cortex_m::systick_val);
    cortex_m::reg(cortex_m::systick_load) = next;
    cortex_m::reg(cortex_m::systick_val) = 0u;
    cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
+
+   /* A zero means what it meant to `first`, which now_tickless_locked()
+    * reported as current_reload + 1. Taken raw, a zero in the window after a
+    * VAL write, before the counter reloads, made `between` a whole interval
+    * that had not passed when `first` was that same zero: with the full-period
+    * interval the ISR sets when nothing is armed, now() leapt 16.7 million
+    * cycles (arm-port-notes 10b item 7). The window is one counter clock on
+    * silicon and as long as QEMU takes to reload. A zero that really is the
+    * end of the interval comes out right too: as current_reload + 1 it takes
+    * the wrap branch below and gives `first`, which is what was counted.
+    *
+    * Done AFTER the writes, because every cycle between reading VAL and
+    * writing it is lost on every wake. Placed before them, this line made it
+    * 17 cycles a wake on the U575 at -Og, against 9 here. */
+   std::uint32_t const second = (raw_second == 0u) ? current_reload + 1u : raw_second;
 
    std::uint64_t const between = (second <= first)
       ? std::uint64_t{first - second}

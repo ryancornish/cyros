@@ -1,0 +1,24 @@
+[test]
+name = "test_cortex_m_idle_tickless"
+layer = 8
+
+# test_cortex_m_idle's source, against the tickless driver. The config header
+# is what tells the shared source which driver it has.
+kind = "integration"
+source = "../test_cortex_m_idle/test_cortex_m_idle.cpp"
+config = "test_cortex_m_idle_tickless_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = "cortex_m"
+time_driver = "tickless"
+features = ["chrono", "sync"]
+
+[link]
+system_libraries = []
+
+# As test_cortex_m_idle: the test observes idle through this wrap.
+flags = ["-Wl,--wrap=cyros_port_idle"]
