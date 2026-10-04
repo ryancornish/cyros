@@ -81,6 +81,22 @@ struct preempt_region
  */
 void drain_pending_signal(int signo);
 
+/**
+ * @brief A source other than the cores can now raise @p signo, or no longer can.
+ *
+ * The port hands the thread it borrowed as core 0 back its own mask once the
+ * cores have stopped, one owned signal at a time. A signal some source still
+ * holds open stays blocked on that thread until the source closes, because a
+ * delivery there would run a handler against a kernel that has stopped. The
+ * time port opens the timer signal at its first setup() of a run and closes it
+ * in teardown, after deleting every timer and draining the queue.
+ *
+ * Closing hands the signal back if the cores have already stopped. It is never
+ * handed back mid-run.
+ */
+void source_opened(int signo);
+void source_closed(int signo);
+
 } // namespace cyros::port
 
 #endif /* CYROS_PORT_LINUX_PREEMPT_INTERNAL_HPP */

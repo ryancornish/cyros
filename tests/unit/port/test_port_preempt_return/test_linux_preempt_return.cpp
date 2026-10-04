@@ -22,14 +22,22 @@
  * Since 2026-09-25 the port calls sigctx_intercept_uninstall() before freeing
  * the stacks, which undoes all three.
  *
+ * The last leftover was the signal MASK: the thread came back with both of the
+ * port's signals blocked. It now comes back with the mask it had, signal by
+ * signal, including one it had blocked itself, and taking a critical section
+ * afterwards must not disturb that. With no time driver in this test, nothing
+ * holds the timer signal open, so both go back as the cores stop. The case
+ * where a live tick keeps the timer signal blocked until time teardown is
+ * test_time_teardown_preempt's.
+ *
  * Checks come in pairs, the state and then its consequence, and every
  * consequence runs in a child so the failure it guards against cannot take the
- * suite with it. The mask is still handed back blocked (roadmap P3), so the
- * children unblock what they raise themselves.
+ * suite with it.
  */
 
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/thread.hpp>
+#include <cyros/port/port.h>
 
 #include <common/guarded_stack.hpp>
 
@@ -39,6 +47,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 using namespace cyros;
 
@@ -73,6 +82,55 @@ struct dispositions
       return d;
    }
 };
+
+/* The calling thread's blocked signals, as a list, so a mismatch names them
+ * without the test naming the signals the port chose. */
+std::string blocked_signals()
+{
+   sigset_t mask;
+   pthread_sigmask(SIG_BLOCK, nullptr, &mask);
+
+   std::string numbers;
+   for (int signo = 1; signo < NSIG; ++signo) {
+      if (sigismember(&mask, signo) == 1) numbers += std::to_string(signo) + " ";
+   }
+   return numbers;
+}
+
+/* A lifetime, then a critical section of each grade on the same thread, as an
+ * application might take after the kernel returns. A port that still derived
+ * the mask from its depths for a signal it had handed back would re-block it
+ * here, or trip its own mask assert. */
+void run_one_lifecycle_then_mask_and_unmask()
+{
+   run_one_lifecycle();
+
+   cyros_mask_token_t const irq = cyros_port_irq_save();
+   cyros_port_irq_restore(irq);
+   cyros_mask_token_t const preempt = cyros_port_preempt_disable();
+   cyros_port_preempt_enable(preempt);
+}
+
+/* The starting mask is set explicitly, never snapshotted: a child inherits its
+ * parent's mask across exec, so a snapshot would already carry whatever an
+ * earlier run in the parent left blocked, and a regression would pass. */
+void mask_survives_a_lifetime_and_exit(bool block_everything_first)
+{
+   sigset_t start;
+   if (block_everything_first) sigfillset(&start);
+   else                        sigemptyset(&start);
+   pthread_sigmask(SIG_SETMASK, &start, nullptr);
+   std::string const before = blocked_signals();
+
+   run_one_lifecycle_then_mask_and_unmask();
+
+   std::string const after = blocked_signals();
+   if (after != before) {
+      std::fprintf(stderr, "blocked before: [%s] after: [%s]\n", before.c_str(), after.c_str());
+      std::exit(1);
+   }
+   std::exit(0);
+}
 
 /* The signal a socket raises for out-of-band data, and the one this port
  * borrows for rescheduling. An application that meets it after the kernel has
@@ -171,4 +229,21 @@ TEST(LinuxPreemptReturn_Test, GivenAThreadThatRanTheKernel_WhenTheApplicationRun
                ::testing::ExitedWithCode(0), "")
       << "an SA_ONSTACK handler run after the kernel crashed, most likely on an "
          "alternate signal stack the port had already unmapped";
+}
+
+TEST(LinuxPreemptReturn_Test, GivenAThreadWithNothingBlocked_WhenItRunsTheKernel_ThenItsMaskIsTheOneItHadBefore)
+{
+   GTEST_FLAG_SET(death_test_style, "threadsafe");
+   EXPECT_EXIT(mask_survives_a_lifetime_and_exit(false), ::testing::ExitedWithCode(0), "")
+      << "the kernel handed its caller's thread back with a different signal mask";
+}
+
+TEST(LinuxPreemptReturn_Test, GivenAThreadWithEverythingBlocked_WhenItRunsTheKernel_ThenItsMaskIsTheOneItHadBefore)
+{
+   /* The other direction. A port that handed every signal back unblocked would
+    * pass the case above and open signals here that the application chose to
+    * keep closed. */
+   GTEST_FLAG_SET(death_test_style, "threadsafe");
+   EXPECT_EXIT(mask_survives_a_lifetime_and_exit(true), ::testing::ExitedWithCode(0), "")
+      << "the kernel handed its caller's thread back with a different signal mask";
 }

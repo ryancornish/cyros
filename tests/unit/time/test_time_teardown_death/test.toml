@@ -1,0 +1,17 @@
+[test]
+name = "test_time_teardown_death"
+layer = 1
+kind = "unit"
+
+# The subject is the preempt port's time teardown refusing to run under a live
+# kernel, which is layer 1. Only a running kernel can provide the misuse.
+harness_debt = { layer = 2, reason = "time::finalise() can only be called mid-run from a thread the kernel is running" }
+source = "test_time_teardown_death.cpp"
+config = "test_time_teardown_death_config.hpp"
+
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

@@ -15,23 +15,21 @@
  *   second run in-proc   counters left raised by the first run agrees
  *   INHERITED mask       signals blocked, counters zero        FAILS
  *
- * The third is not exotic. The kernel leaves both of its signals blocked on the
- * thread it borrowed as core 0, so ANY fork plus exec from a process that has
- * run cyros hands the child a mask with them blocked while its counters start
- * at zero. The child then panics on its first critical section, nowhere near
- * the cause. An application that blocks SIGURG or a realtime signal for its own
- * reasons hits exactly the same wall without forking at all.
+ * The third is not exotic. An application that blocks SIGURG or a realtime
+ * signal for its own reasons hands the kernel exactly that, and so does any
+ * fork plus exec from a process that has, since the child inherits the mask
+ * while its counters start at zero. The child then panics on its first
+ * critical section, nowhere near the cause. It was found through a gtest death
+ * test, in a binary where an earlier test had run the kernel, back when the
+ * kernel handed its caller's thread back with both of its signals blocked.
+ * It no longer does (test_port_preempt_return), so this test blocks them
+ * itself.
  *
- * This test reproduces the fork case, which is the one that was actually
- * observed: a gtest death test in a binary where any earlier test had run the
- * kernel. Doing it that way rather than by blocking named signals keeps the
- * test from having to know which signals the port chose.
- *
- * HOW IT WORKS. `threadsafe` death test style re-executes this binary for the
- * child, so the child runs this test body from the top with the parent's mask
- * inherited and its own counters fresh. That is the failing combination, and it
- * is reached before the statement below is ever evaluated: a regression shows
- * up as the child dying rather than exiting 0.
+ * HOW IT WORKS. The parent blocks EVERY signal, which keeps the test from
+ * having to know which ones the port chose. `threadsafe` death test style
+ * re-executes this binary for the child, so the child runs the statement below
+ * with that mask inherited and its own counters fresh. That is the failing
+ * combination: a regression shows up as the child dying rather than exiting 0.
  */
 
 #include <cyros/kernel/kernel.hpp>
@@ -41,15 +39,16 @@
 
 #include <gtest/gtest.h>
 
+#include <csignal>
 #include <cstdlib>
+#include <pthread.h>
 
 using namespace cyros;
 
 namespace
 {
 
-/* Borrowing the calling thread as core 0 is what dirties its mask, so a full
- * lifecycle is the smallest thing that sets up the next run to fail. */
+/* The smallest thing that takes a critical section on the adopted thread. */
 void run_one_lifecycle()
 {
    kernel::initialise();
@@ -67,22 +66,38 @@ void run_one_lifecycle_and_exit()
    std::exit(0);
 }
 
+/// @brief Block every signal on this thread for the scope, then put the mask back.
+struct everything_blocked
+{
+   sigset_t prior{};
+
+   everything_blocked()
+   {
+      sigset_t all;
+      sigfillset(&all);
+      pthread_sigmask(SIG_BLOCK, &all, &prior);
+   }
+   ~everything_blocked() { pthread_sigmask(SIG_SETMASK, &prior, nullptr); }
+
+   everything_blocked(everything_blocked const&)            = delete;
+   everything_blocked& operator=(everything_blocked const&) = delete;
+};
+
 }  // namespace
 
-TEST(LinuxPreemptAdopt_Test, GivenAThreadThatAlreadyRanTheKernel_WhenAChildInheritsItsMask_ThenTheKernelStillRuns)
+TEST(LinuxPreemptAdopt_Test, GivenAThreadWithEverySignalBlocked_WhenAChildInheritsItsMask_ThenTheKernelStillRuns)
 {
    GTEST_FLAG_SET(death_test_style, "threadsafe");
 
-   // Leaves this thread with the port's signals blocked, which is what the
-   // child is about to inherit.
-   run_one_lifecycle();
+   // What the child is about to inherit.
+   everything_blocked const blocked;
 
    /* An assertion that the child SURVIVES, which is the unusual direction for
     * this macro and the reason it is EXPECT_EXIT rather than EXPECT_DEATH. A
     * plain in-process check could not be written: the failure is a panic, and
     * a panic takes the whole suite with it. */
    EXPECT_EXIT(run_one_lifecycle_and_exit(), ::testing::ExitedWithCode(0), "")
-      << "a process that inherited the mask of a thread which had run the kernel "
-         "could not run the kernel itself, so cyros_port_init is assuming the mask "
-         "rather than adopting it";
+      << "a process that inherited a mask with the port's signals blocked could "
+         "not run the kernel, so cyros_port_init is assuming the mask rather than "
+         "adopting it";
 }

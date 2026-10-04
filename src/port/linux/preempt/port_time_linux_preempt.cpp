@@ -217,6 +217,10 @@ void ensure_signal_handler_installed()
    sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
    sigaction(timer_signo, &sa, &handler_install.prior);
    handler_install.installed = true;
+
+   // From here a tick can be raised, so the thread the kernel borrowed must keep
+   // this signal blocked after the run, until teardown says otherwise.
+   cyros::port::source_opened(timer_signo);
 }
 
 /// @brief Put back the disposition the first setup() of this run replaced.
@@ -295,15 +299,19 @@ void cyros_port_time_teardown(void)
    }
 
    // Deleting a timer does not retract a signal it has already queued. The
-   // calling thread is normally the one the kernel borrowed as core 0, which
-   // the kernel hands back with timer_signo blocked, so a queued tick would sit
-   // there until something unblocked it. The other cores' threads have exited
-   // and taken theirs with them.
+   // calling thread is normally the one the kernel borrowed as core 0, where
+   // the port keeps timer_signo blocked until source_closed() below hands it
+   // back, so a queued tick would be delivered at that moment, with no handler.
+   // The other cores' threads have exited and taken theirs with them.
    cyros::port::drain_pending_signal(timer_signo);
 
-   // Last, with no timer left to raise it: hand the signal's disposition back.
+   // With no timer left to raise it: hand the signal's disposition back.
    // The next run's setup() installs the handler again.
    remove_signal_handler();
+
+   // Last: nothing can raise the signal now, so the thread the kernel borrowed
+   // may have its own mask bit for it back, if the kernel has already returned.
+   cyros::port::source_closed(timer_signo);
 }
 
 uint64_t cyros_port_time_now(void)

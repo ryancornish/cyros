@@ -350,6 +350,36 @@ struct current_core_state
 };
 static thread_local constinit current_core_state current_core;
 
+/**
+ * @brief What the thread cyros_port_init() adopted is owed back, signal by signal.
+ *
+ * Kept apart from current_core because cyros_port_start_cores() resets that
+ * wholesale, and these must survive from the adoption, through the run, to the
+ * hand-back after it. Fields are token bits, one per owned_signals row.
+ *
+ * A signal is handed back once nothing can raise it any more: the cores have
+ * stopped, and no source still holds it open (the timer, until time teardown).
+ * Whichever of those comes last does the hand-back, so neither the order of the
+ * two finalises nor the absence of a time driver changes the outcome. A handed
+ * back signal leaves the depth model on this thread: the mask helpers neither
+ * block nor unblock it, and the assert does not check it.
+ */
+struct borrowed_thread_state
+{
+   bool               adopted{false};    // caller_blocked is meaningful
+   cyros_mask_token_t caller_blocked{0}; // as the thread had them when cyros took each over
+   cyros_mask_token_t handed_back{0};    // left the depth model on this thread
+};
+static thread_local constinit borrowed_thread_state borrowed;
+
+/**
+ * Owned signals that a source other than the cores can still raise, as token
+ * bits. Process-wide, because a source is: the time port opens the timer's at
+ * its first setup() of a run, on whichever core gets there first, and closes it
+ * in teardown once every timer is deleted and the queue drained.
+ */
+static constinit std::atomic<cyros_mask_token_t> open_sources{0};
+
 
 /* ============================================================================
  * Internal Helpers
@@ -444,6 +474,25 @@ static bool should_block(owned_signal const& s)
 }
 
 /**
+ * @brief Has @p s been handed back to this thread, and so left the model?
+ *
+ * Only ever true on the thread the kernel borrowed, after its run. Every other
+ * thread, and that one during a run, has every owned signal in the model.
+ */
+static bool handed_back(owned_signal const& s)
+{
+   return (borrowed.handed_back & s.token_bit) != 0;
+}
+
+static owned_signal const& row_for(int signo)
+{
+   for (auto const& s : owned_signals) {
+      if (s.signo == signo) return s;
+   }
+   CYROS_PORT_UNREACHABLE(); // not a signal this port owns
+}
+
+/**
  * @brief Tighten the mask to what @p interrupt_depth / @p preempt_depth call for.
  *
  * The RAISE half of the mask model, and the counterpart to apply_mask(). Callers
@@ -475,6 +524,7 @@ static void block_for(unsigned interrupt_depth, unsigned preempt_depth)
 
    bool any = false;
    for (auto const& s : owned_signals) {
+      if (handed_back(s)) continue;
       if (should_block(s, interrupt_depth, preempt_depth)) {
          sigaddset(&block, s.signo);
          any = true;
@@ -508,6 +558,7 @@ static void apply_mask()
    bool any_unblock = false;
 
    for (auto const& s : owned_signals) {
+      if (handed_back(s)) continue;
       if (should_block(s)) {
          sigaddset(&block, s.signo);
          any_block = true;
@@ -564,6 +615,7 @@ static void assert_mask_matches_depths()
    pthread_sigmask(SIG_BLOCK, nullptr, &live);
 
    for (auto const& s : owned_signals) {
+      if (handed_back(s)) continue;
       CYROS_ASSERT_OP(sigismember(&live, s.signo) != 0, ==, should_block(s));
    }
 
@@ -583,16 +635,35 @@ static void assert_mask_matches_depths()
  * A thread that arrives with one of them blocked for any other reason breaks
  * it, and fails on its very first critical section rather than anywhere near
  * the cause. Two ways in: an application that blocks SIGURG or a realtime
- * signal for its own purposes, and, less obviously, ANY fork plus exec from a
- * process that has already run cyros, because the calling thread is left with
- * both blocked and a child inherits the mask while its counters start at zero.
- * The second is what a gtest death test does, which is how this was found.
+ * signal for its own purposes, and a fork plus exec from a process that has,
+ * since the child inherits the mask while its counters start at zero. It was
+ * found through a gtest death test, back when every run left the calling
+ * thread with both blocked. Now only a run whose time driver is never
+ * finalised does, but the application case is reason enough.
  *
  * So found the invariant here instead of assuming it. This is the first port
  * call of a run, on the thread that is about to use the masking API.
+ *
+ * It is also where the thread's own mask is recorded, so the run can hand it
+ * back. Only for a signal cyros is taking over now: one still in the model
+ * from an earlier run that never handed it back (a time driver never finalised)
+ * keeps the bit recorded when cyros first took it, since the live bit is
+ * cyros's own.
  */
 static void adopt_os_thread()
 {
+   sigset_t live;
+   sigemptyset(&live);
+   pthread_sigmask(SIG_BLOCK, nullptr, &live);
+
+   for (auto const& s : owned_signals) {
+      if (borrowed.adopted && !handed_back(s)) continue;
+      borrowed.caller_blocked &= ~s.token_bit;
+      if (sigismember(&live, s.signo) != 0) borrowed.caller_blocked |= s.token_bit;
+   }
+   borrowed.adopted     = true;
+   borrowed.handed_back = 0;
+
    /* A signal already pending on this thread would be delivered the moment
     * the mask opens. Consume the ones about to be unblocked: delivering one
     * now would find no cyros handler installed, and timer_signo's default
@@ -631,6 +702,66 @@ void drain_pending_signal(int signo)
 
    struct timespec const immediately = {};
    while (sigtimedwait(&only, nullptr, &immediately) >= 0) { }
+}
+
+} // namespace cyros::port
+
+/**
+ * @brief Give the thread the kernel borrowed back its own mask bit for every
+ *        owned signal that nothing can raise any more.
+ *
+ * Called at the two moments that can change the answer: the end of
+ * cyros_port_start_cores(), when the cores have stopped, and a source closing.
+ * Whichever comes last finds both conditions true and does it.
+ *
+ * Never while cores are running, which both callers guarantee: start_cores
+ * calls it after the last join, and source_closed() refuses a mid-run close.
+ * A no-op on any other thread (never adopted). Before a run it does hand back,
+ * which is right for a thread that is not yet a core, and
+ * cyros_port_start_cores() refuses to start one that has not been adopted
+ * again since.
+ *
+ * Nothing is drained here. Each caller drains before it gets here: the core
+ * port the stale reschedule, time teardown the queued ticks.
+ */
+static void hand_back_signals()
+{
+   if (!borrowed.adopted) return;
+
+   cyros_mask_token_t const still_open = open_sources.load(std::memory_order_acquire);
+
+   for (auto const& s : owned_signals) {
+      if (handed_back(s)) continue;
+      if ((still_open & s.token_bit) != 0) continue;
+
+      sigset_t only;
+      sigemptyset(&only);
+      sigaddset(&only, s.signo);
+      bool const caller_had_it_blocked = (borrowed.caller_blocked & s.token_bit) != 0;
+      pthread_sigmask(caller_had_it_blocked ? SIG_BLOCK : SIG_UNBLOCK, &only, nullptr);
+
+      borrowed.handed_back |= s.token_bit;
+   }
+}
+
+namespace cyros::port
+{
+
+void source_opened(int signo)
+{
+   open_sources.fetch_or(row_for(signo).token_bit, std::memory_order_acq_rel);
+}
+
+void source_closed(int signo)
+{
+   // The only source is time, closed by its teardown, and time::finalise()
+   // documents that it runs after the kernel has stopped. Mid-run it has just
+   // deleted every core's timer under a live kernel, and handing the signal
+   // back would open it on a running core. Refuse loudly.
+   CYROS_ASSERT(!global.cores_launched()); // time::finalise() while the kernel runs
+
+   open_sources.fetch_and(~row_for(signo).token_bit, std::memory_order_acq_rel);
+   hand_back_signals();
 }
 
 } // namespace cyros::port
@@ -857,6 +988,12 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    uint32_t fp_size = sigctx_fpstate_size();
    CYROS_ASSERT(fp_size <= SIGCTX_FPSTATE_CAPACITY); // raise capacity or use a dyn context
 
+   // cyros_port_init() adopted this thread and put every owned signal back in
+   // the model. One handed back since (a time driver finalised before the
+   // kernel started) would go unmasked on core 0 for the whole run.
+   CYROS_ASSERT(borrowed.adopted);
+   CYROS_ASSERT_OP(borrowed.handed_back, ==, 0u);
+
    global.cores = std::vector<cpu_core>(cores_to_use);
    for (auto const [index, core] : std::views::enumerate(global.cores)) {
       core.core_id = index;
@@ -955,6 +1092,12 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    }
 
    global.reset();
+
+   // The cores have stopped, so hand this thread back its own mask for every
+   // signal nothing else holds open. The reschedule goes back now. The timer
+   // goes back here only if no time driver ran, and otherwise at time teardown,
+   // because until then its ticks are live and would land on a stopped kernel.
+   hand_back_signals();
 }
 
 void cyros_port_send_reschedule_ipi(uint32_t core_id)
