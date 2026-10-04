@@ -59,12 +59,6 @@ uint64_t cyros_port_time_freq_hz(void)
    return 1'000'000ull; // 1 tick = 1 us (recommend)
 }
 
-void cyros_port_time_reset(uint64_t t)
-{
-   time_instance.now.store(t, std::memory_order_release);
-   time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
-}
-
 void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t h, void* arg)
 {
    time_instance.isr_arg.store(arg, std::memory_order_relaxed);
@@ -90,7 +84,18 @@ void cyros_port_time_disarm(void)
    time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
 }
 
-// Linux-only helper for tests
+// Linux-only helpers for tests, outside the port contract. A test declares
+// the ones it uses itself.
+
+// Set the counter and clear any armed deadline, so each test case starts from
+// a known time. It was in the contract once, which made every port implement
+// it for these tests alone.
+extern void cyros_port_time_reset(uint64_t t)
+{
+   time_instance.now.store(t, std::memory_order_release);
+   time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
+}
+
 extern void cyros_port_time_advance(uint64_t delta)
 {
    time_instance.now.fetch_add(delta, std::memory_order_release);
@@ -102,9 +107,4 @@ extern void cyros_port_time_fire_isr(void)
    if (handler) {
       handler(time_instance.isr_arg.load(std::memory_order_acquire));
    }
-}
-
-void cyros_port_send_time_ipi(uint32_t /*core_id*/)
-{
-   // SMP simulation TODO: poke target core thread.
 }

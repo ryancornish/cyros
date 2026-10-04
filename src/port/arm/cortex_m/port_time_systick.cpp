@@ -475,21 +475,6 @@ std::uint64_t cyros_port_time_freq_hz(void)
    return configured_tick_hz;
 }
 
-void cyros_port_time_reset(std::uint64_t time)
-{
-   cyros_mask_token_t const token = cyros_port_irq_save();
-
-   if (active_mode == timer_mode::tickless) {
-      base = time;
-      restart_interval_locked(base);
-   }
-   else {
-      tick_count = time;
-   }
-
-   cyros_port_irq_restore(token);
-}
-
 void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t handler, void* arg)
 {
    cyros_mask_token_t const token = cyros_port_irq_save();
@@ -573,13 +558,6 @@ void cyros_port_time_disarm(void)
     * to a full period. Restarting here would discard cycles for nothing. */
 
    cyros_port_irq_restore(token);
-}
-
-void cyros_port_send_time_ipi(std::uint32_t core_id)
-{
-   /* Single core: the time core is always this core, so there is nothing to
-    * notify. port_mcu.h explicitly permits an empty implementation. */
-   CYROS_ASSERT_OP(core_id, ==, 0u);
 }
 
 

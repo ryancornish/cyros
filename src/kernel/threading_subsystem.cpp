@@ -17,8 +17,7 @@ thread::thread(entry_fn&& entry, std::span<std::byte> stack, priority priority, 
       priority,
       affinity,
       slayout.user_stack,
-      std::move(entry),
-      this
+      std::move(entry)
    );
    thread_registry::register_thread(*tcb);
 }
@@ -29,15 +28,11 @@ thread::~thread()
    if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty
 
    CYROS_ASSERT(tcb->state == thread_state::terminated);
-   tcb->public_thread_handle = nullptr;
 }
 
 thread::thread(thread&& other) noexcept : tcb(other.tcb)
 {
-   other.tcb = nullptr;
-   if (tcb != nullptr) {
-      tcb->public_thread_handle = this; // moving an empty handle is legal, and a no-op
-   }
+   other.tcb = nullptr;   // moving an empty handle is legal, and a no-op
 }
 
 thread& thread::operator=(thread&& other) noexcept
@@ -52,14 +47,10 @@ thread& thread::operator=(thread&& other) noexcept
    // abandon a live thread silently.
    if (tcb != nullptr) {
       CYROS_ASSERT(tcb->state == thread_state::terminated); // Assigned over a live thread
-      tcb->public_thread_handle = nullptr;
    }
 
    tcb = other.tcb;
    other.tcb = nullptr;
-   if (tcb != nullptr) {
-      tcb->public_thread_handle = this;
-   }
    return *this;
 }
 
@@ -88,10 +79,8 @@ void thread::join() noexcept
 thread_control_block::thread_control_block(thread::priority priority,
                                            core_affinity affinity,
                                            std::span<std::byte> stack,
-                                           thread::entry_fn&& entry,
-                                           thread* public_thread_handle)
+                                           thread::entry_fn&& entry)
    : base_priority(priority),
-     public_thread_handle(public_thread_handle),
      affinity(affinity),
      stack(stack),
      entry(std::move(entry))

@@ -195,20 +195,6 @@ std::uint64_t cyros_port_time_freq_hz(void)
    return configured_tick_hz;
 }
 
-void cyros_port_time_reset(std::uint64_t time)
-{
-   CYROS_ASSERT_OP(cyros_port_get_core_id(), ==, time_core);
-
-   cyros_mask_token_t const token = cyros_port_irq_save();
-
-   tick_high = static_cast<std::uint32_t>(time >> 32);
-   tick_low  = static_cast<std::uint32_t>(time);
-
-   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
-
-   cyros_port_irq_restore(token);
-}
-
 void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t handler, void* arg)
 {
    cyros_mask_token_t const token = cyros_port_irq_save();
@@ -241,15 +227,6 @@ void cyros_port_time_arm(std::uint64_t deadline)
 void cyros_port_time_disarm(void)
 {
    CYROS_ASSERT(false);
-}
-
-void cyros_port_send_time_ipi(std::uint32_t core_id)
-{
-   /* Every core ticks for itself, so no core has time work to hand to another,
-    * and nothing in the kernel calls this. Kept meaningful rather than empty:
-    * the doorbell that carries a reschedule is the closest thing this target
-    * has to a time interrupt on another core. */
-   cyros_port_send_reschedule_ipi(core_id);
 }
 
 /**

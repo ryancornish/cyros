@@ -107,7 +107,6 @@ struct thread_control_block
     * inputs live on other cores, which is what every priority-inheritance bug in
     * this project's history has been. */
    uint8_t base_priority;
-   thread* public_thread_handle;
 
    // Core pinning
    std::uint32_t pinned_core{0};
@@ -292,8 +291,7 @@ struct thread_control_block
    thread_control_block(thread::priority priority,
                         core_affinity affinity,
                         std::span<std::byte> stack,
-                        thread::entry_fn&& entry,
-                        thread* public_thread_handle);
+                        thread::entry_fn&& entry);
 };
 
 

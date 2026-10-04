@@ -23,8 +23,7 @@ void scheduler::initialise(std::uint32_t const core)
       config::max_priorities-1,
       core_affinity::from_id(core_id),
       slayout.user_stack,
-      idle_task,
-      nullptr
+      idle_task
    );
    idle_thread->id = idle_thread_id;
    idle_thread->state = thread_state::ready;

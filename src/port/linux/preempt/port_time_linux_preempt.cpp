@@ -320,18 +320,6 @@ uint64_t cyros_port_time_freq_hz(void)
    return tick_freq_hz;
 }
 
-void cyros_port_time_reset(uint64_t t)
-{
-   // Resets the shared clock, and clears every core's armed deadline. Intended
-   // for deterministic startup in tests.
-   ts.epoch_ns.store(monotonic_ns(), std::memory_order_release);
-   ts.base_ticks.store(t, std::memory_order_release);
-
-   for (auto& ct : ts.core) {
-      ct.armed_deadline.store(UINT64_MAX, std::memory_order_release);
-   }
-}
-
 void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t h, void* arg)
 {
    ts.isr_arg.store(arg, std::memory_order_relaxed);
@@ -397,14 +385,4 @@ void cyros_port_time_disarm(void)
 extern void cyros_port_time_advance(uint64_t delta)
 {
    (void)delta;
-}
-
-void cyros_port_send_time_ipi(uint32_t core_id)
-{
-   // Nudge the given core to do time work by raising its timer signal. Its ISR
-   // runs on that core and services that core's domain.
-   pid_t tid = ts.core[core_id].tid;
-   if (tid != 0) {
-      syscall(SYS_tgkill, getpid(), tid, timer_signo);
-   }
 }

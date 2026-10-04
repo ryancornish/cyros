@@ -161,19 +161,6 @@ uint64_t cyros_port_time_now(void);
 uint64_t cyros_port_time_freq_hz(void);
 
 /**
- * @brief Reset any internal global time tracking state.
- * @param time Initial time value
- *
- * On embedded targets this is typically meaningless or implemented
- * implicitly by a system reset.
- *
- * Intended primarily for simulation and unit testing to provide
- * deterministic startup conditions.
- * @TODO: SHould I make this extern and invisible in the contract? (Like cyros_port_time_advance)
- */
-void cyros_port_time_reset(uint64_t time);
-
-/**
  * @brief Register an ISR handler for timer interrupts
  * @param handler ISR callback function
  * @param arg Argument to pass to handler
@@ -205,16 +192,6 @@ void cyros_port_time_arm(uint64_t deadline);
  * @brief Disable any pending one-shot.
  */
 void cyros_port_time_disarm(void);
-
-/**
- * @brief Notify the time core that there is pending time work.
- * @param core_id Target core ID
- *
- * If unimplemented on a platform, it may be an empty function.
- * Used for SMP policy where non-time cores enqueue requests for the time core.
- */
-void cyros_port_send_time_ipi(uint32_t core_id);
-
 
 
 #ifdef __cplusplus
