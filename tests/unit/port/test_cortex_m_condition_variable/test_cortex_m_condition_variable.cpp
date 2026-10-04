@@ -86,7 +86,7 @@ bool  order_ok = true;
 
 void waiter(std::size_t const index)
 {
-   for (;;) {
+   while (true) {
       enlist[index].acquire();
 
       if (round_shape == shape::chain) {

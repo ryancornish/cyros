@@ -177,7 +177,7 @@ std::uint64_t cyros_port_time_now(void)
     * reads, the low value belongs to one side of a wrap and there is no way to
     * tell which, so take the second pair. The owning core cannot wrap twice
     * inside this sequence: that would need 2^32 ticks. */
-   for (;;) {
+   while (true) {
       std::uint32_t const high_before = tick_high;
       std::uint32_t const low         = tick_low;
       std::uint32_t const high_after  = tick_high;

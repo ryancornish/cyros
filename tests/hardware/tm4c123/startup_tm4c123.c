@@ -64,7 +64,7 @@ __attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
    cyros_bench_write(p);
    cyros_bench_write("\n");
    board_console_drain();
-   for (;;) {
+   while (true) {
       /* TI's SYSCTL#04: one instruction after a WFI, as cyros_port_idle has. */
       __asm__ volatile("wfi\n nop");
    }
@@ -144,8 +144,25 @@ __attribute__((noreturn)) static void Default_Handler(void)
    cyros_bench_exit(4u);
 }
 
-/* The ARMv7-M vector table. Sixteen system entries, then the TM4C123's
- * device IRQs, of which the tests need none.
+/* The GPIO port interrupts, the only device IRQs any image here takes (the
+ * Orbit demo's buttons and switches, orbit_demo/). Weak, so an image that does
+ * not define one still reports it as unexpected. They alias a handler that is
+ * not declared noreturn, because the real ones return. */
+static void Unexpected_IRQ(void)
+{
+   Default_Handler();
+}
+
+void GPIOA_Handler(void) __attribute__((weak, alias("Unexpected_IRQ")));
+void GPIOB_Handler(void) __attribute__((weak, alias("Unexpected_IRQ")));
+void GPIOC_Handler(void) __attribute__((weak, alias("Unexpected_IRQ")));
+void GPIOD_Handler(void) __attribute__((weak, alias("Unexpected_IRQ")));
+void GPIOE_Handler(void) __attribute__((weak, alias("Unexpected_IRQ")));
+void GPIOF_Handler(void) __attribute__((weak, alias("Unexpected_IRQ")));
+
+/* The ARMv7-M vector table. Sixteen system entries, then all 139 of the
+ * TM4C123GH6PM's device IRQs, so an interrupt enabled by mistake reports as
+ * unexpected rather than vectoring through whatever follows a short table.
  *
  * A union rather than an array of function pointers because entry 0 is the
  * initial stack POINTER, not a handler, and ISO C forbids converting an object
@@ -156,6 +173,9 @@ typedef union
    void (*handler)(void);
    uintptr_t value;
 } vector_entry;
+
+#define DEFAULT_IRQ    { .handler = Default_Handler }
+#define DEFAULT_IRQ_X4 DEFAULT_IRQ, DEFAULT_IRQ, DEFAULT_IRQ, DEFAULT_IRQ
 
 __attribute__((section(".vectors"), used))
 vector_entry const vector_table[] = {
@@ -175,4 +195,24 @@ vector_entry const vector_table[] = {
    { .value   = 0u },                      /* 13 reserved                 */
    { .handler = PendSV_Handler },          /* 14 PendSV, cyros owns this  */
    { .handler = SysTick_Handler },         /* 15 SysTick, cyros owns this */
+   { .handler = GPIOA_Handler },           /* IRQ 0                       */
+   { .handler = GPIOB_Handler },           /* IRQ 1                       */
+   { .handler = GPIOC_Handler },           /* IRQ 2                       */
+   { .handler = GPIOD_Handler },           /* IRQ 3                       */
+   { .handler = GPIOE_Handler },           /* IRQ 4                       */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4,         /* IRQ 5 to 12                 */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4,         /* IRQ 13 to 20                */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4,         /* IRQ 21 to 28                */
+   DEFAULT_IRQ,                            /* IRQ 29                      */
+   { .handler = GPIOF_Handler },           /* IRQ 30                      */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, /* IRQ 31 to 46   */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, /* IRQ 47 to 62   */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, /* IRQ 63 to 78   */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, /* IRQ 79 to 94   */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, /* IRQ 95 to 110  */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, /* IRQ 111 to 126 */
+   DEFAULT_IRQ_X4, DEFAULT_IRQ_X4, DEFAULT_IRQ_X4,                 /* IRQ 127 to 138 */
 };
+
+_Static_assert(sizeof vector_table / sizeof vector_table[0] == 16u + 139u,
+               "the TM4C123GH6PM has 139 device IRQs, the last being 138");

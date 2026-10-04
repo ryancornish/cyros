@@ -68,7 +68,7 @@ __attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
    cyros_bench_write(p);
    cyros_bench_write("\n");
    board_console_drain();
-   for (;;) {
+   while (true) {
       __asm__ volatile("wfi");
    }
 }

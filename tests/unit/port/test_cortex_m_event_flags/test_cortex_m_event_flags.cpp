@@ -65,9 +65,9 @@ constexpr std::uint32_t bit(std::size_t i) { return std::uint32_t{1} << i; }
 
 void waiter(std::size_t const index)
 {
-   for (;;) {
+   while (true) {
       enlist[index].acquire();
-      for (;;) {
+      while (true) {
          (void)flags.wait(bit(index), flags_match::any, flags_exit::consume);
          if (phase_over) break;
          satisfied[index] = satisfied[index] + 1;

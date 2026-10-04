@@ -421,7 +421,7 @@ TEST_F(Trace_Test, GivenAReaderOnAnotherCore_WhenItKeepsUp_ThenEveryRecordArrive
    thread reader(
       [&t]{
          std::array<trace::record, 32> chunk{};
-         for (;;) {
+         while (true) {
             // Done is read BEFORE the last read, so a read that follows it
             // sees every record the writer made.
             bool const done = t.writer_done.load(std::memory_order_acquire);

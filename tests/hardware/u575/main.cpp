@@ -65,7 +65,7 @@ volatile std::uint32_t ping_marker_seen = 0;
 
 void ping()
 {
-   for (;;) {
+   while (true) {
       baton = 1;
       ping_loops = ping_loops + 1;
       switch_count = switch_count + 1;
@@ -86,7 +86,7 @@ void ping()
 
 void pong()
 {
-   for (;;) {
+   while (true) {
       baton = 2;
       pong_loops = pong_loops + 1;
       switch_count = switch_count + 1;

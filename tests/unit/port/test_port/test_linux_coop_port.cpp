@@ -132,7 +132,7 @@ struct ThreadArg
  */
 [[noreturn]] static void park_forever()
 {
-   for (;;) cyros_port_pend_reschedule();
+   while (true) cyros_port_pend_reschedule();
 }
 
 // A thread that records its "thread_id" into trace, then yields `stages` times.

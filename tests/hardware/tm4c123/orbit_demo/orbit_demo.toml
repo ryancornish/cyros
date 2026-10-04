@@ -1,0 +1,24 @@
+# The library the Orbit demo links: the cortex_m port with the tickless SysTick
+# driver, plus sync, chrono and channel, under the demo's own config header.
+#
+# The builder does not link applications, so this profile only produces
+# libcyros.a and its include tree. run_demo.sh compiles the demo against them
+# and links it with the board's files, the way ../run_test.sh links a test.
+[profile]
+name = "tm4c123_orbit_demo"
+toolchain = "../../../../build/toolchains/arm-none-eabi-debug-m4.toml"
+config_header = "orbit_demo_config.hpp"
+
+[layout]
+source_root = "../../../../src"
+output_root = "../../../../out"
+
+[components]
+port = "cortex_m"
+time_driver = "tickless"
+
+[features]
+enable = ["sync", "chrono", "channel"]
+
+[output]
+archive = "libcyros.a"

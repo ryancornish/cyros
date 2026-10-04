@@ -59,7 +59,7 @@ volatile int pongs = 0;
 
 void pong()
 {
-   for (;;) {
+   while (true) {
       to_pong.acquire();
       pongs = pongs + 1;
       to_ping.release();
