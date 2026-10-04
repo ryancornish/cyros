@@ -20,9 +20,11 @@ name = "arm-none-eabi-base"
 # -mfloat-abi=hard with the M33's FPv5-SP-D16.
 #
 # Hard float changes the ABI, so every object in the image must agree, which
-# is why it lives here rather than in a per-target flag. The port enables the
-# FPU in cyros_port_init (CPACR) and PendSV saves s16-s31 conditionally on
-# EXC_RETURN.FType. See port_core_armv7m_armv8m.cpp.
+# is why it lives here rather than in a per-target flag. With it the compiler
+# defines __ARM_FP, and only then does the port enable the FPU in
+# cyros_port_init (CPACR) and save s16-s31 in PendSV, conditionally on
+# EXC_RETURN.FType. See port_core_armv7m_armv8m.cpp. The soft-float M3
+# toolchain has neither.
 #
 # The STM32U575's FPU is the same FPv5-SP-D16, so this matches the hardware.
 
@@ -70,6 +72,10 @@ warnings_as_errors = false
 # of failing to build every one of them. A test that runs here says so with
 # `hosted = false` in its own test.toml.
 hosted = false
+
+# Hard float, so an FPU. test_cortex_m_fpu requires "fpu", and every toolchain
+# extending this one inherits it except the soft-float M3's, which drops it.
+provides = ["fpu"]
 
 # The machine's startup file and linker script, for every test that names no
 # linker script of its own. They follow the runner because they ARE the

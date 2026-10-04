@@ -9,6 +9,11 @@ config = "test_cortex_m_fpu_config.hpp"
 # Skipped by every hosted profile.
 hosted = false
 
+# Its subject is the FP save, and its asm is VFP, so it neither means anything
+# nor compiles without an FPU. Skipped by a toolchain that does not provide one
+# (the soft-float Cortex-M3's).
+requires = ["fpu"]
+
 [components]
 port = "cortex_m"
 

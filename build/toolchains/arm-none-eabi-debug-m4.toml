@@ -30,6 +30,7 @@ sources = [
 # mps2-an386 is QEMU's Cortex-M4 MPS2 image. Its CPU has the 8-region PMSAv7
 # MPU the TM4C123 has, which is what the guard needs. mps2-an385 is the M3
 # image and has no FPU, so the hard-float image faults on its first FP access.
+# arm-none-eabi-debug-m3.toml is the soft-float toolchain for it.
 [runner]
 command = [
    "qemu-system-arm",

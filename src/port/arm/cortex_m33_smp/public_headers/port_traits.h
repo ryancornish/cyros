@@ -27,9 +27,9 @@
  * entry and the PendSV prologue pushes r4-r11 beneath them. Nothing else has
  * to be recorded, so thread::min_stack_size drops accordingly.
  *
- * This grows when hard-float lands. Saving s16-s31 adds 64 bytes to the frame
- * on the STACK, not here, but a lazy-stacking design needs a flag word in the
- * context, and the spare word above is for that.
+ * Hard float did not grow it. s16-s31 are saved on the thread's STACK, and
+ * whether a thread has FP state is FType in the EXC_RETURN saved in its own
+ * frame (arm-port-notes 11), so the word to spare is still spare.
  */
 #define CYROS_PORT_CONTEXT_SIZE  16
 

@@ -1,0 +1,21 @@
+# Unit-test profile for the bare-metal Cortex-M port on ARMv7-M with no FPU.
+#
+# The same port and the same tests as unit_test_cortex_m4.toml, built soft
+# float for a Cortex-M3 and run on QEMU's mps2-an385. test_cortex_m_fpu needs
+# an FPU and is skipped, because this toolchain does not provide one.
+[profile]
+name = "unit_test_cortex_m3"
+toolchain = "../toolchains/arm-none-eabi-debug-m3.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

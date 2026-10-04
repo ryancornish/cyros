@@ -1,10 +1,13 @@
 /**
  * @file startup_mps2_an386.c
- * @brief Reset path and vector table for the QEMU mps2-an386 bench.
+ * @brief Reset path and vector table for the QEMU mps2-an386 and mps2-an385 benches.
  *
- * The an505 startup's ARMv7-M sibling, for the Cortex-M4F image. Everything
- * said there about the split applies here: this is BOARD code, not port code,
- * and libcyros.a contains no vector table and no reset handler.
+ * The an505 startup's ARMv7-M sibling, for the Cortex-M4F image on the AN386
+ * and the soft-float Cortex-M3 image on the AN385. QEMU gives the two machines
+ * one memory map and one SysTick clock, so one board file serves both, and it
+ * touches no FP register, so it builds either way. Everything said in the
+ * an505 startup about the split applies here: this is BOARD code, not port
+ * code, and libcyros.a contains no vector table and no reset handler.
  *
  * Two things differ, the SysTick reference and entry 7 of the vector table,
  * which is SecureFault on ARMv8-M and reserved here.
@@ -42,7 +45,8 @@ extern void (*__init_array_end[])(void);
  * AN505's 20. Measured against semihosting's nanosecond reference over three
  * two-second windows: 24,999,947 to 25,001,285 Hz. Unlike the AN505, the
  * external reference (CLKSOURCE=0) is a different clock here, 999,998 Hz, with
- * SYST_CALIB reading 9999.
+ * SYST_CALIB reading 9999. The AN385 is the same 25 MHz:
+ * test_cortex_m_systick's absolute-rate check passes there (2026-10-04).
  */
 uint32_t cyros_port_systick_clock_hz(void)
 {

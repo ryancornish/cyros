@@ -1,0 +1,38 @@
+name = "arm-none-eabi-debug-m3"
+extends = "arm-none-eabi-debug.toml"
+
+# The FPU-less ARMv7-M bench: a Cortex-M3, soft float. It covers every
+# Mainline part without an FPU, the M3 itself and an M4 or M33 without the F,
+# because the core layer's only FP-dependent code is gated on __ARM_FP, which
+# soft float leaves undefined.
+#
+# It extends the debug toolchain rather than the M4's, so that it removes only
+# the base's flags and stays correct whatever the M4 toolchain adds.
+[flags]
+common_add = ["-mcpu=cortex-m3", "-mfloat-abi=soft"]
+common_remove = ["-mcpu=cortex-m33", "-mfloat-abi=hard", "-mfpu=fpv5-sp-d16"]
+
+# No FPU, so none of what the base toolchain provides. A list here REPLACES the
+# inherited one, and test_cortex_m_fpu, which requires "fpu", is skipped.
+[settings]
+provides = []
+
+# The AN386's board files, unchanged. QEMU gives the AN385 the same memory map
+# and the same 25 MHz SysTick, which test_cortex_m_systick's absolute check
+# confirms on the AN385.
+[board]
+linker_script = "../../tests/unit/port/arm_bench/mps2_an386.ld"
+sources = [
+   "../../tests/unit/port/arm_bench/startup_mps2_an386.c",
+   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+]
+
+[runner]
+command = [
+   "qemu-system-arm",
+   "-M", "mps2-an385",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+timeout = 30

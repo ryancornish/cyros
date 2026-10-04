@@ -6,8 +6,8 @@
  * the dozen registers this port touches, and it brings its own opinions about
  * startup and device headers. Everything needed here is architectural, defined
  * by the ARMv7-M and ARMv8-M Architecture Reference Manuals, and identical on
- * every Mainline Cortex-M part: the QEMU mps2-an505 and mps2-an386 benches, the
- * STM32U575 and the TM4C123.
+ * every Mainline Cortex-M part: the QEMU mps2-an505, mps2-an386 and mps2-an385
+ * benches, the STM32U575 and the TM4C123.
  *
  * The two architectures differ, for this port, in exactly one thing: ARMv8-M
  * has stack-limit registers and ARMv7-M does not. The architecture section
@@ -97,7 +97,8 @@ inline constexpr std::uint32_t cpacr_fpu_full_access = (0x3u << 20) | (0x3u << 2
  * used the FPU, and defers writing s0-s15 into it until something actually
  * needs the registers (lazy stacking).
  *
- * The port KEEPS those defaults. The conditional `vstmdb {s16-s31}` in PendSV
+ * The port KEEPS those defaults, in a build with FP instructions (__ARM_FP)
+ * where it touches the FPU at all. The conditional `vstmdb {s16-s31}` in PendSV
  * is itself an FP instruction, so it forces any pending lazy save out to
  * FPCAR, which points into the OUTGOING thread's frame, before anything
  * switches. That is the ordering the lazy scheme requires, and it is why the

@@ -1,0 +1,22 @@
+# Cortex-M3 bring-up: the port and the kernel, nothing else, built soft float.
+#
+# The FPU-less twin of cortex_m4_bringup.toml, for the same reason:
+# ~/cyros-claude/tools-port-layers.py checks that the core layer exports the
+# same contract with its FP code compiled out as with it in.
+[profile]
+name = "cortex_m3_bringup"
+toolchain = "../toolchains/arm-none-eabi-debug-m3.toml"
+config_header = "../configs/cortex_m33.hpp"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

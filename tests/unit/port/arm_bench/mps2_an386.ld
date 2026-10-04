@@ -1,4 +1,5 @@
-/* Linker script for QEMU's mps2-an386 (Cortex-M4F), the ARMv7-M bench.
+/* Linker script for QEMU's mps2-an386 (Cortex-M4F), the ARMv7-M bench, and
+ * mps2-an385 (Cortex-M3), the FPU-less one, which has the same memory map.
  *
  * Code in the 4 MB SSRAM at 0, data in the SSRAM at 0x20000000. There are no
  * secure aliases on this machine: TrustZone is an ARMv8-M feature. Otherwise

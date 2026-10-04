@@ -2,11 +2,12 @@
  * @file port_core_armv7m_armv8m.cpp
  * @brief ARMv7-M and ARMv8-M Mainline CORE LAYER: all of port_core.h.
  *
- * Benches are QEMU's mps2-an505 (Cortex-M33) and mps2-an386 (Cortex-M4F).
- * Hardware is an STM32U575 (M33) and a TM4C123 (M4F). Everything this file
- * touches is architectural, so each bench and its board are the same target as
- * far as the port is concerned, and the two architectures differ here in one
- * mechanism only: the stack guard (see below).
+ * Benches are QEMU's mps2-an505 (Cortex-M33), mps2-an386 (Cortex-M4F) and
+ * mps2-an385 (Cortex-M3, no FPU). Hardware is an STM32U575 (M33) and a TM4C123
+ * (M4F). Everything this file touches is architectural, so each bench and its
+ * board are the same target as far as the port is concerned, and the two
+ * architectures differ here in one mechanism only: the stack guard (see below).
+ * Whether there is an FPU is a separate question, answered by the build.
  *
  *
  * The central decision: ALL SWITCHING HAPPENS IN PendSV
@@ -87,8 +88,30 @@
  * 128 bytes rather than the architectural minimum of 32: an exception taken
  * with FP state live RESERVES a 104-byte frame but, with lazy stacking, writes
  * only its bottom 32 bytes, so over a thinner guard the write can land wholly
- * below it and nothing faults (Zephyr met this, issue 14828). The toolchain is
- * hard-float, so any thread may have live FP state.
+ * below it and nothing faults (Zephyr met this, issue 14828). Without an FPU
+ * every frame is 32 bytes and that reason goes, but a frame larger than the
+ * window steps over it more easily the thinner it is, so both builds keep 128.
+ *
+ *
+ * Floating point: saved exactly when the image can have it
+ * ========================================================
+ * The FPU enable and PendSV's save of s16-s31 exist only when __ARM_FP is
+ * defined, which is when this translation unit may use FP instructions: hard
+ * float and softfp, not soft. (__VFP_FP__ would be wrong, GCC defines it even
+ * for a Cortex-M3. __ARM_PCS_VFP would be wrong too, it drops softfp, whose
+ * code does use the registers.)
+ *
+ * Without __ARM_FP the port never enables the FPU, so no FP instruction can
+ * execute, CONTROL.FPCA stays clear and every EXC_RETURN has FType set. The
+ * save that is compiled out would never have run. On a part with no FPU the
+ * architecture fixes FType at 1 regardless.
+ *
+ * NOT SUPPORTED: a soft-float build of cyros linked with softfp objects (the
+ * calling convention matches, so the linker allows it) in an application that
+ * turns the FPU on itself. Threads then have FP state this port does not save,
+ * and s16-s31 leak between them. Hard-float objects cannot get in, the linker
+ * refuses to mix the two ABIs. Not checked at run time, because the check would
+ * sit on every switch for a configuration that needs a deliberate FPU enable.
  */
 
 #include <cyros/port/port_core.h>
@@ -311,14 +334,17 @@ void init_this_core()
    cortex_m::disable_irq();
    cortex_m::set_basepri(0u);
 
+#if defined(__ARM_FP)
    /* Turn the FPU on before anything can execute an FP instruction. The kernel
-    * itself uses none, but the toolchain is hard-float, so a user thread may
+    * itself uses none, but this build may contain them, so a user thread may
     * touch one at any time and a disabled FPU turns that into a NOCP
-    * UsageFault a long way from the cause. */
+    * UsageFault a long way from the cause. Without __ARM_FP it stays off, which
+    * is what lets PendSV skip the FP save (see the header). */
    cortex_m::reg(cortex_m::scb_cpacr) =
       cortex_m::reg(cortex_m::scb_cpacr) | cortex_m::cpacr_fpu_full_access;
    cortex_m::dsb();
    cortex_m::isb();
+#endif
 
    /* The spacing between PendSV and SysTick is a whole preemption GROUP only
     * under the PRIGROUP it was derived for (see cyros_port_init). A core whose
@@ -590,6 +616,7 @@ extern "C" [[gnu::naked]] void PendSV_Handler(void)
 {
    asm volatile(
       "mrs   r0, psp                    \n"  /* the interrupted thread's stack  */
+#if defined(__ARM_FP)
       /* FType (bit 4) is CLEAR when this thread has an extended exception
        * frame, i.e. when it has used the FPU. s0-s15 and FPSCR are the
        * hardware's business; s16-s31 are callee-saved and ours. Executing this
@@ -598,6 +625,7 @@ extern "C" [[gnu::naked]] void PendSV_Handler(void)
       "tst   lr, #0x10                  \n"
       "it    eq                         \n"
       "vstmdbeq r0!, {s16-s31}          \n"
+#endif
       "stmdb r0!, {r4-r11, lr}          \n"  /* callee-saved, plus EXC_RETURN   */
       "msr   psp, r0                    \n"
       "push  {r3, lr}                   \n"  /* keeps MSP 8-aligned across the bl */
@@ -605,11 +633,13 @@ extern "C" [[gnu::naked]] void PendSV_Handler(void)
       "pop   {r3, lr}                   \n"
       "mrs   r0, psp                    \n"  /* possibly a DIFFERENT stack now  */
       "ldmia r0!, {r4-r11, lr}          \n"  /* including THAT thread's EXC_RETURN */
+#if defined(__ARM_FP)
       /* Mirrors the prologue, and keys off the INCOMING thread's EXC_RETURN,
        * which the ldmia above has just restored. */
       "tst   lr, #0x10                  \n"
       "it    eq                         \n"
       "vldmiaeq r0!, {s16-s31}          \n"
+#endif
       "msr   psp, r0                    \n"
       "bx    lr                         \n"  /* exception return unstacks the rest */
    );

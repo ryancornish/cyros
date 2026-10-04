@@ -2,11 +2,13 @@ name = "cortex_m"
 
 description = "Generic single-core Cortex-M (ARMv7-M or ARMv8-M Mainline): core peripherals only."
 
-# One target for the M33 and the M4 alike: everything here is SysTick and the
-# single-core identity trio, which no Mainline part answers differently. The
-# toolchain's -mcpu picks the architecture, and the core layer picks its stack
-# guard from that. Serves QEMU's mps2-an505 (M33), the STM32U575 and the
-# TM4C123 (M4F), the boards through their own startup files.
+# One target for the M33, the M4 and the M3 alike: everything here is SysTick
+# and the single-core identity trio, which no Mainline part answers
+# differently. The toolchain's -mcpu picks the architecture, and the core layer
+# picks its stack guard from that. Its float flags decide whether the core
+# layer saves FP state. Serves QEMU's mps2-an505 (M33), mps2-an386 (M4F) and
+# mps2-an385 (M3), the STM32U575 and the TM4C123 (M4F), the boards through
+# their own startup files.
 extends = "armv7m_armv8m"
 
 # The MCU half of the contract, split by topic. The identity/bring-up trio is
