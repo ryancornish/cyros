@@ -59,5 +59,8 @@ out/
 *.hex
 *.map
 
+# Python bytecode, from the board runners
+__pycache__/
+
 # IDE config, local to a machine
 .vscode/

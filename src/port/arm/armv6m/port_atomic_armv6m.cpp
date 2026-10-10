@@ -75,8 +75,8 @@ bool compare_exchange(volatile void* address, void* expected, T desired) noexcep
 
 /* One set per width GCC calls out for: 1, 2 and 4 bytes. The 8-byte forms are
  * deliberately absent, so a 64-bit atomic stays a link error here as on every
- * other target (CLAUDE_cyros.md 6a, trap 3). The memory-order arguments are
- * ignored: every one of these is sequentially consistent. */
+ * other target (CLAUDE_cyros-bare-metal.md 1, trap 3). The memory-order
+ * arguments are ignored: every one of these is sequentially consistent. */
 #define CYROS_ARMV6M_ATOMICS(N, T)                                                         \
    extern "C" T __atomic_exchange_##N(volatile void* p, T v, int)                          \
    {                                                                                       \

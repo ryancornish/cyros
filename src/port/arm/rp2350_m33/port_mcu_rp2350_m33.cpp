@@ -97,7 +97,7 @@ constexpr std::uint32_t  actlr_extexclall = 1u << 29;
 
 /* A read whose value is not wanted. `(void)reg(a)` would not do: a discarded
  * call returning a volatile reference is never converted to a value, so the
- * load is not emitted (CLAUDE_cyros.md 6c). */
+ * load is not emitted (CLAUDE_cyros-bare-metal.md 1, trap 1). */
 inline std::uint32_t load(std::uintptr_t address) noexcept
 {
    return cortex_m::reg(address);

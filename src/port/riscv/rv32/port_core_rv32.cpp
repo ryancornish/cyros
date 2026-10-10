@@ -88,6 +88,10 @@
  *
  * What it cannot catch, as on ARMv7-M: a frame larger than the guard whose
  * stores all miss it, the sp stepping over it in one adjustment.
+ *
+ * CYROS_RISCV_STACK_GUARD set to 0 builds it out: PMP entry 0 is left to the
+ * application, no buffer loses its spill zone, and a switch writes no pmpaddr.
+ * It is local to this file, a switch for measuring or ruling the guard out.
  */
 
 #include <cyros/port/port_core.h>
@@ -101,6 +105,10 @@
 
 #include <cstddef>
 #include <cstdint>
+
+#ifndef CYROS_RISCV_STACK_GUARD
+#define CYROS_RISCV_STACK_GUARD 1
+#endif
 
 namespace riscv = cyros::port::riscv;
 
@@ -134,9 +142,18 @@ cyros_port_reschedule_t reschedule_handler = nullptr;
 constexpr std::uintptr_t guard_bytes = 128u;
 constexpr std::uintptr_t spill_bytes = 256u;
 
+constexpr bool guard_built = CYROS_RISCV_STACK_GUARD != 0;
+
 /* PMP entry 0's configuration byte, from the target, or 0 for no guard.
  * Written by the bootstrap core in cyros_port_init, read everywhere after. */
 std::uint8_t guard_cfg = 0u;
+
+/* Whether threads are guarded: built in, and the target able. Built out, every
+ * use folds away. */
+inline bool guarded() noexcept
+{
+   return guard_built && guard_cfg != 0u;
+}
 
 /* pmpaddr for a NAPOT region of guard_bytes at `bottom`, which is aligned to
  * guard_bytes: the base over four, with size/8 - 1 in the low bits. */
@@ -384,7 +401,7 @@ extern "C" [[gnu::weak]] void cyros_riscv_fault_handler(std::uint32_t mcause, st
    auto const entry = reinterpret_cast<std::uint32_t>(&cyros_port_trap_entry);
    auto const exit  = reinterpret_cast<std::uint32_t>(&cyros_port_trap_exit);
    bool const access = mcause == riscv::cause_load_access || mcause == riscv::cause_store_access;
-   if (access && epc >= entry && epc < exit) {
+   if (guarded() && access && epc >= entry && epc < exit) {
       riscv::write0("\n*** stack overflow: the trap entry could not save a frame (the guard) ***");
    }
    unexpected_trap(mcause, epc);
@@ -427,8 +444,10 @@ void init_this_core()
    /* PMP entry 0 binding machine mode, and every hart able to do so if the
     * bootstrap core was. Off until cyros_port_start_first has a thread to
     * guard: the bring-up runs on the boot stack. */
-   CYROS_ASSERT_OP(stack_guard_setup(), ==, guard_cfg);
-   set_guard_enabled(0u);
+   if constexpr (guard_built) {
+      CYROS_ASSERT_OP(stack_guard_setup(), ==, guard_cfg);
+      set_guard_enabled(0u);
+   }
 }
 
 } // namespace cyros::port::riscv
@@ -438,7 +457,9 @@ void cyros_port_init(cyros_port_reschedule_t handler)
    CYROS_ASSERT(handler != nullptr);
    /* The bootstrap core decides whether there is a guard, and every core's
     * init_this_core, this one's included, checks it agrees. */
-   guard_cfg = riscv::stack_guard_setup();
+   if constexpr (guard_built) {
+      guard_cfg = riscv::stack_guard_setup();
+   }
    reschedule_handler = handler;
    riscv::init_this_core();
 }
@@ -519,7 +540,7 @@ void cyros_port_context_init(cyros_port_context* context,
     * decision is cyros_port_init's, so it must have run. */
    CYROS_ASSERT(reschedule_handler != nullptr);
    std::uint32_t guard = 0u;
-   if (guard_cfg != 0u) {
+   if (guarded()) {
       std::uintptr_t const bottom = (base + spill_bytes + guard_bytes - 1u) & ~(guard_bytes - 1u);
       CYROS_ASSERT_OP(top - riscv::frame_bytes, >, bottom + guard_bytes);
       guard = guard_pmpaddr(bottom);
@@ -571,7 +592,7 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
    /* The incoming thread's guard. The trap runs on the interrupt stack, and
     * its exit reads the new frame, which lies above the new guard, so the
     * moment of the move is free. */
-   if (guard_cfg != 0u) {
+   if (guarded()) {
       riscv::write_pmpaddr0(to->guard);
    }
 }
@@ -595,7 +616,7 @@ void cyros_port_start_first(cyros_port_context* first)
 
    /* The first thread's guard, and entry 0 on from here: only threads run on
     * guarded stacks, never this core's boot or interrupt stack. */
-   if (guard_cfg != 0u) {
+   if (guarded()) {
       riscv::write_pmpaddr0(first->guard);
       set_guard_enabled(guard_cfg);
    }

@@ -3,10 +3,10 @@
  * @brief The board's console: SEGGER RTT, a ring buffer in SRAM that the
  *        runner reads over SWD (drive_test.py).
  *
- * The Pico 2 W has no UART wired to the Debug Probe here, and semihosting
- * halts the core for 100 ms a line (rp2350-notes.md 7a), so the tests' output
- * goes through RTT. A write blocks while the buffer is full, as a polled UART
- * does, so nothing is lost when the host is slow.
+ * Semihosting halts the core for 100 ms a line (rp2350-notes.md 7a), and RTT
+ * needs nothing but the SWD the runner already uses, so the tests' output goes
+ * through RTT. A write blocks while the buffer is full, as a polled UART does,
+ * so nothing is lost when the host is slow.
  */
 #include "board.h"
 
