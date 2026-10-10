@@ -47,7 +47,7 @@ arm-none-eabi-gcc "${common[@]}" -c "$here/console.c"           -o "$out/console
 # independent (they exist to PANIC if anything reaches a heap or a file
 # descriptor) and a second copy here would drift from the one the QEMU tests use.
 arm-none-eabi-gcc "${common[@]}" \
-   -c "$cyros_root/tests/unit/port/arm_bench/syscall_stubs.c" -o "$out/syscall_stubs.o"
+   -c "$cyros_root/tests/unit/common/syscall_stubs.c" -o "$out/syscall_stubs.o"
 arm-none-eabi-g++ "${cxx[@]}" \
    -I "$lib_dir/include" -I "$cyros_root/tests/unit" \
    -c "$here/main.cpp" -o "$out/main.o"

@@ -24,7 +24,7 @@ common_remove = ["-mcpu=cortex-m33", "-mfpu=fpv5-sp-d16"]
 linker_script = "../../tests/unit/port/arm_bench/mps2_an386.ld"
 sources = [
    "../../tests/unit/port/arm_bench/startup_mps2_an386.c",
-   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+   "../../tests/unit/common/syscall_stubs.c",
 ]
 
 # mps2-an386 is QEMU's Cortex-M4 MPS2 image. Its CPU has the 8-region PMSAv7

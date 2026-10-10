@@ -1,0 +1,18 @@
+[test]
+name = "test_target_smp_ipi"
+layer = 6
+kind = "unit"
+source = "test_target_smp_ipi.cpp"
+config = "test_target_smp_ipi_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = ["cortex_m33_smp", "riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp"]
+time_driver = "periodic"
+features = ["sync"]
+
+[link]
+system_libraries = []

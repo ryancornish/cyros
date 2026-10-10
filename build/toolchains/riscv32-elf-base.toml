@@ -1,0 +1,73 @@
+name = "riscv32-elf-base"
+
+# Bare-metal 32-bit RISC-V in machine mode: QEMU's virt and the RP2350's
+# Hazard3. GCC 16 with newlib, the compiler and C library the ARM toolchain
+# uses, so the two ISAs build cyros the same way and their figures compare
+# (~/cyros-claude/riscv-port-plan.md 2). riscv64-elf-gcc is a multilib
+# compiler despite its prefix: -march and -mabi below select its rv32imac/ilp32
+# libraries (`riscv64-elf-gcc -print-multi-lib`), and so does any -march that
+# adds Z extensions to rv32imac.
+#
+# Compiled hosted, not -ffreestanding, for arm-none-eabi-base.toml's reason:
+# libstdc++ is built against newlib and expects it.
+
+[tools]
+cc = "riscv64-elf-gcc"
+cxx = "riscv64-elf-g++"
+ar = "riscv64-elf-gcc-ar"
+asm = "riscv64-elf-gcc"
+objcopy = "riscv64-elf-objcopy"
+
+# RV32IMAC, what QEMU's virt and every RV32 microcontroller core runs. A
+# board with more (the Hazard3) says so in its own toolchain.
+#
+# CYROS_BENCH_MTIME is for the tests: every RISC-V board here keeps time on
+# MTIME, a 64-bit counter with no period to cross (test_target_idle says why
+# it matters).
+[flags]
+common = [
+   "-march=rv32imac_zicsr_zifencei",
+   "-mabi=ilp32",
+   "-mcmodel=medany",
+   "-ffunction-sections",
+   "-fdata-sections",
+   "-DCYROS_BENCH_MTIME=1",
+]
+c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions"]
+cxx = ["-std=gnu++26", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions", "-fno-rtti"]
+asm = []
+
+# As arm-none-eabi-base.toml: the board owns the reset path (-nostartfiles),
+# and cyros has no link dependency on libstdc++ (-nostdlib++, enforced). An
+# SRAM image is one RWX segment, which ld otherwise warns about.
+link = ["-nostartfiles", "-Wl,--gc-sections", "-nostdlib++", "-Wl,--no-warn-rwx-segments"]
+
+[settings]
+family = "gcc"
+debug = false
+optimization = "0"
+warnings_as_errors = false
+hosted = false
+
+# No FPU: RV32IMAC has no F.
+provides = []
+
+# QEMU's virt: the board parks every hart but 0 until the port releases it,
+# and talks semihosting. syscall_stubs.c is newlib's OS interface, as on ARM.
+[board]
+linker_script = "../../tests/unit/port/riscv_bench/riscv_virt.ld"
+sources = [
+   "../../tests/unit/port/riscv_bench/startup_riscv_virt.c",
+   "../../tests/unit/common/syscall_stubs.c",
+]
+
+[runner]
+command = [
+   "qemu-system-riscv32",
+   "-M", "virt",
+   "-bios", "none",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+timeout = 30

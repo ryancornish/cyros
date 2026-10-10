@@ -340,6 +340,33 @@ void init_this_core();
  */
 std::uint32_t device_irq_priority();
 
+/**
+ * @brief The calling core's DWT cycle counter, extended to 64 bits.
+ *
+ * Started on first use, per core, so stamps from two cores do not compare.
+ * Defined by the core layer, because the DWT is core hardware, for a target
+ * with nothing better to return from timestamp().
+ */
+std::uint64_t cycle_counter_timestamp() noexcept;
+
+/* ============================================================================
+ * What the core layer needs from its TARGET
+ * ----------------------------------------------------------------------------
+ * Declared here, defined by the target. Not part of port_mcu.h, because it is
+ * internal to the ARM tree, as riscv.hpp's target functions are to the RISC-V
+ * one.
+ * ========================================================================= */
+
+/**
+ * @brief The counter behind cyros_port_timestamp.
+ *
+ * The target's choice, because only it knows whether a per-core cycle count
+ * is enough or stamps must compare across cores. cycle_counter_timestamp() is
+ * the per-core answer. The RP2350 answers with its shared MTIME at the core
+ * clock (rp2350-notes.md 10), as its RISC-V target does.
+ */
+std::uint64_t timestamp() noexcept;
+
 } // namespace cyros::port::cortex_m
 
 #endif /* CYROS_PORT_CORTEX_M_HPP */

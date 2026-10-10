@@ -1,0 +1,44 @@
+name = "riscv32-elf-rp2350"
+extends = "riscv32-elf-debug.toml"
+
+# The debug toolchain (riscv32-elf-base.toml) for the Pico 2 W's
+# Hazard3 core 0 instead of QEMU's virt: its board and its runner. The image
+# runs from SRAM, and nothing is written to flash or OTP.
+#
+# Hazard3's own instruction set, the datasheet's -march for GCC 14 and later
+# (section 3.8.1.2, rp2350-notes.md 6a): bit manipulation (Zba, Zbb, Zbs,
+# Zbkb) and the denser compressed set (Zcb, and Zcmp, whose cm.push and
+# cm.popret replace prologue and epilogue sequences). The rv32imac multilib
+# still links. Erratum E31 makes mepc wrong for a fault inside cm.popret, which
+# costs a panic report its address and nothing else here.
+[flags]
+common_add = ["-march=rv32ima_zicsr_zifencei_zba_zbb_zbs_zbkb_zca_zcb_zcmp"]
+common_remove = ["-march=rv32imac_zicsr_zifencei"]
+
+# The board's startup enters at _entry from the boot ROM or the debugger,
+# brings up 150 MHz and MTIME, and gives the tests an RTT console
+# (tests/hardware/rp2350/startup_rp2350_hazard3.c says how).
+[board]
+linker_script = "../../tests/hardware/rp2350/rp2350_hazard3.ld"
+sources = [
+   "../../tests/hardware/rp2350/startup_rp2350_hazard3.c",
+   "../../tests/hardware/rp2350/console_rtt.c",
+   "../../tests/unit/common/syscall_stubs.c",
+]
+
+# run_test.sh boots the image, streams its console and exits with its status
+# (RP2350_BOOT picks the boot ROM or the debugger). The builder runs a test
+# from the test's own directory and does not resolve a runner's path, so the
+# script is found from the repository root.
+[runner]
+command = [
+   "sh", "-c",
+   "exec \"$(git rev-parse --show-toplevel)/tests/hardware/rp2350/run_test.sh\" \"$0\"",
+   "{binary}",
+]
+
+# The driver gives up on a started image after RP2350_TEST_TIMEOUT (30 s by
+# default) and resets the board, and run_test.sh retries once an image the
+# board never visibly started. This backstop applies only under
+# --test-timeout 0, because the builder's own default of 60 s otherwise wins.
+timeout = 120

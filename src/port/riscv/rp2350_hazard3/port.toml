@@ -4,14 +4,14 @@ description = "The RP2350's Hazard3 core 0: SIO soft IRQ and MTIME."
 
 extends = "rv32"
 
-# The identity trio and the SIO, then the MTIME time source shared with
-# riscv_virt, which lives in ../common.
+# The identity trio and the SIO, then the MTIME time source, which lives in
+# src/port/common because the same chip's Cortex-M33 targets compile it too.
 sources = [
    "port_mcu_rp2350_hazard3.cpp",
-   "../common/port_time_mtime.cpp",
+   "../../common/port_time_mtime.cpp",
 ]
 
-private_includes = ["../common"]
+private_includes = ["../../common"]
 
 public_headers = [
    "public_headers/port_traits.h -> cyros/port/port_traits.h",

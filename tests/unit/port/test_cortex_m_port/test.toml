@@ -12,7 +12,7 @@ hosted = false
 [components]
 # Locked to the bare-metal port. It reads PRIMASK and BASEPRI directly, so it
 # is meaningless anywhere else and is skipped on a host run.
-port = "cortex_m"
+port = ["cortex_m", "rp2350_m33"]
 
 [link]
 # No gtest: it does not run bare metal, and this test uses the tiny harness in

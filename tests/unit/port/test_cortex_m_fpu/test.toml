@@ -15,7 +15,7 @@ hosted = false
 requires = ["fpu"]
 
 [components]
-port = "cortex_m"
+port = ["cortex_m", "rp2350_m33"]
 
 [link]
 system_libraries = []

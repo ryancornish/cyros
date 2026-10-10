@@ -6,6 +6,8 @@ variants = [
    "linux_preempt",
    "cortex_m",
    "cortex_m33_smp",
+   "rp2350_m33",
+   "rp2350_m33_smp",
    "riscv_virt",
    "rp2350_hazard3",
    "riscv_virt_smp",

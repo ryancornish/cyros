@@ -18,13 +18,13 @@ common_remove = ["-mcpu=cortex-m33", "-mfloat-abi=hard", "-mfpu=fpv5-sp-d16"]
 provides = []
 
 # The AN386's board files, unchanged. QEMU gives the AN385 the same memory map
-# and the same 25 MHz SysTick, which test_cortex_m_systick's absolute check
+# and the same 25 MHz SysTick, which test_target_tick's absolute check
 # confirms on the AN385.
 [board]
 linker_script = "../../tests/unit/port/arm_bench/mps2_an386.ld"
 sources = [
    "../../tests/unit/port/arm_bench/startup_mps2_an386.c",
-   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+   "../../tests/unit/common/syscall_stubs.c",
 ]
 
 [runner]

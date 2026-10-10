@@ -128,7 +128,7 @@ void test_pendsv_is_strictly_the_lowest_priority()
     * concerned. Raising BASEPRI to PendSV's level then masked SysTick too, and
     * every kernel critical section stopped the clock.
     *
-    * test_cortex_m_systick catches this too, but only by running a real
+    * test_target_tick catches this too, but only by running a real
     * interrupt. This is the cheap version of that check. */
    std::uint32_t const prigroup = (read32(scb_aircr) >> 8) & 0x7u;
    std::uint32_t const sub_bits = prigroup + 1u;

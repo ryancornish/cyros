@@ -69,7 +69,7 @@ compile "$here/screen.cpp"
 compile "$board/startup_tm4c123.c"
 compile "$board/board_clock.c"
 compile "$board/console.c"
-compile "$cyros_root/tests/unit/port/arm_bench/syscall_stubs.c"
+compile "$cyros_root/tests/unit/common/syscall_stubs.c"
 
 elf="$out/orbit_demo.elf"
 arm-none-eabi-g++ "${common[@]}" -nostartfiles -nostdlib++ -Wl,--gc-sections \

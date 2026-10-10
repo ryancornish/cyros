@@ -87,7 +87,7 @@ provides = ["fpu"]
 linker_script = "../../tests/unit/port/arm_bench/mps2_an505.ld"
 sources = [
    "../../tests/unit/port/arm_bench/startup_mps2_an505.c",
-   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+   "../../tests/unit/common/syscall_stubs.c",
 ]
 
 # How a binary built by this toolchain is executed. Without this the runner

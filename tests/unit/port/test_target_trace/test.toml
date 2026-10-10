@@ -1,0 +1,18 @@
+[test]
+name = "test_target_trace"
+layer = 7
+kind = "unit"
+source = "test_target_trace.cpp"
+config = "test_target_trace_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = ["cortex_m", "riscv_virt", "rp2350_hazard3", "rp2350_m33"]
+time_driver = "periodic"
+features = ["sync"]
+
+[link]
+system_libraries = []

@@ -1,0 +1,21 @@
+[test]
+name = "test_target_smp_atomics"
+layer = 0
+kind = "unit"
+
+# The subject is a port promise, that the ISA's atomic instructions exclude
+# each other across cores, and it can only be observed with a thread running
+# on each core, which is the layer 2 bring-up.
+harness_debt = { layer = 2, reason = "cross-core atomicity needs a thread on each core, so it cannot be observed below the two-core bring-up" }
+source = "test_target_smp_atomics.cpp"
+config = "test_target_smp_atomics_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = ["cortex_m33_smp", "riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp"]
+
+[link]
+system_libraries = []

@@ -47,7 +47,7 @@
 using namespace cyros;
 
 static_assert(config::cores == 2, "This bring-up is dual core");
-static_assert(CYROS_PORT_CORE_COUNT == 2, "Needs the cortex_m33_smp port");
+static_assert(CYROS_PORT_CORE_COUNT == 2, "Needs a two-core Cortex-M33 port");
 
 namespace
 {
@@ -206,7 +206,7 @@ void thread_on_core0()
 
 extern "C" int cyros_bench_main()
 {
-   cyros::bench::print("cortex_m33_smp kernel bring-up, mps2-an521\n\n");
+   cyros::bench::print("two Cortex-M33 cores, one kernel: bring-up\n\n");
 
    /* Before the kernel starts, only core 0 is running: CPU1 is held at reset
     * until cyros_port_start_cores releases it. So this reads 0 for the same

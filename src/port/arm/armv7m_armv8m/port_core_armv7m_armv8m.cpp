@@ -406,7 +406,7 @@ void cyros_port_init(cyros_port_reschedule_t handler)
     *
     * No check that looks at the priority NUMBERS can see this, since the two
     * values do differ. Only an interrupt actually firing shows it, which is
-    * what test_cortex_m33_systick is for.
+    * what test_target_tick is for.
     *
     * PRIGROUP is read rather than written, because an application may have set
     * it for its own device IRQs. The cost is that changing PRIGROUP after
@@ -818,6 +818,13 @@ cycle_extension cycle_extensions[CYROS_PORT_CORE_COUNT] = {};
 } // namespace
 
 uint64_t cyros_port_timestamp(void)
+{
+   /* The target's counter: the DWT below on most, a shared timer where stamps
+    * must compare across cores (cortex_m.hpp). */
+   return cortex_m::timestamp();
+}
+
+std::uint64_t cortex_m::cycle_counter_timestamp() noexcept
 {
    /* Masked so that reading the counter and extending it are one step: an
     * interrupt taking its own stamp in between would see the same wrap and

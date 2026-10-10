@@ -1,0 +1,18 @@
+[test]
+name = "test_mtime_tickless"
+layer = 1
+kind = "unit"
+
+# time::start() is per-core and requires a running kernel, exactly as for the
+# Cortex-M tickless test.
+harness_debt = { layer = 2, reason = "time::start() is per-core and requires a running kernel, so a real MTIME cannot be observed below layer 2" }
+source = "test_mtime_tickless.cpp"
+config = "test_mtime_tickless_config.hpp"
+hosted = false
+
+[components]
+port = ["riscv_virt", "rp2350_hazard3", "rp2350_m33"]
+time_driver = "tickless"
+
+[link]
+system_libraries = []

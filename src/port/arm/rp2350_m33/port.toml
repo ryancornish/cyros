@@ -1,0 +1,20 @@
+name = "rp2350_m33"
+
+description = "The RP2350's Cortex-M33 core 0: SIO MTIME for time and timestamps."
+
+# The same core layer as cortex_m, unchanged. What the RP2350 adds is its SIO:
+# MTIME, shared by both cores and by both ISAs, for the time source and the
+# timestamp, and the doorbell and FIFO the two-core target uses. The time
+# source is ../../common's, which the chip's Hazard3 targets compile too.
+extends = "armv7m_armv8m"
+
+sources = [
+   "port_mcu_rp2350_m33.cpp",
+   "../../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

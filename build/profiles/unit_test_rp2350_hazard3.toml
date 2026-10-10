@@ -3,10 +3,10 @@
 #
 # Tests run on the board through the toolchain's runner
 # (tests/hardware/rp2350/run_test.sh), which needs the board in BOOTSEL and the
-# Debug Probe attached. The toolchain is the riscv32 bridge.
+# Debug Probe attached.
 [profile]
 name = "unit_test_rp2350_hazard3"
-toolchain = "../toolchains/riscv32-clang-rp2350.toml"
+toolchain = "../toolchains/riscv32-elf-rp2350.toml"
 
 [layout]
 source_root = "../../src"

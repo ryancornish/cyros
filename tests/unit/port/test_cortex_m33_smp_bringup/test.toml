@@ -10,7 +10,7 @@ config = "test_cortex_m33_smp_bringup_config.hpp"
 hosted = false
 
 [components]
-port = "cortex_m33_smp"
+port = ["cortex_m33_smp", "rp2350_m33_smp"]
 
 [link]
 system_libraries = []

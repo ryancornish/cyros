@@ -1,0 +1,22 @@
+[test]
+name = "test_target_smp_time"
+layer = 1
+kind = "unit"
+
+# The subject is the SMP target's time half, layer 1. time::start() runs in a
+# core's own context after kernel::start(), and the second core only exists
+# once the kernel has released it.
+harness_debt = { layer = 2, reason = "time::start() and the second core both need a running kernel" }
+source = "test_target_smp_time.cpp"
+config = "test_target_smp_time_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = ["cortex_m33_smp", "riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp"]
+time_driver = "periodic"
+
+[link]
+system_libraries = []

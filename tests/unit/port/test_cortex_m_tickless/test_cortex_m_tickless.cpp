@@ -7,7 +7,7 @@
  * Subject: the cortex_m port's tickless implementation of `port_mcu.h`,
  *          driven through the `tickless` time driver.
  * Trusts:  layers 0 to 2, and the periodic path that
- *          `test_cortex_m_systick` proves.
+ *          `test_target_tick` proves.
  * Proves:  that `now()` is a monotonic cycle counter that survives a 24-bit
  *          hardware WRAP, that its absolute rate is the real clock, and that a
  *          one-shot deadline is delivered at the requested time rather than

@@ -214,7 +214,8 @@ void soft_irq_raise(std::uint32_t core) noexcept;
 /** Lower the calling hart's machine software interrupt. */
 void soft_irq_clear(std::uint32_t core) noexcept;
 
-/** The body of the machine timer interrupt. Defined by the time source. */
+/** The body of the machine timer interrupt. Defined by the target, which
+ * hands it to its timer (src/port/common/mtime.hpp on every target here). */
 void timer_interrupt() noexcept;
 
 /** The body of the machine external interrupt. Defined by the target. */

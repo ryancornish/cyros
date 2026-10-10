@@ -6,7 +6,7 @@
 # differs, and it launches core 1.
 [profile]
 name = "unit_test_rp2350_hazard3_smp"
-toolchain = "../toolchains/riscv32-clang-rp2350.toml"
+toolchain = "../toolchains/riscv32-elf-rp2350.toml"
 
 [layout]
 source_root = "../../src"

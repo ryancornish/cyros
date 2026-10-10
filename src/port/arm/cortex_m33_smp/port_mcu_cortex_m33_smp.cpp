@@ -254,3 +254,11 @@ extern "C" void MHU_Handler(void)
 
    cyros_port_pend_reschedule();
 }
+
+/* The core layer's counter behind cyros_port_timestamp (cortex_m.hpp). The
+ * SSE-200 has no counter both cores read, so stamps are per core, which is
+ * what the DWT gives. */
+std::uint64_t cyros::port::cortex_m::timestamp() noexcept
+{
+   return cycle_counter_timestamp();
+}

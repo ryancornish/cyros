@@ -1,0 +1,41 @@
+name = "arm-none-eabi-rp2350"
+extends = "arm-none-eabi-debug.toml"
+
+# For the tests: this board's ports keep time on MTIME, a 64-bit counter with
+# no period to cross, not on SysTick (test_target_idle says why it matters).
+[flags]
+common_add = ["-DCYROS_BENCH_MTIME=1"]
+
+# The debug toolchain for the Pico 2 W's Cortex-M33 cores instead of QEMU's
+# mps2-an505: its board and its runner, the same as the chip's Hazard3
+# toolchain uses (riscv32-elf-rp2350.toml). The image runs from SRAM, and
+# nothing is written to flash or OTP.
+#
+# The board's startup enters at _entry from the boot ROM or the debugger,
+# brings up 150 MHz and MTIME, and gives the tests an RTT console
+# (tests/hardware/rp2350/startup_rp2350_m33.c says how). The M33 has the
+# FPv5-SP-D16 the base toolchain assumes.
+[board]
+linker_script = "../../tests/hardware/rp2350/rp2350_m33.ld"
+sources = [
+   "../../tests/hardware/rp2350/startup_rp2350_m33.c",
+   "../../tests/hardware/rp2350/console_rtt.c",
+   "../../tests/unit/common/syscall_stubs.c",
+]
+
+# run_test.sh boots the image, streams its console and exits with its status,
+# on whichever ISA the image is built for. The builder runs a test from the
+# test's own directory and does not resolve a runner's path, so the script is
+# found from the repository root.
+[runner]
+command = [
+   "sh", "-c",
+   "exec \"$(git rev-parse --show-toplevel)/tests/hardware/rp2350/run_test.sh\" \"$0\"",
+   "{binary}",
+]
+
+# The driver gives up on a started image after RP2350_TEST_TIMEOUT (30 s by
+# default) and resets the board, and run_test.sh retries once an image the
+# board never visibly started. This backstop applies only under
+# --test-timeout 0, because the builder's own default of 60 s otherwise wins.
+timeout = 120

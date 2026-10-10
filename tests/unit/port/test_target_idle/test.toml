@@ -1,0 +1,26 @@
+[test]
+name = "test_target_idle"
+layer = 8
+
+# Several layers together (the idle loop, the port's WFI, the time driver's
+# interrupt and chrono's sleep) under real interrupt timing, so integration.
+# Layer 8 because sleeping is chrono, and it trusts everything below.
+kind = "integration"
+source = "test_target_idle.cpp"
+config = "test_target_idle_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+port = ["cortex_m", "riscv_virt", "rp2350_hazard3", "rp2350_m33"]
+time_driver = "periodic"
+features = ["chrono", "sync"]
+
+[link]
+system_libraries = []
+
+# Every call the kernel makes to cyros_port_idle reaches the test's
+# __wrap_cyros_port_idle first, which is how idle is observed (see the source).
+flags = ["-Wl,--wrap=cyros_port_idle"]

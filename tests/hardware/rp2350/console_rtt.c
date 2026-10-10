@@ -1,7 +1,7 @@
 /**
  * @file console_rtt.c
- * @brief The board's console: SEGGER RTT, a ring buffer in SRAM that OpenOCD
- *        reads over SWD and serves on TCP (drive_test.py).
+ * @brief The board's console: SEGGER RTT, a ring buffer in SRAM that the
+ *        runner reads over SWD (drive_test.py).
  *
  * The Pico 2 W has no UART wired to the Debug Probe here, and semihosting
  * halts the core for 100 ms a line (rp2350-notes.md 7a), so the tests' output
@@ -11,6 +11,13 @@
 #include "board.h"
 
 #include <stdint.h>
+
+/* Orders the ring's writes for the host, which reads them over SWD. */
+#if defined(__riscv)
+#  define CONSOLE_BARRIER() __asm__ volatile("fence rw, rw" ::: "memory")
+#else
+#  define CONSOLE_BARRIER() __asm__ volatile("dmb" ::: "memory")
+#endif
 
 #define RTT_BUF_SIZE 4096u
 
@@ -45,9 +52,9 @@ void board_console_init(void)
    rtt_cb.down[0] = (struct rtt_buf){ "Terminal", 0, 0u, 0u, 0u, 0u };
    /* The ID last and at run time, so the host finds only this copy. */
    static char const id[] = "SEGGER RTT";
-   __asm__ volatile("fence rw, rw" ::: "memory");
+   CONSOLE_BARRIER();
    for (unsigned i = 0; i < sizeof id; ++i) { rtt_cb.id[i] = id[i]; }
-   __asm__ volatile("fence rw, rw" ::: "memory");
+   CONSOLE_BARRIER();
    rtt_ready = 1u;
 }
 
@@ -59,7 +66,7 @@ void cyros_bench_write(char const* text)
       uint32_t const next = (wr + 1u) % b->size;
       while (next == b->rd) {}
       b->buf[wr] = *text++;
-      __asm__ volatile("fence rw, rw" ::: "memory");
+      CONSOLE_BARRIER();
       b->wr = next;
    }
 }

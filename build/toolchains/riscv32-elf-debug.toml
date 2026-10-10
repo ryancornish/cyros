@@ -1,0 +1,14 @@
+name = "riscv32-elf-debug"
+extends = "riscv32-elf-base.toml"
+
+# -Og -g3, as arm-none-eabi-debug, for the same reasons: a 32-bit MCU, and
+# riscv64-elf-gdb attaches to QEMU's gdbstub.
+[flags]
+common_add = ["-Og", "-g3"]
+
+[settings]
+debug = true
+optimization = "g"
+
+[archive]
+strategy = "simple"

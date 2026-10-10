@@ -15,7 +15,7 @@ extends = "arm-none-eabi-debug.toml"
 [board]
 sources = [
    "../../tests/unit/port/arm_bench/startup_mps2_an521.c",
-   "../../tests/unit/port/arm_bench/syscall_stubs.c",
+   "../../tests/unit/common/syscall_stubs.c",
 ]
 
 [runner]

@@ -1,0 +1,19 @@
+name = "rp2350_m33_smp"
+
+description = "The RP2350's two Cortex-M33 cores: SIO doorbell as the IPI, shared SIO MTIME."
+
+# rp2350_m33's machine code, which launches core 1 when asked for two, and the
+# MTIME time source. Only port_traits.h differs, as between the chip's two
+# Hazard3 targets.
+extends = "armv7m_armv8m"
+
+sources = [
+   "../rp2350_m33/port_mcu_rp2350_m33.cpp",
+   "../../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

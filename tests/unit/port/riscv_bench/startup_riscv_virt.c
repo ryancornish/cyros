@@ -17,8 +17,8 @@
  * early_trap below, which reports it and exits. Output and the exit status are
  * semihosting, which QEMU services when run with -semihosting-config.
  *
- * The C library and C++ runtime functions the bridge toolchain lacks are in
- * runtime_stubs.c, which every RISC-V board links.
+ * newlib's OS interface is ../../common/syscall_stubs.c, which every board
+ * links, on both ISAs.
  */
 
 #include <stdint.h>

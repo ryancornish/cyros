@@ -2,7 +2,7 @@
 # Run one of the on-target unit tests on the EK-TM4C123GXL instead of QEMU.
 #
 #   ./run_test.sh <test name> [--mhz 16|80] [--build-only]
-#   ./run_test.sh test_cortex_m_systick --mhz 80
+#   ./run_test.sh test_target_tick --mhz 80
 #
 # The builder builds every on-target test for QEMU's mps2-an386, the Cortex-M4F
 # bench, and runs it there. The same test runs on this board unchanged, the way
@@ -85,7 +85,7 @@ PY
 )
 
 # And its own link flags ([link].flags), which the builder passes to the link
-# too. test_cortex_m_idle observes idle through a --wrap there.
+# too. test_target_idle observes idle through a --wrap there.
 mapfile -t link_flags < <(python3 - "$test_dir/test.toml" <<'PY'
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
@@ -109,7 +109,7 @@ done
 compile "$here/startup_tm4c123.c" startup_tm4c123.o
 compile "$here/board_clock.c"     board_clock.o
 compile "$here/console.c"         console.o
-compile "$cyros_root/tests/unit/port/arm_bench/syscall_stubs.c" syscall_stubs.o
+compile "$cyros_root/tests/unit/common/syscall_stubs.c" syscall_stubs.o
 
 link() {  # <linker script> <elf>
    arm-none-eabi-g++ "${common[@]}" -nostartfiles -nostdlib++ -Wl,--gc-sections \

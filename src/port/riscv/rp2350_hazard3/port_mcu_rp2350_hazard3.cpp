@@ -43,6 +43,7 @@
 #include <cstdint>
 
 namespace riscv = cyros::port::riscv;
+namespace mtime = cyros::port::mtime;
 
 namespace
 {
@@ -217,7 +218,7 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 
 
 /* ============================================================================
- * What the rv32 core layer and the MTIME time source need
+ * What the rv32 core layer needs (riscv.hpp)
  * ========================================================================= */
 
 namespace cyros::port::riscv
@@ -247,10 +248,25 @@ std::uint64_t timestamp() noexcept
     * counts the core clock, so it is as fine as mcycle, and both cores read
     * the same counter, so stamps compare across them. 10 cycles a read
     * against mcycle's 3 (rp2350-notes.md 4a). */
-   return mtime_read();
+   return mtime::read();
 }
 
-std::uint64_t mtime_read() noexcept
+void timer_interrupt() noexcept
+{
+   mtime::interrupt();
+}
+
+} // namespace cyros::port::riscv
+
+
+/* ============================================================================
+ * The MTIME timer (../../common/mtime.hpp), in the SIO
+ * ========================================================================= */
+
+namespace cyros::port::mtime
+{
+
+std::uint64_t read() noexcept
 {
    std::uint32_t high, low, again;
    do {
@@ -261,14 +277,24 @@ std::uint64_t mtime_read() noexcept
    return (static_cast<std::uint64_t>(high) << 32) | low;
 }
 
-void mtimecmp_write(std::uint32_t core, std::uint64_t value) noexcept
+void compare_write(std::uint32_t core, std::uint64_t value) noexcept
 {
    /* The SIO has one MTIMECMP per core at one address, so a core can only
     * write its own. The time source only ever asks for that. */
-   CYROS_ASSERT_OP(core, ==, read_mhartid());
+   CYROS_ASSERT_OP(core, ==, riscv::read_mhartid());
    reg(sio_mtimecmp)  = ~0u;
    reg(sio_mtimecmph) = static_cast<std::uint32_t>(value >> 32);
    reg(sio_mtimecmp)  = static_cast<std::uint32_t>(value);
 }
 
-} // namespace cyros::port::riscv
+void interrupt_enable() noexcept
+{
+   riscv::set_mie(riscv::mie_mtie);
+}
+
+void interrupt_disable() noexcept
+{
+   riscv::clear_mie(riscv::mie_mtie);
+}
+
+} // namespace cyros::port::mtime

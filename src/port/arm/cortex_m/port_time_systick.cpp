@@ -15,7 +15,7 @@
  * choice is not free.
  *
  * A guessed clock is silently wrong by whatever factor it is off, and scales
- * every duration in the system with nothing to catch it. `test_cortex_m_systick`
+ * every duration in the system with nothing to catch it. `test_target_tick`
  * asserts the absolute rate against that same semihosting reference.
  *
  * EVERY board states its own. There is no default to be wrong, which is the

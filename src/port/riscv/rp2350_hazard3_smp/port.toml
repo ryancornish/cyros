@@ -8,10 +8,10 @@ extends = "rv32"
 # the MTIME time source. Only port_traits.h differs.
 sources = [
    "../rp2350_hazard3/port_mcu_rp2350_hazard3.cpp",
-   "../common/port_time_mtime.cpp",
+   "../../common/port_time_mtime.cpp",
 ]
 
-private_includes = ["../common"]
+private_includes = ["../../common"]
 
 public_headers = [
    "public_headers/port_traits.h -> cyros/port/port_traits.h",

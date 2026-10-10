@@ -24,6 +24,8 @@
 
 #include <cyros/port/port_mcu.h>
 
+#include "cortex_m.hpp"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -55,4 +57,11 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
     * contract, it just may not implement it. */
    CYROS_ASSERT_OP(core_id, ==, 0u);
    cyros_port_pend_reschedule();
+}
+
+/* The core layer's counter behind cyros_port_timestamp (cortex_m.hpp). One
+ * core, so the DWT's per-core count is the whole story. */
+std::uint64_t cyros::port::cortex_m::timestamp() noexcept
+{
+   return cycle_counter_timestamp();
 }

@@ -1,0 +1,20 @@
+# Unit-test profile for the RP2350's Cortex-M33 port, core 0 alone, on the Pico 2 W.
+#
+# Tests run on the board through the toolchain's runner, as the chip's Hazard3
+# profiles do. Same board, same runner, the other ISA.
+[profile]
+name = "unit_test_rp2350_m33"
+toolchain = "../toolchains/arm-none-eabi-rp2350.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "rp2350_m33"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

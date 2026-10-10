@@ -35,6 +35,7 @@
 #include <cstdint>
 
 namespace riscv = cyros::port::riscv;
+namespace mtime = cyros::port::mtime;
 
 namespace
 {
@@ -126,7 +127,7 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 
 
 /* ============================================================================
- * What the rv32 core layer and the MTIME time source need
+ * What the rv32 core layer needs (riscv.hpp)
  * ========================================================================= */
 
 namespace cyros::port::riscv
@@ -159,7 +160,22 @@ std::uint64_t timestamp() noexcept
    return read_mcycle();
 }
 
-std::uint64_t mtime_read() noexcept
+void timer_interrupt() noexcept
+{
+   mtime::interrupt();
+}
+
+} // namespace cyros::port::riscv
+
+
+/* ============================================================================
+ * The MTIME timer (../../common/mtime.hpp), in the CLINT
+ * ========================================================================= */
+
+namespace cyros::port::mtime
+{
+
+std::uint64_t read() noexcept
 {
    std::uint32_t high, low, again;
    do {
@@ -170,7 +186,7 @@ std::uint64_t mtime_read() noexcept
    return (static_cast<std::uint64_t>(high) << 32) | low;
 }
 
-void mtimecmp_write(std::uint32_t core, std::uint64_t value) noexcept
+void compare_write(std::uint32_t core, std::uint64_t value) noexcept
 {
    std::uintptr_t const compare = clint_mtimecmp + 8u * core;
    reg(compare)      = ~0u;
@@ -178,4 +194,14 @@ void mtimecmp_write(std::uint32_t core, std::uint64_t value) noexcept
    reg(compare)      = static_cast<std::uint32_t>(value);
 }
 
-} // namespace cyros::port::riscv
+void interrupt_enable() noexcept
+{
+   riscv::set_mie(riscv::mie_mtie);
+}
+
+void interrupt_disable() noexcept
+{
+   riscv::clear_mie(riscv::mie_mtie);
+}
+
+} // namespace cyros::port::mtime

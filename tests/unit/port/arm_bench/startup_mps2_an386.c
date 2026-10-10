@@ -46,7 +46,7 @@ extern void (*__init_array_end[])(void);
  * two-second windows: 24,999,947 to 25,001,285 Hz. Unlike the AN505, the
  * external reference (CLKSOURCE=0) is a different clock here, 999,998 Hz, with
  * SYST_CALIB reading 9999. The AN385 is the same 25 MHz:
- * test_cortex_m_systick's absolute-rate check passes there (2026-10-04).
+ * test_target_tick's absolute-rate check passes there (2026-10-04).
  */
 uint32_t cyros_port_systick_clock_hz(void)
 {
