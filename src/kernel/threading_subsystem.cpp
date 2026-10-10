@@ -162,9 +162,12 @@ void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexcept
 thread_control_block* thread_ready_matrix::pop_best_thread() noexcept
 {
    if (bitmap == 0) return nullptr;
+
    auto const priority = std::countr_zero(bitmap);
    thread_control_block* tcb = matrix[priority].pop_front();
-   if (matrix[priority].empty()) bitmap &= ~(1u << priority);
+   if (matrix[priority].empty()) {
+      bitmap &= ~(1u << priority);
+   }
    return tcb;
 }
 
@@ -174,8 +177,11 @@ void thread_ready_matrix::remove_thread(thread_control_block& tcb) noexcept
    CYROS_ASSERT_OP(priority, <, config::max_priorities);
 
    bool const removed = matrix[priority].remove(tcb);
-   CYROS_ASSERT(removed); // caller vouched the thread was enqueued
-   if (matrix[priority].empty()) bitmap &= ~(1u << priority);
+   CYROS_ASSERT(removed); // Caller vouched the thread was enqueued
+
+   if (matrix[priority].empty()) {
+      bitmap &= ~(1u << priority);
+   }
 }
 
 

@@ -1,15 +1,16 @@
 #ifndef CYROS_CORE_HPP
 #define CYROS_CORE_HPP
 
-#include <cstdint>
 #include <cyros/kernel/visibility.hpp>
+
+#include <cstdint>
 
 namespace cyros::this_core
 {
 
 /**
-   * @brief Get current CPU core ID (0-based)
-   */
+ * @brief Get current CPU core ID (0-based)
+ */
 [[nodiscard]] CYROS_PUBLIC std::uint32_t id() noexcept;
 
 /**

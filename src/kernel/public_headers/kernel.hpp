@@ -23,16 +23,23 @@ namespace cyros::kernel
 CYROS_PUBLIC void initialise() noexcept;
 
 /**
- * @brief Start the scheduler
+ * @brief Start the scheduler(s)
  *
  * At least one thread must exist before calling start().
  */
 CYROS_PUBLIC void start() noexcept;
 
+/**
+ * @brief Cleanup and reset the kernel state
+ *
+ * Not intended to be invoked on bare-metal ports.
+ * Must only be called after start() returns.
+ */
 CYROS_PUBLIC void finalise() noexcept;
 
 /**
  * @brief Get total number of CPU cores
+ *
  * @return Number of cores (1 for single-core)
  */
 [[nodiscard]] CYROS_PUBLIC std::uint32_t core_count() noexcept;

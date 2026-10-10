@@ -48,18 +48,19 @@ namespace cyros
  * @param file Source file, or "" when the port does not capture location.
  * @param line Source line, or 0 when the port does not capture location.
  */
-[[noreturn]] CYROS_PUBLIC void panic(std::uintptr_t aux1 = 0,
-                                     std::uintptr_t aux2 = 0,
-                                     char const*    file = "",
-                                     int            line = 0) noexcept;
+[[noreturn]]
+CYROS_PUBLIC void panic(std::uintptr_t aux1 = 0,
+                        std::uintptr_t aux2 = 0,
+                        char const*    file = "",
+                        int            line = 0) noexcept;
 
 }  // namespace cyros
 
-/* Location capture follows the port's own setting, so a public check reports
- * exactly what an internal one does on the same build. A port that sets
- * CYROS_PORT_CAPTURE_LOCATION to 0 is trading diagnosis for the image size of
- * every __FILE__ string, and that trade has to apply here too or it buys
- * nothing. */
+// Location capture follows the port's own setting, so a public check reports
+// exactly what an internal one does on the same build. A port that sets
+// CYROS_PORT_CAPTURE_LOCATION to 0 is trading diagnosis for the image size of
+// every __FILE__ string, and that trade has to apply here too or it buys
+// nothing.
 #if CYROS_PORT_CAPTURE_LOCATION
  #define CYROS_CHECK_FILE (__FILE__)
  #define CYROS_CHECK_LINE (__LINE__)
@@ -85,8 +86,8 @@ namespace cyros
  * Do not use for a condition the caller cannot control. That is CYROS_FATAL if
  * the environment failed, and an internal CYROS_ASSERT if cyros is at fault.
  */
-#define CYROS_REQUIRE(condition)             CYROS_CHECK2(condition, 0, 0)
-#define CYROS_REQUIRE1(condition, aux1)      CYROS_CHECK2(condition, aux1, 0)
+#define CYROS_REQUIRE(condition)              CYROS_CHECK2(condition, 0, 0)
+#define CYROS_REQUIRE1(condition, aux1)       CYROS_CHECK2(condition, aux1, 0)
 #define CYROS_REQUIRE2(condition, aux1, aux2) CYROS_CHECK2(condition, aux1, aux2)
 
 /**

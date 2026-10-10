@@ -36,7 +36,7 @@ struct kernel_state
    std::atomic<std::uint32_t> thread_id_generator{0};
 };
 
-[[gnu::section(".bss.cyros_kernel_state")]]
+[[gnu::section(".bss.cyros_kernel_state")]] // Enforces kernel_state remains zero-initialised
 constinit kernel_state k; // Global kernel singleton
 
 // Use this to examine how much memory the kernel uses.
@@ -74,7 +74,7 @@ void pin_thread_to_core(thread_control_block& tcb) noexcept
          found = true;
       }
    }
-   CYROS_ASSERT(found); // thread affinity mask allows no cores
+   CYROS_ASSERT(found); // Thread affinity mask allows no cores
 
    scheduler_for_core(best_core).pin_thread(tcb);
 }
@@ -96,8 +96,8 @@ void reschedule_this_core()
  * @brief Launches the scheduler for *this* core and picks the first thread.
  *
  * Registered with the port layer as the launcher for each core.
- * Port-dependant whether this returns ever, if it does return, it indicates
- * a core shutdown + finalise sequence (e.g. Linux port).
+ * It is port-dependant whether this returns ever. If it _does_ return,
+ * it indicates a core shutdown + finalise sequence (e.g. Linux port).
  */
 void core_entry()
 {
@@ -148,7 +148,7 @@ void thread_launcher(void* tcb_ptr)
 {
    auto* tcb = static_cast<thread_control_block*>(tcb_ptr);
 
-   cyros_port_set_tls_pointer(tcb); // For now point TLS to the tcb, but in future, TLS sits just after tcb
+   cyros_port_set_tls_pointer(tcb); // TODO: For now point TLS to the tcb, but in future, TLS sits just after tcb
 
    tcb->entry();
 
@@ -157,8 +157,10 @@ void thread_launcher(void* tcb_ptr)
 
 void idle_task()
 {
+   auto& scheduler = scheduler_for_this_core();
+
    // We may have received a request whilst bootstrapping (if idle_thread was first picked)
-   if (scheduler_for_this_core().intake_pending()) {
+   if (scheduler.intake_pending()) {
       this_thread::yield();
    }
 
@@ -167,7 +169,7 @@ void idle_task()
       // with a lost notification arriving but not signalling because
       // we are not in cyros_port_idle() yet. But I find it hard to believe
       // that this check _prevents_ a race altogether...
-      if (scheduler_for_this_core().intake_pending()) {
+      if (scheduler.intake_pending()) {
          this_thread::yield();
          continue;
       }
@@ -259,7 +261,7 @@ void finalise() noexcept
    CYROS_ASSERT(k.initialised);
 
    k.running.store(false, std::memory_order_relaxed);
-   k.thread_id_generator.store(0, std::memory_order_relaxed);   // initialise() steps past the idle id
+   k.thread_id_generator.store(0, std::memory_order_relaxed);
    k.active_threads.store(0, std::memory_order_relaxed);;
 
    for (auto& scheduler : k.schedulers) {
