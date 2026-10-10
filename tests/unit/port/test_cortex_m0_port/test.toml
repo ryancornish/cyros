@@ -1,0 +1,18 @@
+[test]
+name = "test_cortex_m0_port"
+layer = 0
+kind = "unit"
+source = "test_cortex_m0_port.cpp"
+config = "test_cortex_m0_port_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+# Locked to the ARMv6-M port. It reads PRIMASK, SHPR3 and ICSR directly and
+# tests a software preempt grade no other port has.
+port = ["cortex_m0"]
+
+[link]
+system_libraries = []

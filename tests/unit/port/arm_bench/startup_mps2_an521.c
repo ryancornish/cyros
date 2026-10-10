@@ -27,6 +27,8 @@
 
 #include <stdint.h>
 
+#include "fpu_at_reset.h"
+
 extern uint32_t __etext;
 extern uint32_t __data_start__;
 extern uint32_t __data_end__;
@@ -173,7 +175,7 @@ void const* cyros_port_cpu1_vector_table(void)
  * kernel is already using. The configurable faults are enabled per core
  * because SHCSR is core-private, and then this hands over to the port.
  */
-__attribute__((noreturn)) static void CPU1_Reset_Handler(void)
+__attribute__((noreturn, used)) void bench_cpu1_reset_c(void)
 {
    *(volatile uint32_t*)0xE000ED24u |= (1u << 16) | (1u << 17) | (1u << 18);
 
@@ -181,7 +183,15 @@ __attribute__((noreturn)) static void CPU1_Reset_Handler(void)
    __builtin_unreachable();
 }
 
-__attribute__((noreturn)) void Reset_Handler(void)
+/* CPACR is core-private, so CPU1 turns its own FPU on (fpu_at_reset.h). */
+__attribute__((naked, noreturn)) static void CPU1_Reset_Handler(void)
+{
+   __asm__ volatile(BENCH_FPU_ON "b bench_cpu1_reset_c\n.ltorg\n");
+}
+
+/* Reset_Handler is the naked entry below, which turns the FPU on first
+ * (fpu_at_reset.h) and continues here. */
+__attribute__((noreturn, used)) void bench_reset_c(void)
 {
    uint32_t const* source = &__etext;
    for (uint32_t* target = &__data_start__; target < &__data_end__; ) {
@@ -199,6 +209,8 @@ __attribute__((noreturn)) void Reset_Handler(void)
 
    cyros_bench_exit((uint32_t)cyros_bench_main());
 }
+
+BENCH_RESET_ENTRY(Reset_Handler, bench_reset_c)
 
 /**
  * @brief Every fault lands here, on either core.

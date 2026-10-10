@@ -37,6 +37,9 @@
 #define PLL_FBDIV_INT        0x40050008u
 #define PLL_PRIM             0x4005000cu
 
+#define QMI_M0_TIMING        0x400d000cu
+#define XIP_NOCACHE_BASE     0x14000000u
+
 #define SIO_MTIME_CTRL       0xd00001a4u
 #define SIO_MTIME            0xd00001b0u
 #define SIO_MTIMEH           0xd00001b4u
@@ -55,6 +58,7 @@
 #define POSTDIV1             5u
 #define POSTDIV2             2u     /* 1500 / 5 / 2 = 150 MHz      */
 #define XOSC_STARTUP_DELAY   (47u * 64u)   /* about 64 ms, the SDK's RP2350 default */
+#define FLASH_CLKDIV_150MHZ  6u     /* SCK 25 MHz at 150 MHz       */
 
 static inline bool wait_bits(uint32_t addr, uint32_t mask, uint32_t want)
 {
@@ -62,6 +66,32 @@ static inline bool wait_bits(uint32_t addr, uint32_t mask, uint32_t want)
       if (++spins == 10000000u) { return false; }
    }
    return true;
+}
+
+/* The flash's SCK is clk_sys over QMI M0_TIMING.CLKDIV. A flash boot leaves
+ * the read mode and divisor the boot ROM's scan found working at its own slow
+ * clock, as low as 3 (datasheet 5.2.7, table 463): on this board EBh quad at
+ * 3 with RXDELAY 2, which at 150 MHz is SCK 50 MHz (rp2350-notes.md 2d).
+ * That is inside the W25Q32JV's quad rating, but had the scan settled on 03h
+ * at 3 it would sit at that read's limit, so the divisor rises to 6 before the
+ * clock does, for margin in any mode at half the miss bandwidth. The divisor
+ * may change mid-access, and a read past the cache makes it take effect
+ * before the clock does (QMI M0_TIMING). A RAM image finds the QMI at reset
+ * (03h, divisor 4) and is raised the same way, harmlessly. */
+static inline void flash_clock_for_150mhz(void)
+{
+   uint32_t const timing = REG(QMI_M0_TIMING);
+   uint32_t const clkdiv = timing & 0xffu;             /* 0 encodes 256 */
+   if (clkdiv == 0u || clkdiv >= FLASH_CLKDIV_150MHZ) {
+      return;
+   }
+   REG(QMI_M0_TIMING) = (timing & ~0xffu) | FLASH_CLKDIV_150MHZ;
+   uint32_t const word = REG(XIP_NOCACHE_BASE);
+#if defined(__riscv)
+   __asm__ volatile("fence" : : "r"(word) : "memory");
+#else
+   __asm__ volatile("dsb" : : "r"(word) : "memory");
+#endif
 }
 
 /* 150 MHz on clk_sys from PLL_SYS, clk_ref on the 12 MHz crystal. False if a
@@ -95,6 +125,7 @@ static inline bool clocks_150mhz(void)
    CLR(PLL_PWR) = PLL_PWR_POSTDIVPD;
 
    /* clk_sys: aux = pll_sys while still on clk_ref, then onto aux. */
+   flash_clock_for_150mhz();
    REG(CLK_SYS_DIV) = 1u << 16;
    REG(CLK_SYS_CTRL) = 0;
    SET(CLK_SYS_CTRL) = 1u;

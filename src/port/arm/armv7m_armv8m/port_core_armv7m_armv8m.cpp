@@ -371,10 +371,10 @@ void init_this_core()
    }
 #endif
 
-   /* Clear any reschedule left pending by a previous kernel lifecycle. The unit
-    * tests initialise and finalise repeatedly, and a stale PENDSVSET would fire
-    * into the next lifecycle's first thread. */
-   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendstclr;
+   /* Clear a reschedule (PENDSVCLR) and a SysTick (PENDSTCLR) left pending by
+    * a previous kernel lifecycle, so neither fires into the next lifecycle's
+    * first thread. The unit tests initialise and finalise repeatedly. */
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvclr | cortex_m::icsr_pendstclr;
 
    cortex_m::dsb();
    cortex_m::isb();

@@ -5,8 +5,8 @@
 #ifndef CYROS_PORT_TRAITS_H
 #define CYROS_PORT_TRAITS_H
 
-/* cyros_port_context is one pointer, to the thread's trap frame. Sized with
- * room to spare, as on ARM. */
+/* cyros_port_context is two words: a pointer to the thread's trap frame,
+ * and its stack guard's pmpaddr. Sized with room to spare, as on ARM. */
 #define CYROS_PORT_CONTEXT_SIZE  16
 #define CYROS_PORT_CONTEXT_ALIGN 8
 

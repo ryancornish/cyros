@@ -69,6 +69,8 @@ struct hart_view
    std::uint32_t mcountinhibit;
    std::uintptr_t tls;
    std::uint64_t cycles_moved;
+   std::uint32_t pmpcfg0;
+   std::uint32_t pmpaddr0;
 };
 
 hart_view views[2] = {};
@@ -78,6 +80,18 @@ std::uint32_t read_mtvec()         { std::uint32_t v; asm volatile("csrr %0, mtv
 std::uint32_t read_mie()           { std::uint32_t v; asm volatile("csrr %0, mie" : "=r"(v)); return v; }
 std::uint32_t read_mscratch()      { std::uint32_t v; asm volatile("csrr %0, mscratch" : "=r"(v)); return v; }
 std::uint32_t read_mcountinhibit() { std::uint32_t v; asm volatile("csrr %0, mcountinhibit" : "=r"(v)); return v; }
+std::uint32_t read_pmpcfg0()       { std::uint32_t v; asm volatile("csrr %0, pmpcfg0" : "=r"(v)); return v; }
+std::uint32_t read_pmpaddr0()      { std::uint32_t v; asm volatile("csrr %0, pmpaddr0" : "=r"(v)); return v; }
+
+/* The stack guard the core layer gives a thread on `buffer` (its file
+ * comment): 128 bytes, 256 above the bottom, as pmpaddr0 encodes it. The two
+ * lowest bits are forced because Hazard3 reads them back as zero. */
+std::uint32_t guard_pmpaddr(std::byte const* buffer)
+{
+   auto const base = reinterpret_cast<std::uintptr_t>(buffer);
+   std::uintptr_t const bottom = (base + 256u + 127u) & ~std::uintptr_t{127u};
+   return static_cast<std::uint32_t>(bottom >> 2) | 15u;
+}
 
 std::uint64_t read_mcycle()
 {
@@ -98,6 +112,8 @@ void look_at_this_hart(hart_view& view)
    view.mscratch      = read_mscratch();
    view.mcountinhibit = read_mcountinhibit();
    view.tls           = reinterpret_cast<std::uintptr_t>(cyros_port_get_tls_pointer());
+   view.pmpcfg0       = read_pmpcfg0();
+   view.pmpaddr0      = read_pmpaddr0();
    std::uint64_t const before = read_mcycle();
    for (int i = 0; i < 1000; ++i) { asm volatile("" ::: "memory"); }
    view.cycles_moved = read_mcycle() - before;
@@ -190,6 +206,14 @@ void thread_on_core0()
    CYROS_CHECK(h0.tls != 0u);
    CYROS_CHECK(h1.tls != 0u);
    CYROS_CHECK(h0.tls != h1.tls);
+
+   /* PMP is per hart, so hart 1's guard exists only if its own bring-up
+    * bound entry 0 to machine mode and its own switch placed it. */
+   cyros::bench::start("each hart guards the stack of the thread it runs");
+   CYROS_CHECK_EQ(h1.pmpcfg0 & 0xffu, h0.pmpcfg0 & 0xffu);
+   CYROS_CHECK_EQ((h1.pmpcfg0 >> 3) & 3u, 3u);      /* NAPOT, and on */
+   CYROS_CHECK_EQ(h0.pmpaddr0 | 3u, guard_pmpaddr(stack_core0));
+   CYROS_CHECK_EQ(h1.pmpaddr0 | 3u, guard_pmpaddr(stack_core1));
 
    cyros::bench::finish();
 }

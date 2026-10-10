@@ -1,8 +1,8 @@
 /* The Pico 2 W's SRAM as one Arm image: code, data and stack, entered at
  * _entry by the boot ROM (through the IMAGE_DEF block, which must lie in the
  * first 4 kB, after the vector table it names) or by the debugger. Nothing is
- * in flash, so .data needs no copy. Core 0's handler stack is this image's
- * stack, the one _entry sets. */
+ * in flash, so .data needs no copy (rp2350_m33_flash.ld is the image that
+ * does). Core 0's handler stack is this image's stack, the one _entry sets. */
 MEMORY
 {
    RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 512K
@@ -44,6 +44,7 @@ SECTIONS
       . = ALIGN(4);
       __data_end__ = .;
    } > RAM
+   __data_load__ = LOADADDR(.data);   /* the same address: no copy */
 
    .bss (NOLOAD) : {
       . = ALIGN(4);

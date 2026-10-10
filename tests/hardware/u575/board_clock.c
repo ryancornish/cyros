@@ -4,7 +4,7 @@
  *
  * The port declares `cyros_port_systick_clock_hz()` and deliberately supplies
  * NO default, so every image must answer. See the declaration in
- * src/port/arm/cortex_m/port_time_systick.cpp for why. The answer here is
+ * src/port/arm/common/port_time_systick.cpp for why. The answer here is
  * BOARD_SYSCLK_HZ, the same constant board_clock_init() configures, so the two
  * cannot drift apart.
  *

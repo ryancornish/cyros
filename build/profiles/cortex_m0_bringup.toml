@@ -1,0 +1,21 @@
+# Cortex-M0 bring-up: the ARMv6-M port and the kernel, nothing else.
+#
+# What ~/cyros-claude/tools-port-layers.py reads for the armv6m core layer,
+# as the four Mainline bring-ups serve armv7m_armv8m.
+[profile]
+name = "cortex_m0_bringup"
+toolchain = "../toolchains/arm-none-eabi-debug-m0.toml"
+config_header = "../configs/cortex_m33.hpp"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m0"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

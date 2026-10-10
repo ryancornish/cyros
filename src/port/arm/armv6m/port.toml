@@ -1,0 +1,19 @@
+name = "armv6m"
+
+# The ARMv6-M (Baseline) core layer, for the Cortex-M0 and M0+. A layer of its
+# own rather than a third architecture of armv7m_armv8m, because it differs in
+# the mechanisms that layer is made of: no BASEPRI, so the preempt grade is a
+# software deferral, a Thumb-1 PendSV, and no exclusives, so it supplies
+# std::atomic's read-modify-writes itself (port_atomic_armv6m.cpp, one core).
+description = "ARMv6-M Baseline CORE LAYER. Not selectable: targets extend it."
+
+# Absent from port/component.toml `variants`, as every core layer is: it
+# implements port_core.h alone, and a target supplies port_mcu.h.
+sources = [
+   "port_core_armv6m.cpp",
+   "port_atomic_armv6m.cpp",
+]
+
+# cortex_m.hpp, shared with the Mainline layer. `extends` unions
+# private_includes, so a target extending this layer reaches it too.
+private_includes = ["../common"]

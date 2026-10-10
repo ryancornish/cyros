@@ -56,6 +56,8 @@ CYROS_RISCV_CSR_ACCESSORS(mip)
 CYROS_RISCV_CSR_ACCESSORS(mtvec)
 CYROS_RISCV_CSR_ACCESSORS(mscratch)
 CYROS_RISCV_CSR_ACCESSORS(mcountinhibit)
+CYROS_RISCV_CSR_ACCESSORS(pmpcfg0)
+CYROS_RISCV_CSR_ACCESSORS(pmpaddr0)
 
 #undef CYROS_RISCV_CSR_ACCESSORS
 
@@ -96,11 +98,19 @@ inline constexpr std::uint32_t mie_msie = 1u << 3;   /* software: the reschedule
 inline constexpr std::uint32_t mie_mtie = 1u << 7;   /* timer                    */
 inline constexpr std::uint32_t mie_meie = 1u << 11;  /* external                 */
 
+/* A PMP configuration byte: address matching NAPOT, and the lock bit, which
+ * on a standard core is what binds machine mode. R, W and X are bits 0 to 2,
+ * and a stack guard sets none of them. */
+inline constexpr std::uint8_t pmpcfg_napot = 3u << 3;
+inline constexpr std::uint8_t pmpcfg_lock  = 1u << 7;
+
 inline constexpr std::uint32_t mcause_interrupt      = 1u << 31;
 inline constexpr std::uint32_t cause_soft_interrupt  = 3u;
 inline constexpr std::uint32_t cause_timer_interrupt = 7u;
 inline constexpr std::uint32_t cause_ext_interrupt   = 11u;
 inline constexpr std::uint32_t cause_ecall_machine   = 11u;
+inline constexpr std::uint32_t cause_load_access     = 5u;
+inline constexpr std::uint32_t cause_store_access    = 7u;
 
 /* ============================================================================
  * The trap frame
@@ -231,6 +241,33 @@ void external_interrupt() noexcept;
  */
 std::uint64_t timestamp() noexcept;
 
+/**
+ * @brief Make PMP entry 0 bind machine mode on the calling hart, and return
+ *        the configuration byte entry 0 then needs to deny every access to a
+ *        NAPOT region. 0 means this target cannot: no stack guard.
+ *
+ * A standard PMP entry binds machine mode only when it is locked, and a locked
+ * entry cannot move, so it cannot follow the running thread. Hazard3's Xh3pmpm
+ * applies an UNLOCKED entry to machine mode (PMPCFGM0), and Smepmp's
+ * mseccfg.RLB lets a locked one be rewritten, which is what QEMU's virt has.
+ * Called on every hart before its first thread.
+ */
+std::uint8_t stack_guard_setup() noexcept;
+
 } // namespace cyros::port::riscv
+
+/**
+ * @brief Every exception that is not a yield: a fault. WEAK, so the
+ *        application, or a test, may replace it, as an ARM application owns
+ *        its fault vectors.
+ *
+ * Called inside the trap with interrupts masked, on the hart's interrupt
+ * stack, with the faulting thread's saved frame (riscv.hpp's layout, mepc at
+ * frame[frame_mepc]). Returning resumes the frame, at whatever mepc it then
+ * holds. The default never returns: it reports and panics, and says when the
+ * fault hit the trap entry itself saving a frame, which is a stack overflow
+ * into the guard.
+ */
+extern "C" void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame);
 
 #endif /* CYROS_PORT_RISCV_HPP */

@@ -3,22 +3,26 @@
  * @brief Reset path for cyros's on-target tests on the Pico 2 W's Hazard3 core
  *        0, the RISC-V sibling of ../u575/startup_stm32u575.c.
  *
- * The image runs from SRAM. It is entered at _entry either by the boot ROM,
- * which finds the IMAGE_DEF block below (`picotool load -x`, the boot path a
- * product takes and the runner's default), or by the debugger after a reset
- * halt (RP2350_BOOT=swd). _entry sets sp and mtvec before any C runs, because
+ * The image runs from SRAM (rp2350_hazard3.ld) or in place from flash
+ * (rp2350_hazard3_flash.ld, the toolchain riscv32-elf-rp2350-flash.toml). It
+ * is entered at _entry either by the boot ROM, which finds the IMAGE_DEF block
+ * below (`picotool load -x`, the boot path a product takes and the runner's
+ * default, which writes a flash image to flash first), or by an SRAM image's
+ * debugger after a reset halt (RP2350_BOOT=swd). _entry sets sp and mtvec before any C runs, because
  * a debugger start leaves whatever the boot ROM had. Core 1 stays in the boot
  * ROM's holding pen until the rp2350_hazard3_smp target launches it on
  * core1_stack below.
  *
  * Then, in order:
  *
- *   1. the console, and rtt_ready, so the runner can read it;
+ *   1. a flash image's .data, .bss and the console, and rtt_ready, so the
+ *      runner can read it;
  *   2. the runner's go word. OpenOCD's examination of the harts halts them,
  *      and so does its handling of the boot's reset, which also writes a
  *      stale s0 into each hart (rp2350-notes.md 7b). Nothing may run before
  *      both are over, so the runner says go only then;
- *   3. 150 MHz from the crystal, and MTIME counting it (FULLSPEED);
+ *   3. 150 MHz from the crystal, the flash clock slowed first (rp2350.h),
+ *      and MTIME counting it (FULLSPEED);
  *   4. constructors, then cyros_bench_main.
  *
  * MTIME_CTRL keeps DBGPAUSE0, so a debug halt of core 0 stops time with the
@@ -31,6 +35,9 @@
 
 extern uint32_t __bss_start__;
 extern uint32_t __bss_end__;
+extern uint32_t __data_start__;
+extern uint32_t __data_end__;
+extern uint32_t const __data_load__;
 extern uint32_t __stack_top;
 extern int cyros_bench_main(void);
 extern void (*__init_array_start[])(void);
@@ -122,6 +129,140 @@ __attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
 }
 
 /* ---------------------------------------------------------------------------
+ * Device interrupts
+ * ------------------------------------------------------------------------ */
+
+/* The port's Xh3irq dispatch calls these by IRQ number (cyros_port_irq_table).
+ * Each is weak, so an application or test defines the ones it uses under the
+ * same names the Arm board's vector table gives them. One taken that nobody
+ * defined reports which and stops. */
+/* Not declared noreturn, although it never returns, because the handlers
+ * aliased to it are not. The IRQ is still pending, so MEINEXT names it. */
+void unhandled_irq(void)
+{
+   int32_t next;
+   __asm__ volatile("csrr %0, 0xbe4" : "=r"(next));   /* MEINEXT */
+   cyros_bench_write("\n*** device interrupt with no handler, IRQ ");
+   write_hex(((uint32_t)next >> 2) & 0x1ffu);
+   cyros_bench_write(" ***\n");
+   cyros_bench_exit(4u);
+}
+
+void isr_irq0(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq1(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq2(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq3(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq4(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq5(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq6(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq7(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq8(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq9(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq10(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq11(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq12(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq13(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq14(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq15(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq16(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq17(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq18(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq19(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq20(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq21(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq22(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq23(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq24(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq25(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq26(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq27(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq28(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq29(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq30(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq31(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq32(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq33(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq34(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq35(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq36(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq37(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq38(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq39(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq40(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq41(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq42(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq43(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq44(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq45(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq46(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq47(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq48(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq49(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq50(void) __attribute__((weak, alias("unhandled_irq")));
+void isr_irq51(void) __attribute__((weak, alias("unhandled_irq")));
+
+typedef void (*irq_handler)(void);
+static irq_handler const irq_table[52] = {
+   isr_irq0,
+   isr_irq1,
+   isr_irq2,
+   isr_irq3,
+   isr_irq4,
+   isr_irq5,
+   isr_irq6,
+   isr_irq7,
+   isr_irq8,
+   isr_irq9,
+   isr_irq10,
+   isr_irq11,
+   isr_irq12,
+   isr_irq13,
+   isr_irq14,
+   isr_irq15,
+   isr_irq16,
+   isr_irq17,
+   isr_irq18,
+   isr_irq19,
+   isr_irq20,
+   isr_irq21,
+   isr_irq22,
+   isr_irq23,
+   isr_irq24,
+   isr_irq25,
+   isr_irq26,
+   isr_irq27,
+   isr_irq28,
+   isr_irq29,
+   isr_irq30,
+   isr_irq31,
+   isr_irq32,
+   isr_irq33,
+   isr_irq34,
+   isr_irq35,
+   isr_irq36,
+   isr_irq37,
+   isr_irq38,
+   isr_irq39,
+   isr_irq40,
+   isr_irq41,
+   isr_irq42,
+   isr_irq43,
+   isr_irq44,
+   isr_irq45,
+   isr_irq46,
+   isr_irq47,
+   isr_irq48,
+   isr_irq49,
+   isr_irq50,
+   isr_irq51,
+};
+
+irq_handler const* cyros_port_irq_table(void)
+{
+   return irq_table;
+}
+
+/* ---------------------------------------------------------------------------
  * Faults before cyros owns the trap vector
  * ------------------------------------------------------------------------ */
 
@@ -149,9 +290,16 @@ __attribute__((naked, aligned(4), used)) void early_trap(void)
  * Reset
  * ------------------------------------------------------------------------ */
 
-/* Before the go word: .bss and the console. */
+/* Before the go word: .data from flash in a flash image (its load and run
+ * addresses are one in an SRAM image), .bss, and the console. */
 __attribute__((used)) void board_early(void)
 {
+   uint32_t const* source = &__data_load__;
+   if (source != &__data_start__) {
+      for (uint32_t* target = &__data_start__; target < &__data_end__; ) {
+         *target++ = *source++;
+      }
+   }
    for (uint32_t* target = &__bss_start__; target < &__bss_end__; ) {
       *target++ = 0u;
    }

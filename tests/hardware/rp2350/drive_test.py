@@ -10,7 +10,7 @@ halt and starts it at _entry. Either way the image waits for the go word
 (startup_rp2350_hazard3.c, startup_rp2350_m33.c), its console is read out of
 its RTT ring and copied to stdout, and its exit status is read from
 bench_exit_code once bench_done is set. The board is reset by the watchdog at
-the end, which with nothing in flash is BOOTSEL, ready for the next image.
+the end, into BOOTSEL whatever flash holds, ready for the next image.
 
 Exit status: the image's, or 124 if it started and never finished, or 125 if
 the board could not be reached or never visibly started the image."""
@@ -98,17 +98,28 @@ def settle(ocd, log_path):
 
 PSM_WDSEL = 0x40018008
 WATCHDOG_CTRL = 0x400d8000
+WATCHDOG_SCRATCH2 = 0x400d8014
 WDSEL_ALL_BUT_OSCILLATORS = 0x1fffff3   # the SDK's watchdog_reboot choice
 WATCHDOG_TRIGGER = 1 << 31
+
+# The boot ROM's one-shot BOOTSEL request (datasheet 5.2.4.1), SCRATCH2 to 7:
+# no BOOTSEL flags, no activity GPIO, the magic, the entry point XORed with
+# -magic, the boot type in the stack pointer's place (2 is BOOTSEL), and the
+# special entry point, the magic again. It is what `picotool reboot -u` leaves.
+BOOTSEL_MAGIC = 0xb007c0d3
+BOOTSEL_REQUEST = (0, 0, BOOTSEL_MAGIC, BOOTSEL_MAGIC ^ (-BOOTSEL_MAGIC & 0xffffffff),
+                   2, BOOTSEL_MAGIC)
 
 
 def watchdog_reboot(ocd):
     """Reset the whole chip but its oscillators, as the SDK's watchdog_reboot
-    does. A debugger `reset run` resets the cores alone, which left the boot
-    ROM short of BOOTSEL once core 1 had been launched out of its pen. With
-    nothing in flash, and the boot ROM's own reboot request still saying
-    BOOTSEL, the board comes back on USB in about 2 s. The trigger's write
-    reports an error, because the chip resets under it."""
+    does, into BOOTSEL. A debugger `reset run` resets the cores alone, which
+    left the boot ROM short of BOOTSEL once core 1 had been launched out of its
+    pen. The boot ROM honours the request once and clears it, so whatever flash
+    holds, the board comes back on USB in BOOTSEL in about 2 s. The trigger's
+    write reports an error, because the chip resets under it."""
+    words = " ".join(f"{w:#x}" for w in BOOTSEL_REQUEST)
+    ocd.cmd(f"capture {{{HART} write_memory {WATCHDOG_SCRATCH2:#x} 32 {{{words}}}}}")
     ocd.cmd(f"capture {{{HART} write_memory {PSM_WDSEL:#x} 32 {WDSEL_ALL_BUT_OSCILLATORS:#x}}}")
     ocd.cmd(f"capture {{{HART} write_memory {WATCHDOG_CTRL:#x} 32 {WATCHDOG_TRIGGER:#x}}}")
 

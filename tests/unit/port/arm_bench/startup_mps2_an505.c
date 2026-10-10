@@ -16,6 +16,8 @@
 
 #include <stdint.h>
 
+#include "fpu_at_reset.h"
+
 /* Provided by the linker script. */
 extern uint32_t __etext;
 extern uint32_t __data_start__;
@@ -77,7 +79,9 @@ __attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
    __builtin_unreachable();
 }
 
-__attribute__((noreturn)) void Reset_Handler(void)
+/* Reset_Handler is the naked entry below, which turns the FPU on first
+ * (fpu_at_reset.h) and continues here. */
+__attribute__((noreturn, used)) void bench_reset_c(void)
 {
    uint32_t const* source = &__etext;
    for (uint32_t* target = &__data_start__; target < &__data_end__; ) {
@@ -100,6 +104,8 @@ __attribute__((noreturn)) void Reset_Handler(void)
 
    cyros_bench_exit((uint32_t)cyros_bench_main());
 }
+
+BENCH_RESET_ENTRY(Reset_Handler, bench_reset_c)
 
 /**
  * @brief Every fault lands here.

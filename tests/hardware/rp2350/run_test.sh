@@ -9,14 +9,15 @@
 #   cyros-builder test -p build/profiles/unit_test_rp2350_m33.toml       # and _smp
 #
 # RP2350_BOOT=picotool (the default) has the boot ROM load the image into SRAM
-# and enter it, the path a product takes (rp2350-notes.md 10). RP2350_BOOT=swd
-# loads it over the Debug Probe after a reset halt instead, which needs no
-# USB but skips the boot ROM. Nothing is written to flash or to OTP.
+# and enter it, the path a product takes (rp2350-notes.md 10), and an image
+# linked for flash (the -flash toolchains) is written to flash and booted from
+# there. RP2350_BOOT=swd loads an SRAM image over the Debug Probe after a reset
+# halt instead, which needs no USB but skips the boot ROM. Never OTP.
 #
 # Needs the Debug Probe on the board's SWD port ("D"), with nothing else
 # holding OpenOCD's Tcl port, and for picotool the board on USB. Each run ends
-# with a watchdog reset of the board, which with an empty flash is BOOTSEL
-# again, and a board found running something else is reset there first.
+# with a watchdog reset of the board into BOOTSEL, whatever flash holds, and a
+# board found running something else is reset there first.
 #
 # RP2350_TEST_TIMEOUT (30 s) bounds the image once it has started. With the
 # driver's 8 s wait for the start and one retry it stays under the builder's
@@ -41,6 +42,14 @@ case $(readelf -h "$elf" 2>/dev/null | sed -n 's/^ *Machine: *//p') in
    *ARM*)    arch=arm;   cfg=target/rp2350.cfg; cfg_pre=(-c "set USE_SMP 0") ;;
    *)        echo "rp2350: $elf is neither a RISC-V nor an Arm image" >&2; exit 125 ;;
 esac
+
+# An image whose entry lies in flash's window (0x10000000 up) is a flash image,
+# which only the boot ROM's flash boot runs.
+entry=$(readelf -h "$elf" | sed -n 's/^ *Entry point address: *//p')
+if (( entry >= 0x10000000 && entry < 0x20000000 )) && [[ $boot == swd ]]; then
+   echo "rp2350: $elf is a flash image, and RP2350_BOOT=swd loads SRAM images only" >&2
+   exit 125
+fi
 
 lsusb -d 2e8a:000c >/dev/null 2>&1 || { echo "rp2350: no Raspberry Pi Debug Probe on USB" >&2; exit 125; }
 if [[ -n $(ss -Hltn "sport = :$port") ]]; then
@@ -69,9 +78,10 @@ wait_for_bootsel() {
 }
 
 # A board left running an image (a run the builder killed, or an image loaded
-# by hand) is reset through SWD by the watchdog, as drive_test.py ends every
-# run (its watchdog_reboot says why not `reset run`). Whichever architecture
-# the cores are in answers, so both configurations are tried.
+# by hand) is reset through SWD by the watchdog into BOOTSEL, as drive_test.py
+# ends every run (its watchdog_reboot says why not `reset run`, and what the
+# scratch words are). Whichever architecture the cores are in answers, so both
+# configurations are tried.
 recover() {
    local cfg target
    for cfg in target/rp2350-riscv.cfg target/rp2350.cfg; do
@@ -79,6 +89,7 @@ recover() {
       timeout --foreground 30 openocd-rp2350 -f interface/cmsis-dap.cfg -c "adapter speed 5000" \
          -f "$cfg" -c "gdb port disabled" -c "telnet port disabled" -c "tcl port disabled" \
          -c init -c "catch {riscv set_mem_access sysbus}" \
+         -c "catch {$target write_memory 0x400d8014 32 {0 0 0xb007c0d3 0xfffffffe 2 0xb007c0d3}}" \
          -c "catch {$target write_memory 0x40018008 32 0x1fffff3}" \
          -c "catch {$target write_memory 0x400d8000 32 0x80000000}" \
          -c shutdown >>"$log" 2>&1 || true

@@ -4,9 +4,11 @@
  *
  * Subject / Trusts / Proves
  * -------------------------
- * Subject: the cortex_m port's context switch, as exercised through the
+ * Subject: the Cortex-M ports' context switch, Mainline (cortex_m,
+ *          rp2350_m33) and Baseline (cortex_m0), as exercised through the
  *          kernel's own scheduler.
- * Trusts:  layer 0, the port's masking contract (test_cortex_m_port).
+ * Trusts:  layer 0, the port's masking contract (test_cortex_m_port, or
+ *          test_cortex_m0_port on ARMv6-M).
  * Proves:  that cyros_port_context_init builds a frame the hardware can enter,
  *          that cyros_port_start_first reaches it, and that PendSV carries a
  *          thread out and back with its registers and stack intact.
@@ -110,6 +112,82 @@ bool registers_survived_a_yield()
 {
    std::uint32_t result = 0;
 
+#if defined(__ARM_ARCH_6M__)
+   /* The same check in Thumb-1, for the armv6m layer, whose PendSV moves r8 to
+    * r11 through low registers. No MOVW and no IT block, so the patterns are
+    * byte immediates and each mismatch sets its bit by a branch around an ADDS
+    * (the bits are distinct, so adding is OR). Unified syntax, which GCC does
+    * not select for Thumb-1 inline assembly on its own. */
+   asm volatile(
+      ".syntax unified           \n"
+      "push  {r4-r7}             \n"
+      "mov   r4, r8              \n"
+      "mov   r5, r9              \n"
+      "mov   r6, r10             \n"
+      "mov   r7, r11             \n"
+      "push  {r4-r7}             \n"
+      "movs  r0, #0x88           \n"
+      "mov   r8, r0              \n"
+      "movs  r0, #0x99           \n"
+      "mov   r9, r0              \n"
+      "movs  r0, #0xAA           \n"
+      "mov   r10, r0             \n"
+      "movs  r0, #0xBB           \n"
+      "mov   r11, r0             \n"
+      "movs  r4, #0x44           \n"
+      "movs  r5, #0x55           \n"
+      "movs  r6, #0x66           \n"
+      "movs  r7, #0x77           \n"
+      "bl    cyros_bench_yield   \n"
+      "movs  r0, #0              \n"
+      "cmp   r4, #0x44           \n"
+      "beq   1f                  \n"
+      "adds  r0, #1              \n"
+      "1:                        \n"
+      "cmp   r5, #0x55           \n"
+      "beq   2f                  \n"
+      "adds  r0, #2              \n"
+      "2:                        \n"
+      "cmp   r6, #0x66           \n"
+      "beq   3f                  \n"
+      "adds  r0, #4              \n"
+      "3:                        \n"
+      "cmp   r7, #0x77           \n"
+      "beq   4f                  \n"
+      "adds  r0, #8              \n"
+      "4:                        \n"
+      "mov   r1, r8              \n"
+      "cmp   r1, #0x88           \n"
+      "beq   5f                  \n"
+      "adds  r0, #16             \n"
+      "5:                        \n"
+      "mov   r1, r9              \n"
+      "cmp   r1, #0x99           \n"
+      "beq   6f                  \n"
+      "adds  r0, #32             \n"
+      "6:                        \n"
+      "mov   r1, r10             \n"
+      "cmp   r1, #0xAA           \n"
+      "beq   7f                  \n"
+      "adds  r0, #64             \n"
+      "7:                        \n"
+      "mov   r1, r11             \n"
+      "cmp   r1, #0xBB           \n"
+      "beq   8f                  \n"
+      "adds  r0, #128            \n"
+      "8:                        \n"
+      /* Restore before handing the result out, as below. */
+      "pop   {r4-r7}             \n"
+      "mov   r8, r4              \n"
+      "mov   r9, r5              \n"
+      "mov   r10, r6             \n"
+      "mov   r11, r7             \n"
+      "pop   {r4-r7}             \n"
+      "mov   %[out], r0          \n"
+      : [out] "=r"(result)
+      :
+      : "r0", "r1", "r2", "r3", "r12", "lr", "cc", "memory");
+#else
    asm volatile(
       "push  {r4-r11}            \n"
       "movw  r4,  #0x4444        \n"
@@ -165,6 +243,7 @@ bool registers_survived_a_yield()
       : [out] "=r"(result)
       :
       : "r0", "r1", "r2", "r3", "r12", "lr", "cc", "memory");
+#endif
 
    if (result != 0) {
       cyros::bench::print("  clobbered register mask = ");
@@ -188,11 +267,71 @@ extern "C" void cyros_bench_yield()
 namespace
 {
 
+/* The other half of the check: thread_a holds DIFFERENT values in r4 to r11
+ * across the yield that thread_b's check switches to. Without it, thread_b's
+ * yield would find no other thread ready and come straight back, so PendSV
+ * would save and restore the same thread's registers, and a switch that
+ * dropped a register from both its save and its restore would pass. Its own
+ * callee-saved registers are put back before it returns. */
+void scramble_registers_across_a_yield()
+{
+#if defined(__ARM_ARCH_6M__)
+   asm volatile(
+      ".syntax unified           \n"
+      "push  {r4-r7}             \n"
+      "mov   r4, r8              \n"
+      "mov   r5, r9              \n"
+      "mov   r6, r10             \n"
+      "mov   r7, r11             \n"
+      "push  {r4-r7}             \n"
+      "movs  r0, #0x18           \n"
+      "mov   r8, r0              \n"
+      "movs  r0, #0x19           \n"
+      "mov   r9, r0              \n"
+      "movs  r0, #0x1A           \n"
+      "mov   r10, r0             \n"
+      "movs  r0, #0x1B           \n"
+      "mov   r11, r0             \n"
+      "movs  r4, #0x14           \n"
+      "movs  r5, #0x15           \n"
+      "movs  r6, #0x16           \n"
+      "movs  r7, #0x17           \n"
+      "bl    cyros_bench_yield   \n"
+      "pop   {r4-r7}             \n"
+      "mov   r8, r4              \n"
+      "mov   r9, r5              \n"
+      "mov   r10, r6             \n"
+      "mov   r11, r7             \n"
+      "pop   {r4-r7}             \n"
+      :
+      :
+      : "r0", "r1", "r2", "r3", "r12", "lr", "cc", "memory");
+#else
+   asm volatile(
+      "push  {r4-r11}            \n"
+      "movw  r4,  #0x1414        \n"
+      "movw  r5,  #0x1515        \n"
+      "movw  r6,  #0x1616        \n"
+      "movw  r7,  #0x1717        \n"
+      "movw  r8,  #0x1818        \n"
+      "movw  r9,  #0x1919        \n"
+      "movw  r10, #0x1A1A        \n"
+      "movw  r11, #0x1B1B        \n"
+      "bl    cyros_bench_yield   \n"
+      "pop   {r4-r11}            \n"
+      :
+      :
+      : "r0", "r1", "r2", "r3", "r12", "lr", "cc", "memory");
+#endif
+}
+
 void thread_a()
 {
    mark(1);
    this_thread::yield();
    mark(3);
+   /* Ready, with other values in r4 to r11, when thread_b's check yields. */
+   scramble_registers_across_a_yield();
 }
 
 void thread_b()

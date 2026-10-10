@@ -1,0 +1,16 @@
+name = "arm-none-eabi-rp2350-flash"
+extends = "arm-none-eabi-rp2350.toml"
+
+# The Pico 2 W's Cortex-M33 toolchain with the image in flash, executed in
+# place, instead of in SRAM: the boot ROM's flash boot, the path a product
+# takes. Only the linker script differs. Pass it over a profile with -t:
+#
+#   cyros-builder test -p build/profiles/unit_test_rp2350_m33.toml \
+#      -t build/toolchains/arm-none-eabi-rp2350-flash.toml
+#
+# The runner's `picotool load -x` writes each image to flash, a few dozen
+# 4 kB sectors per test, and every run ends with a watchdog reboot that asks
+# the boot ROM for BOOTSEL, so the image in flash never runs again by itself.
+# Never OTP.
+[board]
+linker_script = "../../tests/hardware/rp2350/rp2350_m33_flash.ld"

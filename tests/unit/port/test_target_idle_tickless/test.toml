@@ -13,7 +13,7 @@ config = "test_target_idle_tickless_config.hpp"
 hosted = false
 
 [components]
-port = ["cortex_m", "riscv_virt", "rp2350_hazard3", "rp2350_m33"]
+port = ["cortex_m", "cortex_m0", "riscv_virt", "rp2350_hazard3", "rp2350_m33"]
 time_driver = "tickless"
 features = ["chrono", "sync"]
 

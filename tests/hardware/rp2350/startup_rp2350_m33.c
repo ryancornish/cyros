@@ -9,9 +9,12 @@
  * instead. The handlers each port defines are linked over weak defaults
  * below.
  *
- * The image runs from SRAM. It is entered at _entry either by the boot ROM,
- * through the IMAGE_DEF block below (`picotool load -x`, the runner's
- * default), or by the debugger after a reset halt (RP2350_BOOT=swd). _entry
+ * The image runs from SRAM (rp2350_m33.ld) or in place from flash
+ * (rp2350_m33_flash.ld, the toolchain arm-none-eabi-rp2350-flash.toml). It is
+ * entered at _entry either by the boot ROM, through the IMAGE_DEF block below
+ * (`picotool load -x`, the runner's default, which writes a flash image to
+ * flash first), or by an SRAM image's debugger after a reset halt
+ * (RP2350_BOOT=swd). _entry
  * sets MSP, MSPLIM and VTOR before any C runs, because a debugger start leaves
  * the boot ROM's (rp2350-notes.md 2b). Core 1 stays in the boot ROM's holding
  * pen until the rp2350_m33_smp target launches it, with this same vector table
@@ -19,10 +22,12 @@
  *
  * Then, in order:
  *
- *   1. .bss and the console, and rtt_ready, so the runner can read it;
+ *   1. a flash image's .data, .bss and the console, and rtt_ready, so the
+ *      runner can read it;
  *   2. the runner's go word, so nothing timed starts before OpenOCD is
  *      attached, as on the Hazard3 board;
- *   3. 150 MHz from the crystal, and MTIME counting it (FULLSPEED);
+ *   3. 150 MHz from the crystal, the flash clock slowed first (rp2350.h),
+ *      and MTIME counting it (FULLSPEED);
  *   4. core 1's RCP salt, seeded if a debugger start skipped the boot ROM;
  *   5. constructors, then cyros_bench_main.
  */
@@ -33,6 +38,9 @@
 
 extern uint32_t __bss_start__;
 extern uint32_t __bss_end__;
+extern uint32_t __data_start__;
+extern uint32_t __data_end__;
+extern uint32_t const __data_load__;
 extern uint32_t __stack_top;
 extern int cyros_bench_main(void);
 extern void (*__init_array_start[])(void);
@@ -143,9 +151,16 @@ static void seed_rcp_if_unseeded(void)
  * Reset
  * ------------------------------------------------------------------------ */
 
-/* Before the go word: .bss and the console. */
+/* Before the go word: .data from flash in a flash image (its load and run
+ * addresses are one in an SRAM image), .bss, and the console. */
 __attribute__((used)) void board_early(void)
 {
+   uint32_t const* source = &__data_load__;
+   if (source != &__data_start__) {
+      for (uint32_t* target = &__data_start__; target < &__data_end__; ) {
+         *target++ = *source++;
+      }
+   }
    for (uint32_t* target = &__bss_start__; target < &__bss_end__; ) {
       *target++ = 0u;
    }
@@ -266,6 +281,60 @@ void PendSV_Handler(void)       __attribute__((weak, alias("Default_Handler")));
 void SIO_BELL_Handler(void)     __attribute__((weak, alias("Default_Handler")));
 void SIO_MTIMECMP_Handler(void) __attribute__((weak, alias("Default_Handler")));
 
+/* Device interrupts, by IRQ number, weak so an application or test defines
+ * the ones it uses. The same names the Hazard3 board's table uses, so one
+ * test serves both ISAs. 26 and 29 are cyros's own. */
+void isr_irq0(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq1(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq2(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq3(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq4(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq5(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq6(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq7(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq8(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq9(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq10(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq11(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq12(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq13(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq14(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq15(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq16(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq17(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq18(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq19(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq20(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq21(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq22(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq23(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq24(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq25(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq27(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq28(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq30(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq31(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq32(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq33(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq34(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq35(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq36(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq37(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq38(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq39(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq40(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq41(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq42(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq43(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq44(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq45(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq46(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq47(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq48(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq49(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq50(void) __attribute__((weak, alias("Default_Handler")));
+void isr_irq51(void) __attribute__((weak, alias("Default_Handler")));
+
 typedef union
 {
    void (*handler)(void);
@@ -273,7 +342,6 @@ typedef union
 } vector_entry;
 
 #define DEFAULT { .handler = Default_Handler }
-#define DEFAULT_X4 DEFAULT, DEFAULT, DEFAULT, DEFAULT
 
 /* Sixteen system entries and the RP2350's 52 device IRQs, aligned to the
  * table's size rounded up to a power of two, which VTOR requires. Both cores
@@ -296,17 +364,58 @@ vector_entry const vector_table[] = {
    { .value = 0u },                         /* 13 reserved                   */
    { .handler = PendSV_Handler },           /* 14 PendSV                     */
    DEFAULT,                                 /* 15 SysTick, unused here       */
-   DEFAULT_X4, DEFAULT_X4, DEFAULT_X4, DEFAULT_X4,      /* IRQ 0 to 15      */
-   DEFAULT_X4, DEFAULT_X4,                              /* IRQ 16 to 23     */
-   DEFAULT,                                             /* IRQ 24           */
-   DEFAULT,                                             /* IRQ 25 SIO FIFO  */
-   { .handler = SIO_BELL_Handler },                     /* IRQ 26 SIO BELL  */
-   DEFAULT,                                             /* IRQ 27           */
-   DEFAULT,                                             /* IRQ 28           */
-   { .handler = SIO_MTIMECMP_Handler },                 /* IRQ 29 MTIMECMP  */
-   DEFAULT, DEFAULT,                                    /* IRQ 30, 31       */
-   DEFAULT_X4, DEFAULT_X4, DEFAULT_X4, DEFAULT_X4,      /* IRQ 32 to 47     */
-   DEFAULT_X4,                                          /* IRQ 48 to 51     */
+   { .handler = isr_irq0 },
+   { .handler = isr_irq1 },
+   { .handler = isr_irq2 },
+   { .handler = isr_irq3 },
+   { .handler = isr_irq4 },
+   { .handler = isr_irq5 },
+   { .handler = isr_irq6 },
+   { .handler = isr_irq7 },
+   { .handler = isr_irq8 },
+   { .handler = isr_irq9 },
+   { .handler = isr_irq10 },
+   { .handler = isr_irq11 },
+   { .handler = isr_irq12 },
+   { .handler = isr_irq13 },
+   { .handler = isr_irq14 },
+   { .handler = isr_irq15 },
+   { .handler = isr_irq16 },
+   { .handler = isr_irq17 },
+   { .handler = isr_irq18 },
+   { .handler = isr_irq19 },
+   { .handler = isr_irq20 },
+   { .handler = isr_irq21 },
+   { .handler = isr_irq22 },
+   { .handler = isr_irq23 },
+   { .handler = isr_irq24 },
+   { .handler = isr_irq25 },
+   { .handler = SIO_BELL_Handler },        /* IRQ 26, SIO doorbell, cyros's */
+   { .handler = isr_irq27 },
+   { .handler = isr_irq28 },
+   { .handler = SIO_MTIMECMP_Handler },    /* IRQ 29, MTIMECMP, cyros's     */
+   { .handler = isr_irq30 },
+   { .handler = isr_irq31 },
+   { .handler = isr_irq32 },
+   { .handler = isr_irq33 },
+   { .handler = isr_irq34 },
+   { .handler = isr_irq35 },
+   { .handler = isr_irq36 },
+   { .handler = isr_irq37 },
+   { .handler = isr_irq38 },
+   { .handler = isr_irq39 },
+   { .handler = isr_irq40 },
+   { .handler = isr_irq41 },
+   { .handler = isr_irq42 },
+   { .handler = isr_irq43 },
+   { .handler = isr_irq44 },
+   { .handler = isr_irq45 },
+   { .handler = isr_irq46 },
+   { .handler = isr_irq47 },
+   { .handler = isr_irq48 },
+   { .handler = isr_irq49 },
+   { .handler = isr_irq50 },
+   { .handler = isr_irq51 },
 };
 
 _Static_assert(sizeof vector_table == (16u + 52u) * 4u, "16 system entries and 52 IRQs");

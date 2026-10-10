@@ -4,6 +4,7 @@ extends = "riscv32-elf-debug.toml"
 # The debug toolchain (riscv32-elf-base.toml) for the Pico 2 W's
 # Hazard3 core 0 instead of QEMU's virt: its board and its runner. The image
 # runs from SRAM, and nothing is written to flash or OTP.
+# riscv32-elf-rp2350-flash.toml is the same with the image in flash.
 #
 # Hazard3's own instruction set, the datasheet's -march for GCC 14 and later
 # (section 3.8.1.2, rp2350-notes.md 6a): bit manipulation (Zba, Zbb, Zbs,

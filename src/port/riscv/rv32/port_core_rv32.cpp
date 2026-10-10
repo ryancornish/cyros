@@ -62,14 +62,32 @@
  * with no code at all.
  *
  *
- * No stack guard
- * ==============
- * A standard PMP region applies to machine mode only when it is LOCKED, and a
- * locked region cannot be moved until reset, so it cannot follow the running
- * thread. The policy is a hardware guard where one is cheap and none
- * otherwise. Hazard3's Xh3pmpm can apply an unlocked region to machine mode,
- * which makes a guard possible on the RP2350 (rp2350-notes.md 6c), and is for
- * that target to add.
+ * The stack guard: PMP entry 0, moved on every switch
+ * ===================================================
+ * cyros hands every thread a caller-owned buffer, so an overrun walks into
+ * whatever the application put below it. The policy is a hardware guard where
+ * one is cheap and none otherwise. Here it is PMP entry 0, the highest
+ * priority, so no entry an application programs can override it: a 128-byte
+ * NAPOT region with no permissions near the bottom of the RUNNING thread's
+ * buffer, moved by one pmpaddr0 write per switch (3 cycles on Hazard3,
+ * rp2350-notes.md 6c). A store or load into it faults.
+ *
+ * A standard PMP entry binds machine mode only when locked, and a locked one
+ * cannot move, so the target has to supply a way (riscv.hpp,
+ * stack_guard_setup): Hazard3's Xh3pmpm, or Smepmp's rule-lock bypass on
+ * QEMU's virt. A target with neither runs unguarded, by policy.
+ *
+ * THE SPILL ZONE. The trap entry saves its frame on the INTERRUPTED stack, so
+ * a thread that faults on the guard faults again inside the entry, which
+ * steps 128 bytes lower each time until its stores clear the guard. Its last
+ * frame lies at most 252 bytes below the guard. So the guard sits 256 bytes
+ * above the bottom of the buffer, and those writes land in the thread's own
+ * buffer rather than below it. The fault handler then runs on the interrupt
+ * stack and reports. Guard, spill zone and the guard's 128-byte alignment cost
+ * up to 508 bytes of each buffer.
+ *
+ * What it cannot catch, as on ARMv7-M: a frame larger than the guard whose
+ * stores all miss it, the sp stepping over it in one adjustment.
  */
 
 #include <cyros/port/port_core.h>
@@ -99,6 +117,7 @@ namespace riscv = cyros::port::riscv;
 struct cyros_port_context
 {
    std::uint32_t* frame;
+   std::uint32_t  guard;   /* pmpaddr0 for this thread's guard, 0 for none */
 };
 
 static_assert(sizeof(cyros_port_context) <= CYROS_PORT_CONTEXT_SIZE,
@@ -110,6 +129,31 @@ namespace
 {
 
 cyros_port_reschedule_t reschedule_handler = nullptr;
+
+/* The stack guard's geometry (see the file comment). */
+constexpr std::uintptr_t guard_bytes = 128u;
+constexpr std::uintptr_t spill_bytes = 256u;
+
+/* PMP entry 0's configuration byte, from the target, or 0 for no guard.
+ * Written by the bootstrap core in cyros_port_init, read everywhere after. */
+std::uint8_t guard_cfg = 0u;
+
+/* pmpaddr for a NAPOT region of guard_bytes at `bottom`, which is aligned to
+ * guard_bytes: the base over four, with size/8 - 1 in the low bits. */
+constexpr std::uint32_t guard_pmpaddr(std::uintptr_t bottom) noexcept
+{
+   return static_cast<std::uint32_t>(bottom >> 2) | static_cast<std::uint32_t>(guard_bytes / 8u - 1u);
+}
+
+/* Entry 0's byte in pmpcfg0 and nothing else: entries 1 to 3 are the
+ * application's. */
+inline void set_guard_enabled(std::uint8_t cfg) noexcept
+{
+   riscv::clear_pmpcfg0(0xffu);
+   if (cfg != 0u) {
+      riscv::set_pmpcfg0(cfg);
+   }
+}
 
 /**
  * @brief What each core's trap path keeps.
@@ -307,7 +351,9 @@ extern "C" std::uint32_t* cyros_port_trap_dispatch(std::uint32_t* frame)
       run_reschedule(state);
    }
    else {
-      unexpected_trap(cause, frame[riscv::frame_mepc]);
+      /* A fault. The handler is the application's if it supplied one, and
+       * returning from it resumes the frame. */
+      cyros_riscv_fault_handler(cause, frame);
    }
 
    --state.trap_depth;
@@ -317,6 +363,31 @@ extern "C" std::uint32_t* cyros_port_trap_dispatch(std::uint32_t* frame)
       riscv::write_mscratch(state.interrupt_stack_top);
    }
    return state.frame;
+}
+
+
+/* The trap entry's own extent, to recognise a fault taken while it saved a
+ * frame. cyros_port_trap_exit is the label after its last store. */
+extern "C" void cyros_port_trap_exit(void);
+
+/**
+ * @brief The default fault handler: report, and panic.
+ *
+ * Weak, so an application can take faults itself (riscv.hpp). An access fault
+ * inside the trap entry means the entry could not save a frame below the
+ * interrupted sp, which with the guard on is a stack overflow: the frame was
+ * headed into the guard, and the original faulting instruction is lost.
+ */
+extern "C" [[gnu::weak]] void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
+{
+   std::uint32_t const epc = frame[riscv::frame_mepc];
+   auto const entry = reinterpret_cast<std::uint32_t>(&cyros_port_trap_entry);
+   auto const exit  = reinterpret_cast<std::uint32_t>(&cyros_port_trap_exit);
+   bool const access = mcause == riscv::cause_load_access || mcause == riscv::cause_store_access;
+   if (access && epc >= entry && epc < exit) {
+      riscv::write0("\n*** stack overflow: the trap entry could not save a frame (the guard) ***");
+   }
+   unexpected_trap(mcause, epc);
 }
 
 
@@ -352,6 +423,12 @@ void init_this_core()
    /* mcycle counts, for cyros_port_timestamp where a target uses it and for
     * anyone measuring. Hazard3 resets with it inhibited (rp2350-notes.md 6a). */
    write_mcountinhibit(0u);
+
+   /* PMP entry 0 binding machine mode, and every hart able to do so if the
+    * bootstrap core was. Off until cyros_port_start_first has a thread to
+    * guard: the bring-up runs on the boot stack. */
+   CYROS_ASSERT_OP(stack_guard_setup(), ==, guard_cfg);
+   set_guard_enabled(0u);
 }
 
 } // namespace cyros::port::riscv
@@ -359,6 +436,9 @@ void init_this_core()
 void cyros_port_init(cyros_port_reschedule_t handler)
 {
    CYROS_ASSERT(handler != nullptr);
+   /* The bootstrap core decides whether there is a guard, and every core's
+    * init_this_core, this one's included, checks it agrees. */
+   guard_cfg = riscv::stack_guard_setup();
    reschedule_handler = handler;
    riscv::init_this_core();
 }
@@ -434,6 +514,17 @@ void cyros_port_context_init(cyros_port_context* context,
    std::uintptr_t const top = (base + stack_size) & ~static_cast<std::uintptr_t>(15u);
    CYROS_ASSERT_OP(top - riscv::frame_bytes, >, base);
 
+   /* The guard, when there is one: the spill zone at the bottom, then the
+    * guard aligned to its own size, then the stack proper (file comment). The
+    * decision is cyros_port_init's, so it must have run. */
+   CYROS_ASSERT(reschedule_handler != nullptr);
+   std::uint32_t guard = 0u;
+   if (guard_cfg != 0u) {
+      std::uintptr_t const bottom = (base + spill_bytes + guard_bytes - 1u) & ~(guard_bytes - 1u);
+      CYROS_ASSERT_OP(top - riscv::frame_bytes, >, bottom + guard_bytes);
+      guard = guard_pmpaddr(bottom);
+   }
+
    /* The frame cyros_port_trap_exit consumes. mret enters `entry` in machine
     * mode with MIE set from MPIE, so the thread starts at baseline priority,
     * and its sp is the frame's top, the 16-aligned top of its stack. */
@@ -451,6 +542,7 @@ void cyros_port_context_init(cyros_port_context* context,
    frame[riscv::frame_a0]      = reinterpret_cast<std::uint32_t>(arg);
 
    context->frame = frame;
+   context->guard = guard;
 }
 
 void cyros_port_context_destroy(cyros_port_context* context)
@@ -458,6 +550,7 @@ void cyros_port_context_destroy(cyros_port_context* context)
    CYROS_ASSERT(context != nullptr);
    /* Nothing is owned. Poisoned, so a resume faults on a null frame. */
    context->frame = nullptr;
+   context->guard = 0u;
 }
 
 void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
@@ -474,6 +567,13 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
       from->frame = state.frame;
    }
    state.frame = to->frame;
+
+   /* The incoming thread's guard. The trap runs on the interrupt stack, and
+    * its exit reads the new frame, which lies above the new guard, so the
+    * moment of the move is free. */
+   if (guard_cfg != 0u) {
+      riscv::write_pmpaddr0(to->guard);
+   }
 }
 
 /* Not marked [[noreturn]], as on ARM: port_core.h declares it plain. */
@@ -492,6 +592,13 @@ void cyros_port_start_first(cyros_port_context* first)
    asm volatile("mv %0, sp" : "=r"(sp));
    state.interrupt_stack_top = sp & ~static_cast<std::uintptr_t>(15u);
    riscv::write_mscratch(state.interrupt_stack_top);
+
+   /* The first thread's guard, and entry 0 on from here: only threads run on
+    * guarded stacks, never this core's boot or interrupt stack. */
+   if (guard_cfg != 0u) {
+      riscv::write_pmpaddr0(first->guard);
+      set_guard_enabled(guard_cfg);
+   }
 
    asm volatile(
       "mv   a0, %0               \n"

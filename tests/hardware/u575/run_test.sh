@@ -26,7 +26,7 @@
 #
 # OpenOCD stays attached while the test runs, although no test output goes
 # through it, because two things still use semihosting: the PORT's panic report
-# (src/port/arm/armv7m_armv8m/cortex_m.hpp) and bench.hpp's elapsed-time reference. A
+# (src/port/arm/common/cortex_m.hpp) and bench.hpp's elapsed-time reference. A
 # panic therefore still arrives, on OpenOCD's output, and this script shows it.
 #
 # Single-core tests only (the cortex_m port). The U575 has one core.

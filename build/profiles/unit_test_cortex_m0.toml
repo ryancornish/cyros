@@ -1,0 +1,20 @@
+# Unit-test profile for the ARMv6-M port on QEMU's microbit, a Cortex-M0.
+#
+# Tests run under QEMU through the toolchain's runner, as the Mainline benches'
+# do, and each test's port filter decides whether it runs here.
+[profile]
+name = "unit_test_cortex_m0"
+toolchain = "../toolchains/arm-none-eabi-debug-m0.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_m0"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

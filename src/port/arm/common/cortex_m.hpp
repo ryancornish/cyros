@@ -5,13 +5,15 @@
  * Deliberately NOT CMSIS. CMSIS would be a vendor header tree in the build for
  * the dozen registers this port touches, and it brings its own opinions about
  * startup and device headers. Everything needed here is architectural, defined
- * by the ARMv7-M and ARMv8-M Architecture Reference Manuals, and identical on
- * every Mainline Cortex-M part: the QEMU mps2-an505, mps2-an386 and mps2-an385
- * benches, the STM32U575 and the TM4C123.
+ * by the ARMv6-M, ARMv7-M and ARMv8-M Architecture Reference Manuals: the QEMU
+ * mps2 and micro:bit benches, the STM32U575, the TM4C123 and the RP2350.
  *
- * The two architectures differ, for this port, in exactly one thing: ARMv8-M
- * has stack-limit registers and ARMv7-M does not. The architecture section
- * below is where that is decided.
+ * Shared by both Arm core layers and their targets, which is why it sits in
+ * arm/common: armv7m_armv8m (Mainline) and armv6m (Baseline). The
+ * architecture section below decides what exists for which. Mainline has
+ * BASEPRI, the DWT cycle counter and, on ARMv8-M, stack-limit registers.
+ * Baseline has none of them, and its system handler priorities are word
+ * access only.
  */
 
 #ifndef CYROS_PORT_CORTEX_M_HPP
@@ -39,11 +41,16 @@ namespace cyros::port::cortex_m
  * ========================================================================= */
 
 #if defined(__ARM_ARCH_8M_MAIN__)
+#  define CYROS_CORTEX_M_MAINLINE 1
 #  define CYROS_CORTEX_M_HAS_STACK_LIMIT 1
 #elif defined(__ARM_ARCH_7EM__) || defined(__ARM_ARCH_7M__)
+#  define CYROS_CORTEX_M_MAINLINE 1
+#  define CYROS_CORTEX_M_HAS_STACK_LIMIT 0
+#elif defined(__ARM_ARCH_6M__)
+#  define CYROS_CORTEX_M_MAINLINE 0
 #  define CYROS_CORTEX_M_HAS_STACK_LIMIT 0
 #else
-#  error "the mainline core layer supports ARMv7-M and ARMv8-M Mainline only"
+#  error "cyros supports ARMv6-M, ARMv7-M and ARMv8-M Mainline"
 #endif
 
 /* ============================================================================
@@ -110,11 +117,15 @@ inline constexpr std::uintptr_t scb_ccr   = scb_base + 0x14u;  /* Configuration 
 inline constexpr std::uint32_t icsr_pendsvset = 1u << 28;
 inline constexpr std::uint32_t icsr_pendstclr = 1u << 25;
 
+inline constexpr std::uint32_t icsr_pendsvclr = 1u << 27;
+
 /* System handler priority byte offsets within SHPR. The register file is
  * indexed from handler 4 (MemManage), so PendSV (14) is byte 10 and
- * SysTick (15) is byte 11. */
+ * SysTick (15) is byte 11. Mainline only: ARMv6-M allows word access alone to
+ * SHPR, and has no SHPR1, so its layer writes SHPR3 whole. */
 inline constexpr std::uintptr_t shpr_pendsv  = scb_shpr + 10u;
 inline constexpr std::uintptr_t shpr_systick = scb_shpr + 11u;
+inline constexpr std::uintptr_t scb_shpr3    = scb_shpr + 8u;   /* PendSV [23:16], SysTick [31:24] */
 
 /* PMSAv7 MPU, for the ARMv7-M stack guard (port_core_armv7m_armv8m.cpp).
  * ARMv8-M has a different MPU (PMSAv8, base and limit) and does not use these. */
@@ -179,6 +190,9 @@ inline void set_primask(std::uint32_t value) noexcept
 inline void disable_irq() noexcept { asm volatile("cpsid i" ::: "memory"); }
 inline void enable_irq()  noexcept { asm volatile("cpsie i" ::: "memory"); }
 
+#if CYROS_CORTEX_M_MAINLINE
+/* Absent on ARMv6-M, which has no BASEPRI: its preempt grade is a software
+ * deferral (armv6m), and a call here is then a compile error. */
 inline std::uint32_t get_basepri() noexcept
 {
    std::uint32_t value;
@@ -190,6 +204,7 @@ inline void set_basepri(std::uint32_t value) noexcept
 {
    asm volatile("msr basepri, %0" :: "r"(value) : "memory");
 }
+#endif
 
 inline std::uint32_t get_ipsr() noexcept
 {
@@ -308,11 +323,11 @@ inline void write_hex(std::uint32_t value) noexcept
  * @brief Apply the core-private half of port initialisation to THIS core.
  *
  * Everything cyros_port_init does to hardware lives in registers that are
- * private to a core: PRIMASK, BASEPRI, CPACR, the system handler priorities
- * and ICSR. On a single-core target cyros_port_init is the only caller and
- * this split is invisible. On a multicore one every secondary core must run
- * it too, or it comes up with default handler priorities and no FPU while
- * running the same kernel.
+ * private to a core: PRIMASK, BASEPRI and CPACR where they exist, the system
+ * handler priorities and ICSR. On a single-core target cyros_port_init is the
+ * only caller and this split is invisible. On a multicore one every secondary
+ * core must run it too, or it comes up with default handler priorities and no
+ * FPU while running the same kernel.
  *
  * It deliberately does NOT derive the priority values. Those are facts about
  * the core design, identical on every core of a homogeneous part, so the
@@ -336,18 +351,22 @@ void init_this_core();
  *
  * Derived in cyros_port_init, so this reports a real value only after it. An
  * MCU layer configuring its own IRQs, an inter-core doorbell for instance,
- * should use it rather than inventing a constant.
+ * should use it rather than inventing a constant. ARMv6-M masks preemption in
+ * software, so there a device IRQ only has to sit above PendSV to preempt it.
  */
 std::uint32_t device_irq_priority();
 
+#if CYROS_CORTEX_M_MAINLINE
 /**
  * @brief The calling core's DWT cycle counter, extended to 64 bits.
  *
  * Started on first use, per core, so stamps from two cores do not compare.
- * Defined by the core layer, because the DWT is core hardware, for a target
- * with nothing better to return from timestamp().
+ * Defined by the Mainline core layer, because the DWT is core hardware, for a
+ * target with nothing better to return from timestamp(). ARMv6-M has no cycle
+ * counter, so there the target's own counter is the only answer.
  */
 std::uint64_t cycle_counter_timestamp() noexcept;
+#endif
 
 /* ============================================================================
  * What the core layer needs from its TARGET

@@ -165,6 +165,18 @@ void timer_interrupt() noexcept
    mtime::interrupt();
 }
 
+std::uint8_t stack_guard_setup() noexcept
+{
+   /* Smepmp, which the toolchain's runner gives QEMU (-cpu rv32,smepmp=on):
+    * mseccfg.RLB lets a LOCKED entry be rewritten, and a locked entry binds
+    * machine mode, so the guard is a locked entry that still moves. RLB is
+    * set before any entry is locked, as the extension requires. Without
+    * Smepmp this CSR access traps. */
+   constexpr std::uint32_t mseccfg_rlb = 1u << 2;
+   asm volatile("csrs 0x747, %0" : : "r"(mseccfg_rlb) : "memory");
+   return pmpcfg_lock | pmpcfg_napot;
+}
+
 } // namespace cyros::port::riscv
 
 

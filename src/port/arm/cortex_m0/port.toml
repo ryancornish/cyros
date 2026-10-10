@@ -1,0 +1,19 @@
+name = "cortex_m0"
+
+description = "Generic single-core Cortex-M0 or M0+ (ARMv6-M): core peripherals only."
+
+# The Baseline sibling of cortex_m: the single-core identity trio, and SysTick
+# for time. Serves QEMU's microbit, a Cortex-M0, through the bench's own
+# startup files.
+extends = "armv6m"
+
+# The SysTick time source is the one cortex_m compiles. Everything it touches
+# is architectural on ARMv6-M too.
+sources = [
+   "port_mcu_cortex_m0.cpp",
+   "../common/port_time_systick.cpp",
+]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

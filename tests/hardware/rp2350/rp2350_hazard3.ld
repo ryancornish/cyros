@@ -1,8 +1,8 @@
 /* The Pico 2 W's SRAM as one RISC-V image: code, data and stack, entered at
  * _entry by the boot ROM (through the IMAGE_DEF block, which must lie in the
  * first 4 kB) or by the debugger. Nothing is in flash, so .data needs no
- * copy. The core layer's interrupt stack is this image's stack, the one
- * _entry sets. */
+ * copy (rp2350_hazard3_flash.ld is the image that does). The core layer's
+ * interrupt stack is this image's stack, the one _entry sets. */
 OUTPUT_ARCH(riscv)
 
 MEMORY
@@ -34,10 +34,13 @@ SECTIONS
 
    .data : {
       . = ALIGN(4);
+      __data_start__ = .;
       *(.data*)
       *(.sdata*)
       . = ALIGN(4);
+      __data_end__ = .;
    } > RAM
+   __data_load__ = LOADADDR(.data);   /* the same address: no copy */
 
    .bss (NOLOAD) : {
       . = ALIGN(4);

@@ -9,7 +9,8 @@ common_add = ["-DCYROS_BENCH_MTIME=1"]
 # The debug toolchain for the Pico 2 W's Cortex-M33 cores instead of QEMU's
 # mps2-an505: its board and its runner, the same as the chip's Hazard3
 # toolchain uses (riscv32-elf-rp2350.toml). The image runs from SRAM, and
-# nothing is written to flash or OTP.
+# nothing is written to flash or OTP. arm-none-eabi-rp2350-flash.toml is the
+# same with the image in flash.
 #
 # The board's startup enters at _entry from the boot ROM or the debugger,
 # brings up 150 MHz and MTIME, and gives the tests an RTT console

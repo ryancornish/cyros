@@ -13,8 +13,14 @@
  *   MTIME          one 64-bit counter both cores share
  *   MTIMECMP       THIS core's compare. Each core sees its own at one address
  *
- * External interrupts would come through Xh3irq, and nothing in cyros or its
- * tests enables one, so an external interrupt here is a fault.
+ * Device interrupts come through Xh3irq, Hazard3's interrupt controller, as
+ * the machine external interrupt. This target lets each hart take it
+ * (mie.MEIE) and dispatches every pending IRQ, in Xh3irq's priority order,
+ * through a table the BOARD supplies, as an ARM board supplies its vector
+ * table. Enabling and prioritising an IRQ is the application's (the MEIEA and
+ * MEIPRA arrays), as it is on the NVIC. Handlers run inside the trap with
+ * interrupts masked, so they do not nest, and a preempt-disable (mie.MSIE)
+ * does not hold them off, which is port.h's line between the two grades.
  *
  * MTIME's rate and source (MTIME_CTRL.FULLSPEED) are the board's, as SysTick's
  * clock is on ARM. The board says the rate through cyros_port_mtime_clock_hz.
@@ -114,6 +120,13 @@ void fifo_drain() noexcept
    while ((reg(sio_fifo_st) & fifo_vld) != 0u) { (void)load(sio_fifo_rd); }
 }
 
+/* Every device interrupt this hart may take is then gated by its own MEIEA
+ * bit, which the application sets. */
+inline void enable_device_interrupts() noexcept
+{
+   riscv::set_mie(riscv::mie_meie);
+}
+
 } // namespace
 
 /* The core layer's trap vector, which core 1 is launched with. */
@@ -137,6 +150,15 @@ extern "C" [[noreturn]] void cyros_port_secondary_core_entry(void);
  */
 extern "C" void* cyros_port_core1_stack_top(void);
 
+/**
+ * @brief The device interrupt handlers, one per Xh3irq line (52 on the
+ *        RP2350), supplied by the application. The table and every entry in
+ *        it must be valid: an entry for an IRQ nobody enables can report and
+ *        stop, as an ARM board's default handler does.
+ */
+using cyros_irq_handler = void (*)(void);
+extern "C" cyros_irq_handler const* cyros_port_irq_table(void);
+
 
 /* ============================================================================
  * SMP & Multi-Core Support
@@ -155,6 +177,7 @@ void cyros_port_start_cores(std::size_t cores_to_use, cyros_port_core_entry_t en
    CYROS_ASSERT_OP(cyros_port_get_core_id(), ==, 0u);
 
    core_entry = entry;
+   enable_device_interrupts();
 
    if (cores_to_use > 1u) {
       void* const stack = cyros_port_core1_stack_top();
@@ -201,6 +224,7 @@ void cyros_port_start_cores(std::size_t cores_to_use, cyros_port_core_entry_t en
 extern "C" [[noreturn]] void cyros_port_secondary_core_entry(void)
 {
    riscv::init_this_core();
+   enable_device_interrupts();
    CYROS_ASSERT(core_entry != nullptr);
    core_entry();
    CYROS_PORT_UNREACHABLE();
@@ -239,7 +263,19 @@ void soft_irq_clear(std::uint32_t core) noexcept
 
 void external_interrupt() noexcept
 {
-   cyros_port_system_error(read_mcause(), read_mepc(), "external interrupt with no handler", 0);
+   /* MEINEXT names the highest-priority pending, enabled IRQ, in bits 10:2,
+    * and reads negative when there is none, so one trap services every IRQ
+    * pending when it was taken and any raised meanwhile (rp2350-notes.md 6b).
+    * A handler must clear its source, or it is offered again at once. */
+   cyros_irq_handler const* const table = cyros_port_irq_table();
+   while (true) {
+      std::int32_t next;
+      asm volatile("csrr %0, 0xbe4" : "=r"(next));
+      if (next < 0) {
+         return;
+      }
+      table[static_cast<std::uint32_t>(next) >> 2]();
+   }
 }
 
 std::uint64_t timestamp() noexcept
@@ -254,6 +290,16 @@ std::uint64_t timestamp() noexcept
 void timer_interrupt() noexcept
 {
    mtime::interrupt();
+}
+
+std::uint8_t stack_guard_setup() noexcept
+{
+   /* Xh3pmpm: PMPCFGM0 bit n applies PMP entry n to machine mode WITHOUT
+    * locking it, so the guard moves with one pmpaddr0 write (rp2350-notes.md
+    * 6c). Erratum E6 swaps the R and X bits, which a guard granting nothing
+    * does not care about. */
+   asm volatile("csrs 0xbd0, %0" : : "r"(1u) : "memory");
+   return pmpcfg_napot;
 }
 
 } // namespace cyros::port::riscv

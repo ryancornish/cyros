@@ -14,7 +14,7 @@ config = "test_cortex_m_tickless_config.hpp"
 hosted = false
 
 [components]
-port = "cortex_m"
+port = ["cortex_m", "cortex_m0"]
 time_driver = "tickless"
 
 [link]

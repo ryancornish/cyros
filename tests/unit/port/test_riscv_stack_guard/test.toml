@@ -1,0 +1,19 @@
+[test]
+name = "test_riscv_stack_guard"
+layer = 0
+kind = "unit"
+
+# The stack guard covers a RUNNING thread's stack, so it can be observed only
+# once the kernel has started threads, as for the ARM guard.
+harness_debt = { layer = 2, reason = "the stack guard covers a RUNNING thread's stack, so it cannot be observed until the kernel has started one" }
+source = "test_riscv_stack_guard.cpp"
+config = "test_riscv_stack_guard_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+[components]
+port = ["riscv_virt", "rp2350_hazard3"]
+
+[link]
+system_libraries = []

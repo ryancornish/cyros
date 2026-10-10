@@ -7,6 +7,7 @@ extends = "riscv32-elf-debug.toml"
 command = [
    "qemu-system-riscv32",
    "-M", "virt",
+   "-cpu", "rv32,smepmp=on",
    "-smp", "2",
    "-bios", "none",
    "-nographic",

@@ -14,10 +14,11 @@ extends = "armv7m_armv8m"
 # The MCU half of the contract, split by topic. The identity/bring-up trio is
 # what a multicore part varies; the time source is what a vendor part varies
 # (LPTIM rather than SysTick). A target usually replaces one and keeps the
-# other.
+# other. The SysTick time source is in ../common because the ARMv6-M target
+# compiles the same file.
 sources = [
    "port_mcu_cortex_m.cpp",
-   "port_time_systick.cpp",
+   "../common/port_time_systick.cpp",
 ]
 
 # Overrides the layer's traits rather than joining them: CYROS_PORT_CORE_COUNT

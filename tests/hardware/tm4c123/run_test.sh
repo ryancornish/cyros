@@ -22,7 +22,7 @@
 # .bss and the main stack take the 32 KB of SRAM (tm4c123.ld).
 #
 # OpenOCD stays attached while the test runs, because the port's panic report
-# still goes through semihosting (src/port/arm/armv7m_armv8m/cortex_m.hpp). A
+# still goes through semihosting (src/port/arm/common/cortex_m.hpp). A
 # panic therefore arrives on OpenOCD's output, and this script shows it.
 #
 # --mhz is the board clock (board.h): 16, the crystal and the default, or 80

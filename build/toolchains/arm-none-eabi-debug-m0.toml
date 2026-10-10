@@ -1,0 +1,36 @@
+name = "arm-none-eabi-debug-m0"
+extends = "arm-none-eabi-debug.toml"
+
+# The ARMv6-M bench: a Cortex-M0, soft float, on QEMU's microbit. Its port is
+# cortex_m0 over the armv6m core layer, never cortex_m: the Mainline layer
+# refuses an ARMv6-M build (cortex_m.hpp).
+#
+# Extends the debug toolchain, as the M3's does, removing only the base's
+# Mainline flags.
+[flags]
+common_add = ["-mcpu=cortex-m0", "-mfloat-abi=soft"]
+common_remove = ["-mcpu=cortex-m33", "-mfloat-abi=hard", "-mfpu=fpv5-sp-d16"]
+
+# No FPU.
+[settings]
+provides = []
+
+[board]
+linker_script = "../../tests/unit/port/arm_bench/microbit.ld"
+sources = [
+   "../../tests/unit/port/arm_bench/startup_microbit.c",
+   "../../tests/unit/common/syscall_stubs.c",
+]
+
+# 256 kB of RAM rather than the machine's 16 kB, which fits no test image
+# (microbit.ld).
+[runner]
+command = [
+   "qemu-system-arm",
+   "-M", "microbit",
+   "-global", "nrf51-soc.sram-size=262144",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+timeout = 30

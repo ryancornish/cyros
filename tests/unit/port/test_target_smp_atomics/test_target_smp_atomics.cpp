@@ -78,16 +78,41 @@ std::atomic<bool> core1_finished{false};
 std::atomic<std::uint32_t> core1_retries{0u};
 
 /* Bounded waits, so a core that never arrives REPORTS rather than hanging
- * until the runner's timeout, as in test_cortex_m33_smp_bringup. */
+ * until the runner's timeout, as in test_cortex_m33_smp_bringup. Bounded on
+ * PROGRESS where there is any: a fixed budget of yields ran out on QEMU under
+ * host load, with core 1 hammering away but slowly (31 of 60 runs at 4-way,
+ * 2026-10-10), and that reported a slow core as a broken one. */
 constexpr std::uint32_t rendezvous_limit = 100'000u;
 
-bool wait_for(std::atomic<bool> const& flag)
+/* Core 1 reaching its thread: nothing to watch until it does, so a budget far
+ * past any load seen. */
+bool wait_for_ready()
 {
-   for (std::uint32_t spin = 0; spin < rendezvous_limit; ++spin) {
-      if (flag.load(std::memory_order_acquire)) { return true; }
+   for (std::uint32_t spin = 0; spin < 100u * rendezvous_limit; ++spin) {
+      if (core1_ready.load(std::memory_order_acquire)) { return true; }
       this_thread::yield();
    }
    return false;
+}
+
+/* Core 1 finishing, once core 0 has: core 1 is the only one moving the counter
+ * now, so the budget restarts whenever it moves, and only a core 1 that stops
+ * making progress runs it out. */
+bool wait_for_finish(std::atomic<std::uint32_t> const& counter)
+{
+   std::uint32_t last = counter.load(std::memory_order_relaxed);
+   std::uint32_t still = 0u;
+   while (!core1_finished.load(std::memory_order_acquire)) {
+      this_thread::yield();
+      std::uint32_t const now = counter.load(std::memory_order_relaxed);
+      if (now != last) {
+         last = now;
+         still = 0u;
+      } else if (++still == rendezvous_limit) {
+         return false;
+      }
+   }
+   return true;
 }
 
 /* A pause of 0 to 15 steps, from a per-core xorshift sequence. Two cores
@@ -138,10 +163,10 @@ void thread_on_core1()
 
 void thread_on_core0()
 {
-   bool const ready = wait_for(core1_ready);
+   bool const ready = wait_for_ready();
    go.store(true, std::memory_order_release);
    std::uint32_t const core0_retries = ready ? hammer(0x2545f491u) : 0u;
-   bool const finished = ready && wait_for(core1_finished);
+   bool const finished = ready && wait_for_finish(added);
 
    cyros::bench::start("both cores reached their threads and finished");
    CYROS_CHECK(ready);

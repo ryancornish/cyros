@@ -53,7 +53,8 @@ hosted = false
 provides = []
 
 # QEMU's virt: the board parks every hart but 0 until the port releases it,
-# and talks semihosting. syscall_stubs.c is newlib's OS interface, as on ARM.
+# and talks semihosting. Smepmp is what lets the port's stack guard bind
+# machine mode there (riscv_virt's stack_guard_setup), and the port needs it. syscall_stubs.c is newlib's OS interface, as on ARM.
 [board]
 linker_script = "../../tests/unit/port/riscv_bench/riscv_virt.ld"
 sources = [
@@ -65,6 +66,7 @@ sources = [
 command = [
    "qemu-system-riscv32",
    "-M", "virt",
+   "-cpu", "rv32,smepmp=on",
    "-bios", "none",
    "-nographic",
    "-semihosting-config", "enable=on,target=native",

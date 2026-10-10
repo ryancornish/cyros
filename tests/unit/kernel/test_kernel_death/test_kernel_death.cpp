@@ -141,5 +141,5 @@ TEST(KernelDeath_Test, GivenAStackSmallerThanItsTcb_WhenAThreadIsCreated_ThenItS
 TEST(KernelDeath_Test, GivenAnAffinityNamingNoConfiguredCore_WhenAThreadIsCreated_ThenItStopsTheSystem)
 {
    CYROS_EXPECT_PANIC(pin_a_thread_to_a_core_that_does_not_exist(),
-                      test::panicked_at("kernel.cpp", "thread affinity mask allows no cores"));
+                      test::panicked_at("kernel.cpp", "affinity mask allows no cores"));
 }
