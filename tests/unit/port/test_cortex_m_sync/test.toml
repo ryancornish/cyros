@@ -10,7 +10,7 @@ config = "test_cortex_m_sync_config.hpp"
 hosted = false
 
 [components]
-port = "cortex_m"
+port = ["cortex_m", "riscv_virt", "rp2350_hazard3"]
 time_driver = "periodic"
 features = ["sync"]
 

@@ -1,0 +1,20 @@
+# Unit-test profile for the 32-bit RISC-V port on QEMU's virt, one hart.
+#
+# Tests run under QEMU via the toolchain's [runner], as the Cortex-M profiles
+# do. The toolchain is a bridge (riscv32-clang-base.toml says why).
+[profile]
+name = "unit_test_riscv32"
+toolchain = "../toolchains/riscv32-clang-debug.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "riscv_virt"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

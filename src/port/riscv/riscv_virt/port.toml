@@ -1,0 +1,19 @@
+name = "riscv_virt"
+
+description = "QEMU's RISC-V virt machine, one hart: CLINT soft IRQ and MTIME."
+
+extends = "rv32"
+
+# The identity trio and the CLINT, then the MTIME time source, which is
+# shared with the RP2350's Hazard3 target and lives in ../common, compiled per
+# target as linux/common is per port.
+sources = [
+   "port_mcu_riscv_virt.cpp",
+   "../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

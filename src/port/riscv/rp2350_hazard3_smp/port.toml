@@ -1,0 +1,18 @@
+name = "rp2350_hazard3_smp"
+
+description = "The RP2350's two Hazard3 cores: SIO soft IRQ as the IPI, shared SIO MTIME."
+
+extends = "rv32"
+
+# rp2350_hazard3's machine code, which launches core 1 when asked for two, and
+# the MTIME time source. Only port_traits.h differs.
+sources = [
+   "../rp2350_hazard3/port_mcu_rp2350_hazard3.cpp",
+   "../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

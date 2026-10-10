@@ -1,13 +1,17 @@
 /**
  * @file test_cortex_m33_smp_idle.cpp
  * @brief Both cores sleep at once, and each is woken out of its own WFI by its
- *        own SysTick.
+ *        own timer.
  *
  * Subject / Trusts / Proves
  * -------------------------
- * Subject: the idle path on the cortex_m33_smp port when the wake is a timer:
- *          a sleep on core N is serviced by core N's SysTick, which has to
- *          wake core N out of WFI, while the other core is doing the same.
+ * Subject: the idle path on a two-core port (cortex_m33_smp, riscv_virt_smp)
+ *          when the wake is a timer: a sleep on core N is serviced by core N's
+ *          timer (SysTick, or the hart's MTIMECMP), which has to wake core N
+ *          out of WFI, while the other core is doing the same. Built against
+ *          the periodic driver here, and against the tickless one by
+ *          test_riscv_smp_idle_tickless, which only RISC-V's shared MTIME
+ *          allows on two cores (the SSE-200 target refuses it).
  * Trusts:  layers 0 to 7, the per-core ticks that test_cortex_m33_smp_time
  *          proves from spinning threads, and the doorbell wake out of WFI that
  *          test_cortex_m33_smp_ipi already covers, idle included.
@@ -45,7 +49,7 @@
 #include <cyros/port/port.h>
 #include <cyros/port/port_traits.h>
 
-#include <common/arm/bench.hpp>
+#include <common/bench.hpp>
 
 #include <atomic>
 #include <cstddef>
@@ -54,12 +58,31 @@
 using namespace cyros;
 
 static_assert(config::cores == 2, "This test is dual core");
-static_assert(CYROS_PORT_CORE_COUNT == 2, "Needs the cortex_m33_smp port");
+static_assert(CYROS_PORT_CORE_COUNT == 2, "Needs a two-core port");
+
+/* Which driver this build has, from the config header, as in
+ * test_cortex_m_idle. A tickless port tick is one counter count, so the rate
+ * the driver is given is the counter's, a board fact. */
+#if defined(__riscv)
+extern "C" std::uint32_t cyros_port_mtime_clock_hz(void);
+#endif
 
 namespace
 {
 
+constexpr bool tickless = CYROS_TEST_IDLE_TICKLESS != 0;
+
 constexpr std::uint32_t tick_hz = 1'000;
+
+std::uint32_t driver_rate()
+{
+#if defined(__riscv)
+   return tickless ? cyros_port_mtime_clock_hz() : tick_hz;
+#else
+   static_assert(!tickless, "the cortex_m33_smp target refuses tickless (arm-port-notes.md 16f)");
+   return tick_hz;
+#endif
+}
 
 constexpr std::size_t stack_size = thread::min_stack_size + 2048;
 alignas(CYROS_PORT_STACK_ALIGN) std::byte stack_core0[stack_size];
@@ -114,8 +137,9 @@ void sleep_and_measure(core_report& r)
    std::uint32_t const core = this_core::id();
    r.ran_on = core;
 
-   /* Waiting rather than spinning: ten sleeps of 20 ticks, one idle entry per
-    * tick on this core's own SysTick, so about 200. */
+   /* Waiting rather than spinning: ten sleeps of 20 ms. Periodic, one idle
+    * entry per tick on this core's own timer, so about 200. Tickless, one per
+    * deadline, so about 10. */
    constexpr std::uint32_t sleeps = 10;
    time::duration const d = time::from_milliseconds(20);
    std::uint32_t const entries_before = idle_entries[core].load(std::memory_order_relaxed);
@@ -124,7 +148,8 @@ void sleep_and_measure(core_report& r)
       this_thread::sleep_for(d);
    }
    r.entries = idle_entries[core].load(std::memory_order_relaxed) - entries_before;
-   r.allowed = sleeps * ((2u * static_cast<std::uint32_t>(d.value + 1u)) + 4u);
+   std::uint32_t const interrupts = tickless ? 1u : static_cast<std::uint32_t>(d.value + 1u);
+   r.allowed = sleeps * ((2u * interrupts) + 4u);
    r.masked  = idle_entries_masked[core].load(std::memory_order_relaxed) - masked_before;
 
    /* On time, from idle. Different lengths on the two cores, so their wakes do
@@ -170,7 +195,7 @@ void report(std::uint32_t core, core_report const& r)
 
    CYROS_CHECK_EQ(r.ran_on, core);
    CYROS_CHECK(r.entries >= 10u);          // every sleep reached the port's idle
-   CYROS_CHECK(r.entries <= r.allowed);    // and waited there, once per tick
+   CYROS_CHECK(r.entries <= r.allowed);    // and waited there, once per interrupt
    CYROS_CHECK_EQ(r.masked, 0u);           // with interrupts enabled
    CYROS_CHECK_EQ(r.early_wakes, 0u);
    CYROS_CHECK_EQ(r.late_wakes, 0u);
@@ -179,7 +204,7 @@ void report(std::uint32_t core, core_report const& r)
 void thread_on_core0()
 {
    time::start();
-   CYROS_CHECK_EQ(cyros_port_time_freq_hz(), tick_hz);
+   CYROS_CHECK_EQ(cyros_port_time_freq_hz(), std::uint64_t{driver_rate()});
 
    cyros::bench::print("  both cores sleeping...\n");
    sleep_and_measure(reports[0]);
@@ -212,10 +237,11 @@ void thread_on_core0()
 
 extern "C" int cyros_bench_main()
 {
-   cyros::bench::print("cortex_m33_smp idle, both cores asleep, mps2-an521\n\n");
+   cyros::bench::print(tickless ? "two-core idle, tickless, both cores asleep\n\n"
+                                : "two-core idle, periodic, both cores asleep\n\n");
 
    kernel::initialise();
-   time::initialise(tick_hz);
+   time::initialise(driver_rate());
 
    thread t0(thread_on_core0, stack_core0, thread::priority(0), core0);
    thread t1(thread_on_core1, stack_core1, thread::priority(0), core1);

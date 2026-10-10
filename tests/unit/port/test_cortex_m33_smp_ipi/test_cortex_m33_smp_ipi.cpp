@@ -42,7 +42,7 @@
 #include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
 
-#include <common/arm/bench.hpp>
+#include <common/bench.hpp>
 
 #include <atomic>
 #include <cstddef>

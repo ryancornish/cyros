@@ -1,0 +1,22 @@
+# Unit-test profile for the 32-bit RISC-V port on both of the Pico 2 W's
+# Hazard3 cores.
+#
+# Tests run on the board through the toolchain's runner, as
+# unit_test_rp2350_hazard3 does. Same board, same runner: only the port
+# differs, and it launches core 1.
+[profile]
+name = "unit_test_rp2350_hazard3_smp"
+toolchain = "../toolchains/riscv32-clang-rp2350.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "rp2350_hazard3_smp"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

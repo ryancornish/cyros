@@ -39,4 +39,9 @@ inline constexpr std::size_t trace_records_per_core = 0;
 
 }  // namespace cyros::config
 
+/* Not a cyros setting. test_cortex_m33_smp_idle.cpp is built against both time
+ * drivers, and nothing else in the build says which one this is. This test
+ * pairs it with the periodic driver. */
+#define CYROS_TEST_IDLE_TICKLESS 0
+
 #endif

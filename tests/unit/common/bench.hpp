@@ -29,8 +29,8 @@
  * may check anything.
  */
 
-#ifndef CYROS_TEST_ARM_BENCH_HPP
-#define CYROS_TEST_ARM_BENCH_HPP
+#ifndef CYROS_TEST_BENCH_HPP
+#define CYROS_TEST_BENCH_HPP
 
 #include <cstdint>
 
@@ -80,12 +80,25 @@ inline void print(char const* text) noexcept
  * the return address and resuming, which is what the trap handling expects.
  * The extra call/return is nothing against a trap that costs microseconds.
  */
+#if defined(__riscv)
+/* On RISC-V the BOARD makes the call (the operation numbers are ARM's). QEMU's
+ * virt traps to QEMU. The Pico 2 W's Hazard3 answers "unsupported" without
+ * trapping, because OpenOCD's RISC-V semihosting there writes a stale s0 back
+ * into the caller (rp2350-notes.md 7b), and it supports neither elapsed-time
+ * call anyway. */
+extern "C" long cyros_bench_semihost(long op, void volatile* arg) noexcept;
+#endif
+
 [[gnu::noinline]] inline long semihost(long op, void volatile* arg) noexcept
 {
+#if defined(__riscv)
+   return cyros_bench_semihost(op, arg);
+#else
    register long r0 asm("r0") = op;
    register void volatile* r1 asm("r1") = arg;
    asm volatile("bkpt 0xAB" : "+r"(r0) : "r"(r1) : "memory");
    return r0;
+#endif
 }
 
 /**
@@ -234,4 +247,4 @@ inline void start(char const* name) noexcept
       static_cast<std::uint32_t>(lhs), static_cast<std::uint32_t>(rhs), \
       #lhs " == " #rhs, __FILE__, __LINE__)
 
-#endif /* CYROS_TEST_ARM_BENCH_HPP */
+#endif /* CYROS_TEST_BENCH_HPP */

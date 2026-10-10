@@ -16,5 +16,5 @@ port = "cortex_m"
 
 [link]
 # No gtest: it does not run bare metal, and this test uses the tiny harness in
-# tests/unit/common/arm/bench.hpp instead.
+# tests/unit/common/bench.hpp instead.
 system_libraries = []

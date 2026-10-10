@@ -1,0 +1,18 @@
+name = "riscv_virt_smp"
+
+description = "QEMU's RISC-V virt machine, two harts: CLINT soft IRQ as the IPI, shared MTIME."
+
+extends = "rv32"
+
+# riscv_virt's machine code, which handles any number of harts, and the MTIME
+# time source. Only port_traits.h differs.
+sources = [
+   "../riscv_virt/port_mcu_riscv_virt.cpp",
+   "../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

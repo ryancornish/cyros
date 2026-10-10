@@ -6,6 +6,10 @@ variants = [
    "linux_preempt",
    "cortex_m",
    "cortex_m33_smp",
+   "riscv_virt",
+   "rp2350_hazard3",
+   "riscv_virt_smp",
+   "rp2350_hazard3_smp",
 ]
 
 # port_core.h and port_mcu.h, and port.h which is just an umbrella over the two,

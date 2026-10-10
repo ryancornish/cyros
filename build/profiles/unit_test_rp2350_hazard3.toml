@@ -1,0 +1,22 @@
+# Unit-test profile for the 32-bit RISC-V port on the Pico 2 W's Hazard3 core
+# 0, one hart.
+#
+# Tests run on the board through the toolchain's runner
+# (tests/hardware/rp2350/run_test.sh), which needs the board in BOOTSEL and the
+# Debug Probe attached. The toolchain is the riscv32 bridge.
+[profile]
+name = "unit_test_rp2350_hazard3"
+toolchain = "../toolchains/riscv32-clang-rp2350.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "rp2350_hazard3"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

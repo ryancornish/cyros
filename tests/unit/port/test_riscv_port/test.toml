@@ -1,0 +1,17 @@
+[test]
+name = "test_riscv_port"
+layer = 0
+kind = "unit"
+source = "test_riscv_port.cpp"
+config = "test_riscv_port_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+[components]
+# Locked to the RISC-V port. It reads mstatus and mie directly, and raises the
+# software interrupt itself, so it is meaningless anywhere else.
+port = ["riscv_virt", "rp2350_hazard3"]
+
+[link]
+system_libraries = []

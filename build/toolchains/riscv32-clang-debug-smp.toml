@@ -1,0 +1,16 @@
+name = "riscv32-clang-debug-smp"
+extends = "riscv32-clang-debug.toml"
+
+# QEMU's virt with two harts, for the riscv_virt_smp target. The board is the
+# same: it parks every hart but 0 until the port releases it.
+[runner]
+command = [
+   "qemu-system-riscv32",
+   "-M", "virt",
+   "-smp", "2",
+   "-bios", "none",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+timeout = 30

@@ -1,0 +1,20 @@
+# Unit-test profile for the 32-bit RISC-V port on QEMU's virt with two harts.
+#
+# Tests run under QEMU via the toolchain's [runner], as unit_test_cortex_m33_smp
+# does for the dual M33. The toolchain is the riscv32 bridge.
+[profile]
+name = "unit_test_riscv32_smp"
+toolchain = "../toolchains/riscv32-clang-debug-smp.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "riscv_virt_smp"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

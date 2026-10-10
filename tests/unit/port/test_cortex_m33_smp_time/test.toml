@@ -15,7 +15,7 @@ config = "test_cortex_m33_smp_time_config.hpp"
 hosted = false
 
 [components]
-port = "cortex_m33_smp"
+port = ["cortex_m33_smp", "riscv_virt_smp", "rp2350_hazard3_smp"]
 time_driver = "periodic"
 
 [link]

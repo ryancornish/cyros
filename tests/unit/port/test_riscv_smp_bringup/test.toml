@@ -1,0 +1,13 @@
+[test]
+name = "test_riscv_smp_bringup"
+layer = 2
+kind = "unit"
+source = "test_riscv_smp_bringup.cpp"
+config = "test_riscv_smp_bringup_config.hpp"
+hosted = false
+
+[components]
+port = ["riscv_virt_smp", "rp2350_hazard3_smp"]
+
+[link]
+system_libraries = []

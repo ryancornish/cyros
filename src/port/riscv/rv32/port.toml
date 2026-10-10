@@ -1,0 +1,16 @@
+name = "rv32"
+
+# 32-bit RISC-V in machine mode, RV32IMAC with no FPU: QEMU's virt and the
+# RP2350's Hazard3. The core layer of the RISC-V tree, as armv7m_armv8m is of
+# the ARM one. ~/cyros-claude/riscv-port-plan.md has the design.
+description = "32-bit RISC-V machine-mode CORE LAYER. Not selectable: targets extend it."
+
+# Deliberately absent from port/component.toml `variants`, which is what makes
+# this a layer rather than a port. It implements port_core.h and nothing else.
+sources = [
+   "port_core_rv32.cpp",
+]
+
+# So a target can include riscv.hpp, which declares the four functions this
+# layer needs from it (the soft IRQ and the timer and external interrupts).
+private_includes = ["."]

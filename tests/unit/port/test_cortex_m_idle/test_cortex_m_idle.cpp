@@ -5,14 +5,14 @@
  *
  * Subject / Trusts / Proves
  * -------------------------
- * Subject: the idle path on the cortex_m port, end to end. When every thread
- *          sleeps the scheduler runs the idle thread, idle_task calls
- *          cyros_port_idle, the core waits in WFI, and the time driver's
- *          interrupt wakes it and the sleeper. Built twice from this one
- *          source, against the periodic driver (test_cortex_m_idle) and the
- *          tickless one (test_cortex_m_idle_tickless).
- * Trusts:  layers 0 to 7, the SysTick paths that test_cortex_m_systick and
- *          test_cortex_m_tickless prove from a spinning thread, and the chrono
+ * Subject: the idle path on a target port (cortex_m, riscv_virt), end to
+ *          end. When every thread sleeps the scheduler runs the idle thread,
+ *          idle_task calls cyros_port_idle, the core waits in WFI, and the
+ *          time driver's interrupt wakes it and the sleeper. Built twice from
+ *          this one source, against the periodic driver (test_cortex_m_idle)
+ *          and the tickless one (test_cortex_m_idle_tickless).
+ * Trusts:  layers 0 to 7, the timer paths that test_cortex_m_systick and the
+ *          port's tickless test prove from a spinning thread, and the chrono
  *          feature's sleep, which this is the first on-target test to use.
  * Proves:  that idle is reached, with interrupts enabled, that the core waits
  *          between interrupts rather than spinning, that a sleep wakes no
@@ -64,15 +64,27 @@
 #include <cyros/port/port_mcu.h>
 #include <cyros/port/port_traits.h>
 
-#include <common/arm/bench.hpp>
+#include <common/bench.hpp>
 
 #include <cstddef>
 #include <cstdint>
 
 using namespace cyros;
 
-/* The board's clock, which in tickless mode is also the tick rate. */
+/* The tickless counter's clock, a board fact, which in tickless mode is also
+ * the tick rate. And the longest interval that counter can time in one go,
+ * which on SysTick is a full 24-bit period and is what a long sleep has to
+ * cross with the core idle. MTIME is 64 bits and is never restarted, so it
+ * has no such limit. */
+#if defined(__riscv)
+extern "C" std::uint32_t cyros_port_mtime_clock_hz(void);
+inline std::uint32_t counter_clock_hz() { return cyros_port_mtime_clock_hz(); }
+inline constexpr std::uint64_t hardware_period = 0u;
+#else
 extern "C" std::uint32_t cyros_port_systick_clock_hz(void);
+inline std::uint32_t counter_clock_hz() { return cyros_port_systick_clock_hz(); }
+inline constexpr std::uint64_t hardware_period = 0x1000000ull;
+#endif
 
 namespace
 {
@@ -85,10 +97,6 @@ constexpr bool tickless = CYROS_TEST_IDLE_TICKLESS != 0;
 
 /* The periodic driver's tick, a typical RTOS rate. */
 constexpr std::uint32_t tick_hz = 1'000;
-
-/* One full 24-bit SysTick period in counter cycles: the longest a tickless
- * interval can be, so a longer sleep needs a wrap while the core is idle. */
-constexpr std::uint64_t hardware_period = 0x1000000ull;
 
 constexpr std::size_t stack_size = thread::min_stack_size + 2048;
 alignas(CYROS_PORT_STACK_ALIGN) std::byte worker_stack[stack_size];
@@ -121,7 +129,7 @@ namespace
 std::uint64_t interrupts_for(time::duration d)
 {
    if (tickless) {
-      return (d.value / hardware_period) + 1u;
+      return hardware_period == 0u ? 1u : (d.value / hardware_period) + 1u;
    }
    return d.value + 1u;
 }
@@ -146,7 +154,7 @@ void test_the_driver_is_the_one_the_config_names()
 {
    cyros::bench::start("the build's time driver is the one its config names");
 
-   std::uint64_t const expected = tickless ? cyros_port_systick_clock_hz() : tick_hz;
+   std::uint64_t const expected = tickless ? counter_clock_hz() : tick_hz;
    print_ticks(tickless ? "  tickless, freq_hz = " : "  periodic, freq_hz = ", cyros_port_time_freq_hz());
    cyros::bench::print("\n");
    CYROS_CHECK(cyros_port_time_freq_hz() == expected);
@@ -207,10 +215,10 @@ void test_a_sleep_wakes_from_idle_on_time()
    check_a_wake_from_idle("  7 ms", time::from_milliseconds(7));
    check_a_wake_from_idle("  50 ms", time::from_milliseconds(50));
 
-   /* On the tickless driver this one crosses a hardware wrap with the core
-    * waiting in idle, which the tickless test only ever does from a spinning
-    * thread. On the periodic driver it is simply a long sleep. */
-   time::duration const beyond = tickless
+   /* On the SysTick tickless driver this one crosses a hardware wrap with the
+    * core waiting in idle, which the tickless test only ever does from a
+    * spinning thread. Anywhere else it is simply a long sleep. */
+   time::duration const beyond = (tickless && hardware_period != 0u)
       ? time::duration{hardware_period + (hardware_period / 2u)}
       : time::from_milliseconds(300);
    check_a_wake_from_idle("  past one hardware period", beyond);
@@ -236,11 +244,12 @@ void test_sleeps_already_due_return_and_the_clock_stays_honest()
     * which has no host clock, still gets the check. */
    constexpr std::uint32_t rounds = 200;
 
-   /* Half a hardware period on the tickless driver, whose leap is a whole one.
-    * The periodic driver counts ticks, so the same constant would be hours of
-    * them and the check could not fire. A due sleep there waits a tick or two,
-    * so 100 ms is far outside anything honest. */
-   std::uint64_t const leap_bound_us = tickless
+   /* Half a hardware period on the SysTick tickless driver, whose leap is a
+    * whole one. The periodic driver counts ticks, so the same constant would
+    * be hours of them and the check could not fire. A due sleep there waits a
+    * tick or two, so 100 ms is far outside anything honest, and it is the
+    * bound on MTIME too, which has no hardware period to leap by. */
+   std::uint64_t const leap_bound_us = (tickless && hardware_period != 0u)
       ? time::to_microseconds(time::duration{hardware_period / 2u})
       : 100'000u;
 
@@ -343,7 +352,7 @@ void worker()
 {
    /* The periodic driver takes a tick rate. The tickless one converts against
     * this argument and counts counter cycles, so it takes the counter rate. */
-   time::initialise(tickless ? cyros_port_systick_clock_hz() : tick_hz);
+   time::initialise(tickless ? counter_clock_hz() : tick_hz);
    time::start();
 
    test_the_driver_is_the_one_the_config_names();
@@ -359,7 +368,7 @@ void worker()
 
 extern "C" int cyros_bench_main()
 {
-   cyros::bench::print(tickless ? "cortex_m idle, tickless\n\n" : "cortex_m idle, periodic\n\n");
+   cyros::bench::print(tickless ? "idle, tickless\n\n" : "idle, periodic\n\n");
 
    kernel::initialise();
    thread worker_thread(worker, worker_stack, thread::priority(0), core0);
