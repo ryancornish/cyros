@@ -7,6 +7,7 @@ variants = [
    "cortex_m",
    "cortex_m0",
    "rp2040",
+   "rp2040_smp",
    "cortex_m33_smp",
    "rp2350_m33",
    "rp2350_m33_smp",

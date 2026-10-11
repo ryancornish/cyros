@@ -1,0 +1,20 @@
+# Unit-test profile for both of the RP2040's Cortex-M0+ cores, on the RP2040 Pico.
+#
+# Tests run on the board through the toolchain's runner, as the single-core
+# profile's do. Same board, same runner, core 1 launched.
+[profile]
+name = "unit_test_rp2040_smp"
+toolchain = "../toolchains/arm-none-eabi-rp2040.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "rp2040_smp"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

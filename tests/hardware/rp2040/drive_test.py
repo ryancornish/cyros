@@ -6,7 +6,8 @@ one ISA and its one boot path.
 drive_test.py <elf> --timeout <s>
 
 OpenOCD loads the image after a reset halt and starts core 0 at _entry, with
-core 1 sent back to the boot ROM. The image waits for the go word
+core 1 sent back to the boot ROM, where the rp2040_smp target launches it
+from. The image waits for the go word
 (startup_rp2040.c), its console is read out of its RTT ring and copied to
 stdout, and its exit status is read from bench_exit_code once bench_done is
 set. The chip is reset by the watchdog at the end, which with nothing in
@@ -26,7 +27,7 @@ DEBUG = bool(os.environ.get("RP2040_DEBUG"))
 
 CORES = ("rp2040.core0", "rp2040.core1")
 CORE0 = CORES[0]
-REGS = ("pc", "lr", "sp", "xPSR", "msp", "psp")
+REGS = ("pc", "lr", "sp", "xpsr", "msp", "psp")
 
 
 class Ocd:
@@ -181,7 +182,7 @@ def main():
             print("rp2040: the image never set rtt_ready", file=sys.stderr)
             for t in CORES:
                 print(f"rp2040: {t} {ocd.cmd(f'{t} curstate').strip()}", file=sys.stderr)
-            ocd.cmd(f"capture {{{CORE0} arp_halt}}")
+            ocd.cmd(f"capture {{targets {CORE0}; halt 1000}}")
             pc = ocd.cmd(f"capture {{targets {CORE0}; reg pc}}").strip().splitlines()
             print(f"rp2040: {CORE0} {pc[-1] if pc else 'pc ?'}", file=sys.stderr)
             return 125
@@ -201,13 +202,17 @@ def main():
             print(f"\nrp2040: no exit after {a.timeout:.0f} s", file=sys.stderr)
             print(f"rp2040: console wr {ocd.word(up_wr)} rd {ocd.word(up_rd)}, "
                   f"bench_done {ocd.word(sym['bench_done'])}", file=sys.stderr)
-            # Where core 0 is, for the hang report.
-            ocd.cmd(f"capture {{{CORE0} arp_halt}}")
-            regs = []
-            for r in REGS:
-                out = ocd.cmd(f"capture {{targets {CORE0}; reg {r}}}").strip().splitlines()
-                regs.append(out[-1] if out else f"{r} ?")
-            print(f"rp2040: {CORE0}: " + ", ".join(regs), file=sys.stderr)
+            # Where each core is, for the hang report. Core 1 is in the boot
+            # ROM unless the image launched it. `halt` waits for the halt,
+            # where arp_halt only asks, and a register read before it lands
+            # fails.
+            for t in CORES:
+                ocd.cmd(f"capture {{targets {t}; halt 1000}}")
+                regs = []
+                for r in REGS:
+                    out = ocd.cmd(f"capture {{targets {t}; reg {r}}}").strip().splitlines()
+                    regs.append(out[-1] if out else f"{r} ?")
+                print(f"rp2040: {t}: " + ", ".join(regs), file=sys.stderr)
     finally:
         # RP2040_KEEP leaves the board as the image left it, for a debugger.
         if not os.environ.get("RP2040_KEEP"):

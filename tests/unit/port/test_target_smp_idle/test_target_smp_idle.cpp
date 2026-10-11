@@ -17,7 +17,8 @@
  *          test_target_smp_ipi already covers, idle included.
  * Proves:  that each core reaches idle with interrupts enabled, waits there
  *          rather than spinning, and wakes its own sleeper no earlier than the
- *          deadline and not much later, with both cores asleep together.
+ *          deadline and not much later, with both cores asleep together, and
+ *          that a deadline armed on one core leaves the other core's alone.
  *
  *
  * What is new against the IPI test
@@ -30,6 +31,16 @@
  *
  * Idle is observed as in test_target_idle, through a link-time wrap of
  * cyros_port_idle, counted per core.
+ *
+ *
+ * Each core's deadline is its own
+ * ================================
+ * The sleeps above are short and alike on both cores, so a deadline one core
+ * overwrote on the other would cost milliseconds, inside their tolerance: the
+ * rp2040_smp target with both cores on one TIMER alarm passed them
+ * (arm-port-notes.md 19h). The last phase arms a near deadline on one core
+ * and then a far one on the other, each way round. Sharing one compare, the
+ * far arm replaces the near one and the near sleeper wakes with the far.
  *
  *
  * How this fails
@@ -127,6 +138,71 @@ struct core_report
 core_report reports[2];
 std::atomic<bool> core1_done{false};
 
+/* The last phase (see the header). Round r puts core r near and the other
+ * core far. Each flag holds the round it last reached, plus one. */
+constexpr std::uint32_t near_ms = 20;
+constexpr std::uint32_t far_ms  = 200;
+std::atomic<std::uint32_t> far_ready{0};
+std::atomic<std::uint32_t> near_announced{0};
+std::atomic<std::uint32_t> far_arming{0};
+std::atomic<std::uint32_t> far_done{0};
+std::uint64_t near_late[2] = {};
+bool near_early[2] = {};
+bool near_overlapped[2] = {};
+
+/* Polls by sleeping, bounded, so a core that never arrives fails by name. */
+bool wait_for(std::atomic<std::uint32_t> const& flag, std::uint32_t value)
+{
+   for (std::uint32_t i = 0; i < 2'000u; ++i) {
+      if (flag.load(std::memory_order_acquire) == value) { return true; }
+      this_thread::sleep_for(time::from_milliseconds(1));
+   }
+   return false;
+}
+
+/* Polls by spinning, for the far core, which must arm well inside the near
+ * sleep. A sleep here would be a deadline of its own, and one the defect
+ * under test could stretch. */
+bool spin_for(std::atomic<std::uint32_t> const& flag, std::uint32_t value)
+{
+   time::time_point const limit = time::now() + time::from_milliseconds(2'000);
+   while (flag.load(std::memory_order_acquire) != value) {
+      if (time::now() > limit) { return false; }
+      this_core::cpu_relax();
+   }
+   return true;
+}
+
+void deadlines_are_per_core()
+{
+   std::uint32_t const core = this_core::id();
+   for (std::uint32_t round = 0; round < 2u; ++round) {
+      if (round == core) {
+         /* Near: sleep once the far core is listening. */
+         if (!wait_for(far_ready, round + 1u)) { return; }
+         near_announced.store(round + 1u, std::memory_order_release);
+         time::time_point const deadline = time::now() + time::from_milliseconds(near_ms);
+         this_thread::sleep_until(deadline);
+         time::time_point const woke = time::now();
+         near_early[core] = woke < deadline;
+         near_late[core] = near_early[core] ? 0u : woke.value - deadline.value;
+         /* The far core armed while this core slept, or the case proved
+          * nothing: a far core slower than the near sleep arms after it. */
+         near_overlapped[core] = far_arming.load(std::memory_order_acquire) == round + 1u;
+         if (!wait_for(far_done, round + 1u)) { return; }
+      } else {
+         /* Far: arm after the near core has, well inside its sleep. */
+         far_ready.store(round + 1u, std::memory_order_release);
+         if (!spin_for(near_announced, round + 1u)) { return; }
+         time::time_point const settle = time::now() + time::from_milliseconds(2);
+         while (time::now() < settle) { this_core::cpu_relax(); }
+         far_arming.store(round + 1u, std::memory_order_release);
+         this_thread::sleep_until(time::now() + time::from_milliseconds(far_ms));
+         far_done.store(round + 1u, std::memory_order_release);
+      }
+   }
+}
+
 /* As in test_target_idle: early is never allowed, and late only has to stay
  * clear of waiting for the wrong interrupt. */
 std::uint64_t allowed_lateness(time::duration d)
@@ -180,6 +256,7 @@ void thread_on_core1()
 {
    time::start();
    sleep_and_measure(reports[1]);
+   deadlines_are_per_core();
    core1_done.store(true, std::memory_order_release);
 }
 
@@ -210,6 +287,7 @@ void thread_on_core0()
 
    cyros::bench::print("  both cores sleeping...\n");
    sleep_and_measure(reports[0]);
+   deadlines_are_per_core();
 
    /* Waiting for core 1 by sleeping, so core 0 keeps idling. Bounded, so a
     * core 1 that never finishes fails by name. */
@@ -230,6 +308,18 @@ void thread_on_core0()
    if (core1_finished) {
       cyros::bench::start("core 1 idled in WFI and its own tick woke its sleeps on time");
       report(1u, reports[1]);
+
+      cyros::bench::start("a far deadline armed on one core leaves the other's near one alone");
+      for (std::uint32_t c = 0; c < 2u; ++c) {
+         cyros::bench::print("  core ");
+         cyros::bench::print_dec(c);
+         cyros::bench::print(" near wake, the other core's far arm after it: ");
+         cyros::bench::print_dec(near_late[c]);
+         cyros::bench::print(" ticks late\n");
+         CYROS_CHECK(near_overlapped[c]);
+         CYROS_CHECK(!near_early[c]);
+         CYROS_CHECK(near_late[c] <= allowed_lateness(time::from_milliseconds(near_ms)));
+      }
    }
 
    cyros::bench::finish();

@@ -6,11 +6,11 @@ source = "test_target_device_irq.cpp"
 config = "test_target_device_irq_config.hpp"
 
 # Runs on bare metal, on the board the toolchain names: it uses the RP2350's
-# TIMER0, so the QEMU machines have nothing to run it on.
+# TIMER0 or the RP2040's TIMER, so the QEMU machines have nothing to run it on.
 hosted = false
 
 [components]
-port = ["rp2350_m33", "rp2350_hazard3"]
+port = ["rp2350_m33", "rp2350_hazard3", "rp2040"]
 time_driver = "periodic"
 features = ["sync"]
 

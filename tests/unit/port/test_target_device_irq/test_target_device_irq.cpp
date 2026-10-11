@@ -1,25 +1,30 @@
 /**
  * @file test_target_device_irq.cpp
- * @brief A device interrupt, on either of the RP2350's ISAs: delivered, graded
- *        against the two masks, and waking a thread.
+ * @brief A device interrupt, on either of the RP2350's ISAs and on the
+ *        RP2040: delivered, graded against the two masks, and waking a thread.
  *
  * Subject / Trusts / Proves
  * -------------------------
  * Subject: how a peripheral's interrupt reaches an application handler through
- *          the port: the NVIC on the Cortex-M33s, Xh3irq dispatched by the
- *          rp2350_hazard3 target on the Hazard3s, each through the board's
- *          weak `isr_irqN` names.
+ *          the port: the NVIC on the Cortex-M33s and the M0+, Xh3irq
+ *          dispatched by the rp2350_hazard3 target on the Hazard3s, each
+ *          through the board's weak `isr_irqN` names.
  * Trusts:  layers 0 to 5, and the semaphore's counting (test_sync_semaphore).
- * Proves:  that TIMER0's alarm interrupt reaches `isr_irq0`, that it runs
+ * Proves:  that a timer's alarm interrupt reaches `isr_irq0`, that it runs
  *          inside a preempt-disable and waits out an interrupt mask, which is
  *          port.h's line between the two grades, and that a release from it
  *          wakes a blocked thread, with what that costs.
  *
- * The interrupt is TIMER0's alarm 0 (IRQ 0), which needs no wiring. The test
- * enables it the way an application would on each ISA: the NVIC's enable and
- * priority on Arm, at the priority the port gives SysTick (the most urgent
- * value a device may have and still be masked only by an interrupt mask),
- * and Xh3irq's MEIEA on RISC-V.
+ * The interrupt is a timer's alarm 0 on IRQ 0, which needs no wiring: the
+ * RP2350's TIMER0, or the RP2040's TIMER, whose alarms 2 and 3 are cyros's
+ * time source and 0 and 1 the application's. The test enables it the way an
+ * application would on each ISA: the NVIC's enable and priority on Arm, at the
+ * priority the port gives SysTick (the most urgent value a device may have and
+ * still be masked only by an interrupt mask), and Xh3irq's MEIEA on RISC-V.
+ * ARMv6-M allows only word access to the NVIC's priorities and to SHPR3.
+ *
+ * The cost is in cyros_port_timestamp's unit: cycles on the RP2350, and on
+ * the RP2040, which has no cycle counter, microseconds.
  */
 
 #include <cyros/kernel/kernel.hpp>
@@ -40,40 +45,54 @@ namespace
 {
 
 /* --------------------------------------------------------------------------
- * TIMER0, ticking every microsecond from the 12 MHz crystal
+ * The timer, ticking every microsecond from the 12 MHz crystal
  * ----------------------------------------------------------------------- */
 
-constexpr std::uintptr_t timer0          = 0x400b0000u;
-constexpr std::uintptr_t timer0_alarm0   = timer0 + 0x10u;
-constexpr std::uintptr_t timer0_timerawl = timer0 + 0x28u;
-constexpr std::uintptr_t timer0_intr     = timer0 + 0x3cu;
-constexpr std::uintptr_t timer0_inte     = timer0 + 0x40u;
+constexpr std::uintptr_t set_alias   = 0x2000u;
+constexpr std::uintptr_t clear_alias = 0x3000u;
+
+#if defined(__ARM_ARCH_6M__)
+/* The RP2040's TIMER, already running: the board started it for the port,
+ * which keeps time on it, so it is neither reset nor retimed here. */
+constexpr std::uintptr_t timer          = 0x40054000u;
+constexpr std::uintptr_t timer_alarm0   = timer + 0x10u;
+constexpr std::uintptr_t timer_timerawl = timer + 0x28u;
+constexpr std::uintptr_t timer_intr     = timer + 0x34u;
+constexpr std::uintptr_t timer_inte     = timer + 0x38u;
+#else
+constexpr std::uintptr_t timer          = 0x400b0000u;   /* TIMER0 */
+constexpr std::uintptr_t timer_alarm0   = timer + 0x10u;
+constexpr std::uintptr_t timer_timerawl = timer + 0x28u;
+constexpr std::uintptr_t timer_intr     = timer + 0x3cu;
+constexpr std::uintptr_t timer_inte     = timer + 0x40u;
 constexpr std::uintptr_t ticks_timer0_ctrl   = 0x40108018u;
 constexpr std::uintptr_t ticks_timer0_cycles = 0x4010801cu;
 constexpr std::uintptr_t resets_reset    = 0x40020000u;
 constexpr std::uintptr_t resets_done     = 0x40020008u;
 constexpr std::uint32_t  reset_timer0    = 1u << 23;
-constexpr std::uintptr_t clear_alias     = 0x3000u;
+#endif
 
 volatile std::uint32_t& reg(std::uintptr_t address)
 {
    return *reinterpret_cast<volatile std::uint32_t*>(address);
 }
 
-std::uint32_t micros() { return reg(timer0_timerawl); }
+std::uint32_t micros() { return reg(timer_timerawl); }
 
-void timer0_init()
+void timer_init()
 {
+#if !defined(__ARM_ARCH_6M__)
    reg(ticks_timer0_ctrl) = 0u;
    reg(ticks_timer0_cycles) = 12u;
    reg(ticks_timer0_ctrl) = 1u;
    reg(resets_reset + clear_alias) = reset_timer0;
    while ((reg(resets_done) & reset_timer0) == 0u) {}
-   reg(timer0_intr) = 1u;     /* nothing stale */
-   reg(timer0_inte) = 1u;     /* alarm 0 */
+#endif
+   reg(timer_intr) = 1u;               /* nothing stale */
+   reg(timer_inte + set_alias) = 1u;   /* alarm 0, leaving any other alarm's enable */
 }
 
-void alarm_in(std::uint32_t us) { reg(timer0_alarm0) = micros() + us; }
+void alarm_in(std::uint32_t us) { reg(timer_alarm0) = micros() + us; }
 
 void spin_for(std::uint32_t us)
 {
@@ -87,6 +106,13 @@ void irq0_enable()
 #if defined(__riscv)
    /* MEIEA: window 0 in the low bits, its 16 enables in the high half. */
    asm volatile("csrs 0xbe0, %0" : : "r"(1u << 16) : "memory");
+#elif defined(__ARM_ARCH_6M__)
+   /* As below, a word at a time: SysTick's priority is SHPR3[31:24], and
+    * IRQ 0's IPR0[7:0]. */
+   std::uint32_t const priority = reg(0xE000ED20u) >> 24;
+   reg(0xE000E400u) = (reg(0xE000E400u) & ~0xFFu) | priority;           /* IPR0 */
+   reg(0xE000E280u) = 1u;                                               /* ICPR */
+   reg(0xE000E100u) = 1u;                                               /* ISER */
 #else
    /* At SysTick's priority, which the port derived and wrote into SHPR3. */
    std::uint8_t const priority = *reinterpret_cast<volatile std::uint8_t*>(0xE000ED23u);
@@ -110,7 +136,7 @@ sync::semaphore wake{0};
 extern "C" void isr_irq0(void)
 {
    fired_at = cyros_port_timestamp();
-   reg(timer0_intr) = 1u;            /* clear the alarm, or it is offered again */
+   reg(timer_intr) = 1u;             /* clear the alarm, or it is offered again */
    fired = fired + 1u;
    if (release_from_isr) {
       wake.release();
@@ -145,10 +171,10 @@ void waiter()
 
 void driver()
 {
-   timer0_init();
+   timer_init();
    irq0_enable();
 
-   cyros::bench::start("TIMER0's alarm reaches isr_irq0");
+   cyros::bench::start("the timer's alarm reaches isr_irq0");
    alarm_in(100u);
    spin_for(2000u);
    CYROS_CHECK_EQ(fired, 1u);
@@ -192,7 +218,7 @@ void driver()
    }
    CYROS_CHECK_EQ(woken, rounds);
    CYROS_CHECK_EQ(wake.peek(), 0);
-   cyros::bench::print("  cycles from the handler's stamp to the woken thread's, best and worst of 16: ");
+   cyros::bench::print("  timestamp counts from the handler's stamp to the woken thread's, best and worst of 16: ");
    cyros::bench::print_dec(best);
    cyros::bench::print(" to ");
    cyros::bench::print_dec(worst);
@@ -205,7 +231,7 @@ void driver()
 
 extern "C" int cyros_bench_main()
 {
-   cyros::bench::print("a device interrupt: TIMER0's alarm on IRQ 0\n\n");
+   cyros::bench::print("a device interrupt: a timer's alarm on IRQ 0\n\n");
 
    kernel::initialise();
    thread w(waiter, waiter_stack, thread::priority(1), core0);

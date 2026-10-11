@@ -2,17 +2,17 @@
 name = "test_target_smp_idle_tickless"
 layer = 8
 
-# test_target_smp_idle's source, against the tickless driver: two harts
-# asleep at once, each woken by its own MTIMECMP. RISC-V only, because tickless
-# on two cores needs a counter both share, which the SSE-200 target lacks
-# (arm-port-notes.md 16f) and MTIME is.
+# test_target_smp_idle's source, against the tickless driver: two cores
+# asleep at once, each woken by its own MTIMECMP. The MTIME targets only,
+# because tickless on two cores needs a counter both share, which the SSE-200
+# target lacks (arm-port-notes.md 16f) and MTIME is, as is the RP2040's TIMER.
 kind = "integration"
 source = "../test_target_smp_idle/test_target_smp_idle.cpp"
 config = "test_target_smp_idle_tickless_config.hpp"
 hosted = false
 
 [components]
-port = ["riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp"]
+port = ["riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp", "rp2040_smp"]
 time_driver = "tickless"
 features = ["chrono", "sync"]
 

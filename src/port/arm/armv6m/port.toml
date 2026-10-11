@@ -4,7 +4,8 @@ name = "armv6m"
 # own rather than a third architecture of armv7m_armv8m, because it differs in
 # the mechanisms that layer is made of: no BASEPRI, so the preempt grade is a
 # software deferral, a Thumb-1 PendSV, and no exclusives, so it supplies
-# std::atomic's read-modify-writes itself (port_atomic_armv6m.cpp, one core).
+# std::atomic's read-modify-writes itself (port_atomic_armv6m.cpp), under a
+# lock the target lends it when there are two cores.
 description = "ARMv6-M Baseline CORE LAYER. Not selectable: targets extend it."
 
 # Absent from port/component.toml `variants`, as every core layer is: it

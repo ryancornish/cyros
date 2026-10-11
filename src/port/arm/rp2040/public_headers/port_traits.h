@@ -18,11 +18,10 @@
 #define CYROS_PORT_MIN_FRAME 1024
 
 /* The RP2040 has no data cache. 32 keeps two cores' hot words apart on the
- * two-core target to come, as on the RP2350's targets. */
+ * two-core target, rp2040_smp, as on the RP2350's targets. */
 #define CYROS_PORT_CACHE_LINE 32
 
-/* Core 0 alone. Two cores need the SIO spinlock atomics the armv6m layer's
- * static_assert asks for (port_atomic_armv6m.cpp). */
+/* Core 0 alone. rp2040_smp is both. */
 #define CYROS_PORT_CORE_COUNT 1
 
 #define CYROS_PORT_CAPTURE_LOCATION 1

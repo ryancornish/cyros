@@ -8,7 +8,9 @@
  * Trusts:  the two-core bring-up (layer 2), only to put one thread on each
  *          core. Hence the declared harness debt.
  * Proves:  that two cores incrementing one word, by fetch_add and by a
- *          compare-exchange loop, lose nothing.
+ *          compare-exchange loop, lose nothing, and that a test-and-set lock
+ *          released by a plain store, the kernel's spinlock in miniature,
+ *          excludes and never loses a release.
  *
  *
  * WHY A TEST OF ITS OWN
@@ -27,6 +29,18 @@
  * QEMU's exclusives are always global and Hazard3's AMOs and LR/SC need no
  * setting (rp2350-notes.md 5c), so on those it is a regression check: it has
  * one way to fail, and a port that never had the defect passes.
+ *
+ * The RP2040's M0+s have no exclusives at all, and the armv6m core layer
+ * makes each read-modify-write a load and a store under an SIO spinlock
+ * (port_atomic_armv6m.cpp). Without the lock the counts here come up short.
+ * With it, what remains is the store GCC compiles INLINE, which takes no lock
+ * and can land inside another core's read-modify-write. The kernel's spinlock
+ * is released by exactly such a store (std::atomic_flag::clear), so a
+ * test-and-set that always stored 1 would put the lock back, held by nobody:
+ * about 4.5 percent of contended releases on the board (arm-port-notes.md
+ * 19h). The kernel's own tests never contend a spinlock hard enough to see it,
+ * so the lock case below does, and it reports a lost release by name rather
+ * than spinning on it for good.
  *
  *
  * WHAT IS REPORTED BUT NOT CHECKED
@@ -67,6 +81,10 @@ alignas(CYROS_PORT_STACK_ALIGN) std::byte stack_core1[stack_size];
  * takes a few tens of milliseconds there. */
 constexpr std::uint32_t increments = 200'000u;
 
+/* Lock and unlock rounds per core. A test-and-set that stores over a release
+ * loses one within the first hundred on the RP2040. */
+constexpr std::uint32_t lock_rounds = 50'000u;
+
 /* The two words under test, on separate cache lines from each other and from
  * the handshake below, so false sharing cannot stand in for a lost update. */
 alignas(CYROS_PORT_CACHE_LINE) std::atomic<std::uint32_t> added{0u};
@@ -77,8 +95,20 @@ std::atomic<bool> go{false};
 std::atomic<bool> core1_finished{false};
 std::atomic<std::uint32_t> core1_retries{0u};
 
+/* The lock case. `holder` is 1 + the core inside, or 0, written only by the
+ * holder, so a waiter can tell a lock that is held from one that is set with
+ * nobody inside, which is a lost release. `inside` is plain on purpose: the
+ * lock's exclusion is what keeps the two cores' increments apart. */
+alignas(CYROS_PORT_CACHE_LINE) std::atomic_flag lock_flag = ATOMIC_FLAG_INIT;
+alignas(CYROS_PORT_CACHE_LINE) std::atomic<std::uint32_t> holder{0u};
+std::uint32_t inside = 0u;
+alignas(CYROS_PORT_CACHE_LINE) std::atomic<bool> release_lost{false};
+std::atomic<bool> go_lock{false};
+std::atomic<std::uint32_t> core1_lock_rounds{0u};
+std::atomic<bool> core1_lock_finished{false};
+
 /* Bounded waits, so a core that never arrives REPORTS rather than hanging
- * until the runner's timeout, as in test_cortex_m33_smp_bringup. Bounded on
+ * until the runner's timeout, as in test_cortex_m_smp_bringup. Bounded on
  * PROGRESS where there is any: a fixed budget of yields ran out on QEMU under
  * host load, with core 1 hammering away but slowly (31 of 60 runs at 4-way,
  * 2026-10-10), and that reported a slow core as a broken one. */
@@ -98,11 +128,12 @@ bool wait_for_ready()
 /* Core 1 finishing, once core 0 has: core 1 is the only one moving the counter
  * now, so the budget restarts whenever it moves, and only a core 1 that stops
  * making progress runs it out. */
-bool wait_for_finish(std::atomic<std::uint32_t> const& counter)
+bool wait_for_finish(std::atomic<std::uint32_t> const& counter,
+                     std::atomic<bool> const& finished)
 {
    std::uint32_t last = counter.load(std::memory_order_relaxed);
    std::uint32_t still = 0u;
-   while (!core1_finished.load(std::memory_order_acquire)) {
+   while (!finished.load(std::memory_order_acquire)) {
       this_thread::yield();
       std::uint32_t const now = counter.load(std::memory_order_relaxed);
       if (now != last) {
@@ -120,33 +151,86 @@ bool wait_for_finish(std::atomic<std::uint32_t> const& counter)
  * never overlap: measured on the board, 2 to 4 retries in 400,000, and the
  * broken monitor lost nothing. Sliding one core's phase against the other's is
  * what the probe that found the defect did (core 1 jittered 0 to 15 cycles a
- * step, rp2350-notes.md 3b). */
-void jitter(std::uint32_t& state)
+ * step, rp2350-notes.md 3b).
+ *
+ * Core 1's steps are one instruction longer than core 0's. With equal steps
+ * every offset between the two cores' loops is fixed modulo a step, so a
+ * window narrower than a step is hit in every round or in none, and which
+ * depends on the code's length. On the RP2040 the lock case caught a
+ * test-and-set that stores over a release in one build and missed it in
+ * every run of another a few instructions shorter. Steps of different
+ * lengths slide the phases a cycle at a time. */
+void jitter(std::uint32_t& state, bool longer)
 {
    state ^= state << 13;
    state ^= state >> 17;
    state ^= state << 5;
-   for (std::uint32_t step = state & 15u; step != 0u; --step) {
-      asm volatile("" ::: "memory");
+   if (longer) {
+      for (std::uint32_t step = state & 15u; step != 0u; --step) {
+         asm volatile("nop" ::: "memory");
+      }
+   } else {
+      for (std::uint32_t step = state & 15u; step != 0u; --step) {
+         asm volatile("" ::: "memory");
+      }
    }
 }
 
 /* The work both cores do, with neither yielding inside it, so the two loops
  * run truly at once. Returns how many compare-exchanges had to retry. */
-std::uint32_t hammer(std::uint32_t seed)
+std::uint32_t hammer(std::uint32_t core, std::uint32_t seed)
 {
    std::uint32_t retries = 0u;
    for (std::uint32_t i = 0; i < increments; ++i) {
       added.fetch_add(1u, std::memory_order_relaxed);
-      jitter(seed);
+      jitter(seed, core == 1u);
 
       std::uint32_t seen = exchanged.load(std::memory_order_relaxed);
       while (!exchanged.compare_exchange_weak(seen, seen + 1u, std::memory_order_relaxed)) {
          ++retries;
       }
-      jitter(seed);
+      jitter(seed, core == 1u);
    }
    return retries;
+}
+
+/* Takes the lock, or gives up once a release is lost. A lock set with nobody
+ * inside for a million tries is lost, not slow: a holder is a few instructions
+ * from its release, and only a stall between clearing `holder` and the clear
+ * itself could look the same. */
+bool take(std::uint32_t core)
+{
+   std::uint32_t free_but_set = 0u;
+   while (lock_flag.test_and_set(std::memory_order_acquire)) {
+      if (release_lost.load(std::memory_order_relaxed)) { return false; }
+      if (holder.load(std::memory_order_relaxed) != 0u) {
+         free_but_set = 0u;
+      } else if (++free_but_set == 1'000'000u) {
+         release_lost.store(true, std::memory_order_relaxed);
+         return false;
+      }
+   }
+   holder.store(core + 1u, std::memory_order_relaxed);
+   return true;
+}
+
+void give()
+{
+   holder.store(0u, std::memory_order_relaxed);
+   lock_flag.clear(std::memory_order_release);
+}
+
+/* Both cores take and give the lock, neither yielding, and count inside it.
+ * `rounds` is this core's progress, for core 0's bounded wait. */
+void lock_hammer(std::uint32_t core, std::uint32_t seed, std::atomic<std::uint32_t>* rounds)
+{
+   for (std::uint32_t i = 0; i < lock_rounds; ++i) {
+      if (!take(core)) { return; }
+      inside = inside + 1u;
+      give();
+      if (rounds != nullptr) { rounds->store(i + 1u, std::memory_order_relaxed); }
+      jitter(seed, core == 1u);
+   }
 }
 
 void thread_on_core1()
@@ -157,16 +241,26 @@ void thread_on_core1()
    for (std::uint32_t spin = 0; !go.load(std::memory_order_acquire); ++spin) {
       if (spin == 100'000'000u) { return; }
    }
-   core1_retries.store(hammer(0x9e3779b9u), std::memory_order_relaxed);
+   core1_retries.store(hammer(1u, 0x9e3779b9u), std::memory_order_relaxed);
    core1_finished.store(true, std::memory_order_release);
+
+   for (std::uint32_t spin = 0; !go_lock.load(std::memory_order_acquire); ++spin) {
+      if (spin == 100'000'000u) { return; }
+   }
+   lock_hammer(1u, 0x9e3779b9u, &core1_lock_rounds);
+   core1_lock_finished.store(true, std::memory_order_release);
 }
 
 void thread_on_core0()
 {
    bool const ready = wait_for_ready();
    go.store(true, std::memory_order_release);
-   std::uint32_t const core0_retries = ready ? hammer(0x2545f491u) : 0u;
-   bool const finished = ready && wait_for_finish(added);
+   std::uint32_t const core0_retries = ready ? hammer(0u, 0x2545f491u) : 0u;
+   bool const finished = ready && wait_for_finish(added, core1_finished);
+
+   go_lock.store(true, std::memory_order_release);
+   if (finished) { lock_hammer(0u, 0x2545f491u, nullptr); }
+   bool const lock_finished = finished && wait_for_finish(core1_lock_rounds, core1_lock_finished);
 
    cyros::bench::start("both cores reached their threads and finished");
    CYROS_CHECK(ready);
@@ -192,6 +286,20 @@ void thread_on_core0()
 
    cyros::bench::start("a compare-exchange loop on both cores loses nothing");
    CYROS_CHECK_EQ(by_exchange, expected);
+
+   cyros::bench::start("a test-and-set lock released by a plain store never loses a release");
+   CYROS_CHECK(lock_finished);
+   CYROS_CHECK(!release_lost.load(std::memory_order_relaxed));
+
+   /* Read only once core 1 has finished with it, which the acquire in
+    * wait_for_finish orders before this. */
+   if (lock_finished) {
+      cyros::bench::start("and lets one core in at a time");
+      cyros::bench::print("  entries         ");
+      cyros::bench::print_hex(inside);
+      cyros::bench::print("\n");
+      CYROS_CHECK_EQ(inside, 2u * lock_rounds);
+   }
 
    cyros::bench::finish();
 }

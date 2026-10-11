@@ -4,17 +4,21 @@
  *        Pico's Cortex-M0+ core 0, the ARMv6-M sibling of
  *        ../rp2350/startup_rp2350_m33.c.
  *
- * Serves the rp2040 target, which keeps time on the TIMER through the MTIME
- * time source (the toolchain says so to the tests, CYROS_BENCH_MTIME). The
- * generic cortex_m0 target runs on this chip through
+ * Serves the rp2040 and rp2040_smp targets, which keep time on the TIMER
+ * through the MTIME time source (the toolchain says so to the tests,
+ * CYROS_BENCH_MTIME). The generic cortex_m0 target runs on this chip through
  * ~/cyros-claude/tools-rp2040-loop/cyros_board instead. The handlers the port
  * defines are linked over weak defaults below.
  *
  * The image runs from SRAM (rp2040.ld) and is entered at _entry by the
  * debugger after a reset halt (run_test.sh), which resets the cores alone and
  * leaves the boot ROM's MSP and a VTOR of 0. _entry sets both before any C
- * runs. Core 1 stays in the boot ROM. Then, in order:
+ * runs. Core 1 stays in the boot ROM until the rp2040_smp target launches it,
+ * with this same vector table and core1_stack below. Then, in order:
  *
+ *   0. Every SIO spinlock released, as the SDK's runtime does, because the
+ *      cores' reset leaves them as the last image did, and rp2040_smp's
+ *      atomics take one.
  *   1. .bss and the console, and rtt_ready, so the runner can read it.
  *   2. The runner's go word, so nothing timed starts before OpenOCD is
  *      attached, as on the Pico 2 W board.
@@ -46,6 +50,16 @@ volatile uint32_t bench_done;
 /* Written by the runner once it is attached (drive_test.py). */
 volatile uint32_t host_go;
 #define HOST_GO 0x60606060u
+
+/* Core 1's stack, for the rp2040_smp target's launch. It stays core 1's MSP,
+ * its handler stack. */
+#define CORE1_STACK_BYTES 8192
+__attribute__((aligned(8))) static uint8_t core1_stack[CORE1_STACK_BYTES];
+
+void* cyros_port_core1_stack_top(void)
+{
+   return core1_stack + CORE1_STACK_BYTES;
+}
 
 /* The TIMER's rate, for the port's MTIME time source. */
 uint32_t cyros_port_mtime_clock_hz(void)
@@ -104,6 +118,9 @@ __attribute__((noreturn)) void cyros_bench_exit(uint32_t code)
 
 __attribute__((noreturn, used)) void reset_c(void)
 {
+   for (uint32_t n = 0; n < 32u; ++n) {
+      REG(SIO_SPINLOCK(n)) = 0u;
+   }
    for (uint32_t* target = &__bss_start__; target < &__bss_end__; ) {
       *target++ = 0u;
    }
@@ -205,17 +222,18 @@ void Default_Handler(void)
 __attribute__((noreturn)) void NMI_Handler(void)       __attribute__((weak, alias("Fault_Handler")));
 __attribute__((noreturn)) void HardFault_Handler(void) __attribute__((weak, alias("Fault_Handler")));
 
-/* The port defines these: PendSV in the core layer, the TIMER's alarm in the
- * rp2040 target. Weak, so a missing one is a report rather than a link error,
- * which the port's own tests then explain. */
+/* The port defines these: PendSV in the core layer, the TIMER's alarm and
+ * the SIO FIFO in the rp2040 targets. Weak, so a missing one is a report
+ * rather than a link error, which the port's own tests then explain. */
 void PendSV_Handler(void)      __attribute__((weak, alias("Default_Handler")));
 void TIMER_ALARM_Handler(void) __attribute__((weak, alias("Default_Handler")));
+void SIO_FIFO_Handler(void)    __attribute__((weak, alias("Default_Handler")));
 
 /* Device interrupts, by IRQ number, weak so an application or test defines
- * the ones it uses, the names the Pico 2 W board's tables use. 3 is cyros's. */
+ * the ones it uses, the names the Pico 2 W board's tables use. 2, 3, 15 and
+ * 16 are cyros's. */
 void isr_irq0(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq1(void) __attribute__((weak, alias("Default_Handler")));
-void isr_irq2(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq4(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq5(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq6(void) __attribute__((weak, alias("Default_Handler")));
@@ -227,8 +245,6 @@ void isr_irq11(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq12(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq13(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq14(void) __attribute__((weak, alias("Default_Handler")));
-void isr_irq15(void) __attribute__((weak, alias("Default_Handler")));
-void isr_irq16(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq17(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq18(void) __attribute__((weak, alias("Default_Handler")));
 void isr_irq19(void) __attribute__((weak, alias("Default_Handler")));
@@ -263,8 +279,8 @@ vector_entry const vector_table[] = {
    DEFAULT,                                 /* 15 SysTick, unused here       */
    { .handler = isr_irq0 },
    { .handler = isr_irq1 },
-   { .handler = isr_irq2 },
-   { .handler = TIMER_ALARM_Handler },      /* IRQ 3, TIMER_IRQ_3, cyros's   */
+   { .handler = TIMER_ALARM_Handler },      /* IRQ 2, TIMER_IRQ_2, core 1's  */
+   { .handler = TIMER_ALARM_Handler },      /* IRQ 3, TIMER_IRQ_3, core 0's  */
    { .handler = isr_irq4 },
    { .handler = isr_irq5 },
    { .handler = isr_irq6 },
@@ -276,8 +292,8 @@ vector_entry const vector_table[] = {
    { .handler = isr_irq12 },
    { .handler = isr_irq13 },
    { .handler = isr_irq14 },
-   { .handler = isr_irq15 },
-   { .handler = isr_irq16 },
+   { .handler = SIO_FIFO_Handler },         /* IRQ 15, core 0's FIFO, cyros's */
+   { .handler = SIO_FIFO_Handler },         /* IRQ 16, core 1's FIFO, cyros's */
    { .handler = isr_irq17 },
    { .handler = isr_irq18 },
    { .handler = isr_irq19 },
@@ -290,3 +306,9 @@ vector_entry const vector_table[] = {
 };
 
 _Static_assert(sizeof vector_table == (16u + 26u) * 4u, "16 system entries and 26 IRQs");
+
+/* What the rp2040_smp target launches core 1 with. */
+void const* cyros_port_core1_vector_table(void)
+{
+   return vector_table;
+}

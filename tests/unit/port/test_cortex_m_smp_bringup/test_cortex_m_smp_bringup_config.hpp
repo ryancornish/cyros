@@ -1,6 +1,6 @@
 /**
- * @file cortex_m33.hpp
- * @brief Cyros configuration for the single-core Cortex-M33 target.
+ * @file test_cortex_m_smp_bringup_config.hpp
+ * @brief Cyros configuration for the two-core Cortex-M bring-up.
  */
 
 #ifndef CYROS_CONFIG_HPP
@@ -14,9 +14,7 @@ namespace cyros::config
 /**
  * @brief How many cores for SMP.
  *
- * One. The M33 parts this port targets (STM32U575, and the mps2-an505 bench)
- * are single core, and CYROS_PORT_CORE_COUNT agrees. A dual-M33 target is a
- * separate port variant, not a change here.
+ * Two, as the two-core targets' CYROS_PORT_CORE_COUNT says.
  */
 inline constexpr std::size_t cores = 2;
 

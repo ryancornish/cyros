@@ -65,6 +65,11 @@
  * The handler is where the test ENDS: it records the result and exits the
  * image, because there is nothing sensible to return to once a thread has run
  * off the bottom of its stack.
+ *
+ * test_cortex_m_smp_stack_guard builds this file for a two-core target with
+ * both threads on core 1 (CYROS_TEST_GUARD_CORE in its config), so the guard
+ * under test is the one core 1's own switches load into its own MPU or
+ * PSPLIM, and the fault is taken on core 1.
  */
 
 #include <cyros/kernel/kernel.hpp>
@@ -80,6 +85,12 @@
 #include <cstdint>
 
 using namespace cyros;
+
+/* The core both threads run on: 0, or 1 in test_cortex_m_smp_stack_guard. */
+#ifndef CYROS_TEST_GUARD_CORE
+#  define CYROS_TEST_GUARD_CORE 0
+#endif
+static_assert(CYROS_TEST_GUARD_CORE < config::cores, "the guard's core must be one the kernel starts");
 
 /* The same selection the core layer makes (cortex_m.hpp), repeated rather than
  * included because that header is private to the port. */
@@ -304,6 +315,9 @@ void helper()
 
 void worker()
 {
+   cyros::bench::start("the worker runs on the core the test chose");
+   CYROS_CHECK_EQ(this_core::id(), static_cast<std::uint32_t>(CYROS_TEST_GUARD_CORE));
+
    test_the_guard_covers_this_threads_buffer();
    test_ordinary_stack_use_does_not_trip_it();
    overrun_the_stack();
@@ -392,8 +406,9 @@ extern "C" int cyros_bench_main()
    cyros::bench::print("cortex_m stack guard\n\n");
 
    kernel::initialise();
-   thread helper_thread(helper, helper_stack, thread::priority(0), core0);
-   thread worker_thread(worker, worker_stack, thread::priority(0), core0);
+   core_affinity const on = CYROS_TEST_GUARD_CORE == 0 ? core0 : core1;
+   thread helper_thread(helper, helper_stack, thread::priority(0), on);
+   thread worker_thread(worker, worker_stack, thread::priority(0), on);
 
    kernel::start();
 

@@ -9,7 +9,9 @@
  * its CLINT. The RP2350 has it in its SIO and gives it to BOTH of its ISAs:
  * the Hazard3 cores take it as `mtip`, the Cortex-M33s as IRQ 29. So the time
  * source is ISA-neutral, and a target supplies where the registers are and how
- * its core takes the interrupt. The BOARD supplies the rate.
+ * its core takes the interrupt. The RP2040 has a 64-bit TIMER both cores read
+ * and four alarms that match its low word, and its target builds a per-core
+ * MTIMECMP from one alarm each. The BOARD supplies the rate.
  */
 #ifndef CYROS_PORT_COMMON_MTIME_HPP
 #define CYROS_PORT_COMMON_MTIME_HPP

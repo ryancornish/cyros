@@ -5,7 +5,8 @@
  *        tickless, on any number of cores, on either ISA.
  *
  * Compiled by each target that has one, as linux/common is by each Linux port:
- * QEMU's RISC-V virt, the RP2350's Hazard3 cores and the RP2350's Cortex-M33s.
+ * QEMU's RISC-V virt, the RP2350's Hazard3 cores and the RP2350's Cortex-M33s,
+ * and the RP2040's Cortex-M0+s, whose TIMER the target presents as one.
  * The target says where the registers are and how its core takes the
  * interrupt (mtime.hpp), and the board says how fast MTIME runs.
  *

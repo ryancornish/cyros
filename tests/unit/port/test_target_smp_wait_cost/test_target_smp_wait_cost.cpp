@@ -21,7 +21,8 @@
  * Timed on core 0 alone, so the per-core cycle counters of the QEMU machines
  * would do, if QEMU modelled them. It does not, so there every figure is zero
  * and only the checks mean anything. On the RP2350 the stamps are MTIME at the
- * core clock, on either ISA.
+ * core clock, on either ISA. On the RP2040 they are microseconds, its TIMER's
+ * unit, since ARMv6-M has no cycle counter.
  */
 
 #include <cyros/kernel/kernel.hpp>

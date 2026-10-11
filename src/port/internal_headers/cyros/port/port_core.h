@@ -473,6 +473,14 @@ void* cyros_port_get_tls_pointer(void);
  * respect to ALL cores, not merely against interrupts on the calling one. A port
  * whose CPU has no lock-free read-modify-write must satisfy that by supplying its
  * own __atomic_* definitions; there is no entry point here for it.
+ *
+ * Those definitions reach read-modify-writes only: GCC keeps aligned loads and
+ * stores inline, and an inline store from one core can land inside another
+ * core's locked read-modify-write and be lost. The armv6m layer, the one such
+ * port (two cores on the RP2040), stores only when a value changes, and the
+ * kernel never races an inline store against another core's read-modify-write
+ * of the same object (port_atomic_armv6m.cpp, and the audit it cites). A new
+ * kernel atomic keeps to that.
  * ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------------

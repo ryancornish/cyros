@@ -1,11 +1,15 @@
 /**
- * @file test_cortex_m33_smp_bringup.cpp
- * @brief Two Cortex-M33 cores, one kernel (L2).
+ * @file test_cortex_m_smp_bringup.cpp
+ * @brief Two Cortex-M cores, one kernel (L2).
  *
  * Subject: multicore bring-up on a bare-metal target
  * Trusts:  the single-core port (every test in this suite below layer 2)
  * Proves:  the second core is released, joins the same kernel, runs a thread
  *          pinned to it, and reports its own identity from inside that thread
+ *
+ * The two-core Arm targets: two M33s on QEMU's SSE-200 and on the RP2350, and
+ * the RP2040's two M0+s. What the second core's init must have set differs by
+ * architecture, and the checks follow it (below).
  *
  * The single-core bench cannot reach any of this. `cyros_port_get_core_id`,
  * `cyros_port_start_cores` and `cyros_port_send_reschedule_ipi` are the three
@@ -47,7 +51,7 @@
 using namespace cyros;
 
 static_assert(config::cores == 2, "This bring-up is dual core");
-static_assert(CYROS_PORT_CORE_COUNT == 2, "Needs a two-core Cortex-M33 port");
+static_assert(CYROS_PORT_CORE_COUNT == 2, "Needs a two-core Cortex-M port");
 
 namespace
 {
@@ -83,29 +87,55 @@ std::atomic<bool>          core1_finished{false};
  * two exist.
  *
  * The consequence of not noticing is not cosmetic. PendSV's reset priority is
- * 0, the most urgent there is, and the port's preempt-disable works by raising
- * BASEPRI to PendSV's DERIVED priority. A core whose PendSV sits at 0 is not
- * masked by that, so a context switch can be taken in the middle of a kernel
- * critical section on that core alone.
+ * 0, the most urgent there is. On Mainline the port's preempt-disable works
+ * by raising BASEPRI to PendSV's DERIVED priority, and a core whose PendSV
+ * sits at 0 is not masked by that, so a context switch can be taken in the
+ * middle of a kernel critical section on that core alone. On ARMv6-M PendSV
+ * at 0 would preempt every device interrupt, the doorbell among them.
+ *
+ * The second register is what else the init owns. Mainline: the FPU, through
+ * CPACR, in a hard-float build. ARMv6-M: the MPU, which holds the stack guard
+ * where the part has one, so a core that skipped the init runs unguarded.
  * ----------------------------------------------------------------------- */
 
+#if defined(__ARM_ARCH_6M__)
+/* SHPR is word access only on ARMv6-M, and PendSV's byte is SHPR3[23:16]. */
+constexpr std::uintptr_t shpr3_addr    = 0xE000ED20u;
+constexpr std::uintptr_t mpu_ctrl_addr = 0xE000ED94u;
+#else
 constexpr std::uintptr_t shpr_pendsv_addr = 0xE000ED22u;
 constexpr std::uintptr_t cpacr_addr       = 0xE000ED88u;
 constexpr std::uint32_t  cpacr_fpu_bits   = (0x3u << 20) | (0x3u << 22);
-
-std::uint8_t read_byte(std::uintptr_t address)
-{
-   return *reinterpret_cast<volatile std::uint8_t*>(address);
-}
+#endif
 
 std::uint32_t read_word(std::uintptr_t address)
 {
    return *reinterpret_cast<volatile std::uint32_t*>(address);
 }
 
+std::uint32_t pendsv_priority()
+{
+#if defined(__ARM_ARCH_6M__)
+   return (read_word(shpr3_addr) >> 16) & 0xFFu;
+#else
+   return *reinterpret_cast<volatile std::uint8_t*>(shpr_pendsv_addr);
+#endif
+}
+
+/* The other register the per-core init owns, as this core sees it. */
+std::uint32_t init_owned_register()
+{
+#if defined(__ARM_ARCH_6M__)
+   return read_word(mpu_ctrl_addr);
+#else
+   return read_word(cpacr_addr);
+#endif
+}
+
 std::atomic<std::uint32_t> core0_pendsv_priority{0xFFFFFFFFu};
 std::atomic<std::uint32_t> core1_pendsv_priority{0xFFFFFFFFu};
-std::atomic<std::uint32_t> core1_cpacr{0u};
+std::atomic<std::uint32_t> core0_init_owned{0u};
+std::atomic<std::uint32_t> core1_init_owned{0u};
 
 /* Bounded, so a rendezvous that never completes REPORTS rather than hanging
  * until the runner's timeout. A timeout says only that something is wrong; a
@@ -140,8 +170,8 @@ void thread_on_core1()
 
    /* Read from THIS core, which is the whole point: the same addresses read
     * from core 0 would answer for core 0. */
-   core1_pendsv_priority.store(read_byte(shpr_pendsv_addr), std::memory_order_relaxed);
-   core1_cpacr.store(read_word(cpacr_addr), std::memory_order_relaxed);
+   core1_pendsv_priority.store(pendsv_priority(), std::memory_order_relaxed);
+   core1_init_owned.store(init_owned_register(), std::memory_order_relaxed);
 
    /* Release, and the store above is the reason. The reporting core reads
     * core1_saw_id only after seeing this flag, so this is what makes that read
@@ -156,7 +186,8 @@ void thread_on_core1()
 void thread_on_core0()
 {
    core0_saw_id.store(this_core::id(), std::memory_order_relaxed);
-   core0_pendsv_priority.store(read_byte(shpr_pendsv_addr), std::memory_order_relaxed);
+   core0_pendsv_priority.store(pendsv_priority(), std::memory_order_relaxed);
+   core0_init_owned.store(init_owned_register(), std::memory_order_relaxed);
 
    bool const rendezvous = wait_for_core1();
 
@@ -194,9 +225,24 @@ void thread_on_core0()
    CYROS_CHECK(p0 != 0u);        /* the reset default, which means never set */
    CYROS_CHECK_EQ(p1, p0);
 
+#if defined(__ARM_ARCH_6M__)
+   /* As core 0's, whatever that is: enabled under the guard, untouched with
+    * no MPU or with the guard built out (CYROS_ARMV6M_STACK_GUARD), which a
+    * test cannot see. */
+   std::uint32_t const m0 = core0_init_owned.load(std::memory_order_relaxed);
+   std::uint32_t const m1 = core1_init_owned.load(std::memory_order_relaxed);
+   cyros::bench::start("the second core set up its own MPU, as the first did");
+   cyros::bench::print("  core 0 MPU_CTRL ");
+   cyros::bench::print_hex(m0);
+   cyros::bench::print("\n  core 1 MPU_CTRL ");
+   cyros::bench::print_hex(m1);
+   cyros::bench::print("\n");
+   CYROS_CHECK_EQ(m1, m0);
+#elif defined(__ARM_FP)
    cyros::bench::start("the second core enabled its own FPU");
-   CYROS_CHECK_EQ(core1_cpacr.load(std::memory_order_relaxed) & cpacr_fpu_bits,
+   CYROS_CHECK_EQ(core1_init_owned.load(std::memory_order_relaxed) & cpacr_fpu_bits,
                   cpacr_fpu_bits);
+#endif
 
    cyros::bench::finish();
 }
@@ -206,9 +252,10 @@ void thread_on_core0()
 
 extern "C" int cyros_bench_main()
 {
-   cyros::bench::print("two Cortex-M33 cores, one kernel: bring-up\n\n");
+   cyros::bench::print("two Cortex-M cores, one kernel: bring-up\n\n");
 
-   /* Before the kernel starts, only core 0 is running: CPU1 is held at reset
+   /* Before the kernel starts, only core 0 is running: CPU1 is held at reset,
+    * or waits in the boot ROM on the RP2040 and RP2350,
     * until cyros_port_start_cores releases it. So this reads 0 for the same
     * reason it would on a single-core part, and proving the identity register
     * works has to happen from inside a thread on the other core. */

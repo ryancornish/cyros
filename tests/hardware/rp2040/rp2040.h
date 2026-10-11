@@ -42,6 +42,7 @@
 #define WATCHDOG_CTRL        0x40058000u
 #define WATCHDOG_TICK        0x4005802cu
 #define SIO_CPUID            0xd0000000u
+#define SIO_SPINLOCK(n)      (0xd0000100u + 4u * (n))
 
 #define RESET_IO_QSPI        (1u << 6)
 #define RESET_PADS_QSPI      (1u << 9)

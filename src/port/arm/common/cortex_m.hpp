@@ -172,6 +172,7 @@ inline constexpr std::uint32_t dwt_ctrl_cyccntena  = 1u << 0;
  * Core register access and barriers
  * ========================================================================= */
 
+inline void dmb() noexcept { asm volatile("dmb 0xF" ::: "memory"); }
 inline void dsb() noexcept { asm volatile("dsb 0xF" ::: "memory"); }
 inline void isb() noexcept { asm volatile("isb 0xF" ::: "memory"); }
 inline void wfi() noexcept { asm volatile("wfi" ::: "memory"); }
@@ -387,6 +388,23 @@ std::uint64_t cycle_counter_timestamp() noexcept;
  * clock (rp2350-notes.md 10), as its RISC-V target does.
  */
 std::uint64_t timestamp() noexcept;
+
+#if !CYROS_CORTEX_M_MAINLINE
+/**
+ * @brief The lock that makes armv6m's read-modify-writes atomic across cores.
+ *
+ * ARMv6-M has no exclusives, so port_atomic_armv6m.cpp makes each
+ * read-modify-write a plain load and store with PRIMASK set, which is atomic
+ * against this core's interrupts and nothing else. A target with more than one
+ * core supplies a lock the cores share, which that file takes inside the
+ * masked region, so no core ever holds it across one of its own interrupts.
+ * atomic_lock() must order every later access after it, and atomic_unlock()
+ * every earlier one before it. Called on a multicore target only, so a
+ * single-core one defines neither. The RP2040's is SIO spinlock 14.
+ */
+void atomic_lock() noexcept;
+void atomic_unlock() noexcept;
+#endif
 
 } // namespace cyros::port::cortex_m
 

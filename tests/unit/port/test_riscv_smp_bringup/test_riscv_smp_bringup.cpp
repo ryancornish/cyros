@@ -14,8 +14,8 @@
  *          vector, its reschedule enabled, its own interrupt stack, its cycle
  *          counter running, and its TLS pointer its own.
  *
- * The RISC-V sibling of test_cortex_m33_smp_bringup, which checks PendSV's
- * priority and the FPU on core 1 for the same reason: a secondary that never
+ * The RISC-V sibling of test_cortex_m_smp_bringup, which checks PendSV's
+ * priority and the FPU or MPU on core 1 for the same reason: a secondary that never
  * ran the per-core init comes up with reset state, and nothing else in a
  * bring-up test notices. Here that state is CSRs, private to each hart.
  *
@@ -26,7 +26,7 @@
  * of simultaneous interrupts, which a bring-up test does not provoke, so it
  * is checked directly.
  *
- * Ending: as test_cortex_m33_smp_bringup, core 0 reports, after a bounded wait
+ * Ending: as test_cortex_m_smp_bringup, core 0 reports, after a bounded wait
  * on a flag core 1 sets once and never clears.
  */
 
@@ -119,7 +119,7 @@ void look_at_this_hart(hart_view& view)
    view.cycles_moved = read_mcycle() - before;
 }
 
-/* Bounded in yields, as test_cortex_m33_smp_bringup's, so a hart that never
+/* Bounded in yields, as test_cortex_m_smp_bringup's, so a hart that never
  * joins is reported rather than timed out. */
 constexpr std::uint32_t rendezvous_limit = 100'000u;
 

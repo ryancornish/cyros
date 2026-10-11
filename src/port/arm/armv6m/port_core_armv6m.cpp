@@ -3,7 +3,8 @@
  * @brief ARMv6-M CORE LAYER: all of port_core.h, for the Cortex-M0 and M0+.
  *
  * Bench: QEMU's microbit (a Cortex-M0, cortex_m0 target). Hardware: the
- * RP2040's M0+ (rp2040 target). Everything here is architectural.
+ * RP2040's M0+, one core (rp2040) or both (rp2040_smp). Everything here is
+ * architectural.
  *
  * The Mainline layer (armv7m_armv8m) is the model, and its header says why
  * every switch happens in PendSV at the lowest priority. That holds here
@@ -12,7 +13,8 @@
  *   no BASEPRI     the preempt grade is a software deferral (below)
  *   Thumb-1 only   PendSV saves r8 to r11 through low registers
  *   no LDREX       std::atomic's read-modify-writes are library calls,
- *                  which port_atomic_armv6m.cpp supplies, single core only
+ *                  which port_atomic_armv6m.cpp supplies, under a lock the
+ *                  target lends on more than one core (the RP2040's SIO)
  *   no DWT         the timestamp is the target's counter alone
  *   no FPU         nothing to save, and EXC_RETURN is the same for every
  *                  thread, so unlike the Mainline layer it is not saved
@@ -135,7 +137,7 @@ namespace
 cyros_port_reschedule_t reschedule_handler = nullptr;
 
 /* Per core, as the Mainline layer's TLS cache is and for the same reason:
- * one running thread per core. Single core today, so each is one slot. */
+ * one running thread per core. */
 void* current_tls[CYROS_PORT_CORE_COUNT] = {};
 
 /* The software preempt grade (see the header). Volatile because PendSV reads

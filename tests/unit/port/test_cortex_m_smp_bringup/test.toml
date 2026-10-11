@@ -1,16 +1,16 @@
 [test]
-name = "test_cortex_m33_smp_bringup"
+name = "test_cortex_m_smp_bringup"
 layer = 2
 kind = "unit"
-source = "test_cortex_m33_smp_bringup.cpp"
-config = "test_cortex_m33_smp_bringup_config.hpp"
+source = "test_cortex_m_smp_bringup.cpp"
+config = "test_cortex_m_smp_bringup_config.hpp"
 
 # Runs on bare metal, on the machine the toolchain's board and runner name.
 # Skipped by every hosted profile.
 hosted = false
 
 [components]
-port = ["cortex_m33_smp", "rp2350_m33_smp"]
+port = ["cortex_m33_smp", "rp2350_m33_smp", "rp2040_smp"]
 
 [link]
 system_libraries = []

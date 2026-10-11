@@ -5,8 +5,8 @@ description = "The RP2040's Cortex-M0+ core 0: its 1 us TIMER for time and times
 # The same core layer as cortex_m0, unchanged. What the RP2040 adds is its
 # TIMER, a 64-bit counter both cores share, which serves as the MTIME of the
 # time source ../../common compiles for the RP2350 and the RISC-V targets, and
-# as the timestamp. The two-core target and its SIO spinlock atomics are still
-# to come.
+# as the timestamp, and the SIO's FIFOs and spinlocks, which rp2040_smp uses
+# for its IPI and its atomics. That target compiles this one's source.
 extends = "armv6m"
 
 sources = [

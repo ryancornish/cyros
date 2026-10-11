@@ -1,0 +1,20 @@
+name = "rp2040_smp"
+
+description = "Both of the RP2040's Cortex-M0+ cores: the SIO FIFOs as the IPI, an SIO spinlock for atomics."
+
+# rp2040's machine code, which launches core 1 when asked for two, and the
+# MTIME time source over the TIMER. Only port_traits.h differs, as between the
+# RP2350's two Arm targets. The core layer's atomics take the target's SIO
+# spinlock on two cores (port_mcu_rp2040.cpp says which).
+extends = "armv6m"
+
+sources = [
+   "../rp2040/port_mcu_rp2040.cpp",
+   "../../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]
