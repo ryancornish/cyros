@@ -6,6 +6,7 @@ variants = [
    "linux_preempt",
    "cortex_m",
    "cortex_m0",
+   "rp2040",
    "cortex_m33_smp",
    "rp2350_m33",
    "rp2350_m33_smp",

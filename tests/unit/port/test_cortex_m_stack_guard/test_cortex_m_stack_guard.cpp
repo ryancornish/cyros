@@ -4,15 +4,18 @@
  *
  * Subject / Trusts / Proves
  * -------------------------
- * Subject: the armv7m_armv8m core layer's stack guard, programmed in
+ * Subject: the Arm core layers' stack guard, programmed in
  *          cyros_port_context_init and reloaded on every cyros_port_switch.
- *          PSPLIM on ARMv8-M, the highest-numbered MPU region on ARMv7-M.
+ *          PSPLIM on ARMv8-M, the highest-numbered MPU region on ARMv7-M,
+ *          and half of one on ARMv6-M (armv6m).
  * Trusts:  layer 0 and the kernel bring-up layer 2 proves.
  * Proves:  that the guard covers the bottom of the running thread's own
  *          buffer, that ordinary stack use does not trip it, and that
  *          overrunning the buffer faults rather than corrupting whatever lies
  *          below: UsageFault with STKOF on ARMv8-M, MemManage with DACCVIOL and
- *          the faulting address inside the guard on ARMv7-M.
+ *          the faulting address inside the guard on ARMv7-M, and on ARMv6-M a
+ *          HardFault with the thread's SP inside the guard and the store into
+ *          it not landed.
  *
  *
  * WHY THIS MATTERS MORE HERE THAN ON MOST RTOSes
@@ -38,7 +41,13 @@
  * guard faults. MSTKERR is usually set as well: the fault's own exception entry
  * tries to stack onto the overrun stack, and the guard stops that too.
  *
- * A Mainline part without an MPU runs unguarded, by policy (no software
+ * ARMv6-M has the MPU's half of that and no fault status: every fault is a
+ * HardFault, with no address. So the handler checks what it can see, the
+ * thread's SP at the fault (PSP above the frame the entry allocated) inside
+ * the guard, and, with the MPU off, that the overrun's store never reached
+ * memory.
+ *
+ * A part without an MPU (the M0) runs unguarded, by policy (no software
  * stand-in). There the test proves only that the thread runs on its own
  * buffer, and says so.
  *
@@ -49,7 +58,9 @@
  * aliased to a reporting handler. This test replaces UsageFault_Handler and
  * MemManage_Handler and nothing else, so a BusFault raised by a mistake here
  * still reports as one and cannot be mistaken for success. Each handler
- * accepts only the fault this architecture's guard raises.
+ * accepts only the fault this architecture's guard raises. On ARMv6-M it
+ * replaces HardFault_Handler, the only fault there is, and the SP check is
+ * what tells the guard's fault from any other.
  *
  * The handler is where the test ENDS: it records the result and exits the
  * image, because there is nothing sensible to return to once a thread has run
@@ -74,10 +85,15 @@ using namespace cyros;
  * included because that header is private to the port. */
 #if defined(__ARM_ARCH_8M_MAIN__)
 #  define GUARD_IS_PSPLIM 1
+#  define GUARD_IS_ARMV6M 0
 #elif defined(__ARM_ARCH_7EM__) || defined(__ARM_ARCH_7M__)
 #  define GUARD_IS_PSPLIM 0
+#  define GUARD_IS_ARMV6M 0
+#elif defined(__ARM_ARCH_6M__)
+#  define GUARD_IS_PSPLIM 0
+#  define GUARD_IS_ARMV6M 1
 #else
-#  error "test_cortex_m_stack_guard knows ARMv7-M and ARMv8-M Mainline only"
+#  error "test_cortex_m_stack_guard knows ARMv6-M, ARMv7-M and ARMv8-M Mainline"
 #endif
 
 namespace
@@ -85,6 +101,7 @@ namespace
 
 constexpr std::size_t stack_size = thread::min_stack_size + 2048;
 alignas(CYROS_PORT_STACK_ALIGN) std::byte worker_stack[stack_size];
+alignas(CYROS_PORT_STACK_ALIGN) std::byte helper_stack[thread::min_stack_size + 512];
 
 constexpr std::uintptr_t scb_cfsr  = 0xE000ED28u;
 constexpr std::uintptr_t scb_mmfar = 0xE000ED34u;
@@ -94,12 +111,16 @@ constexpr std::uint32_t cfsr_daccviol  = 1u << 1;
 constexpr std::uint32_t cfsr_mmarvalid = 1u << 7;
 constexpr std::uint32_t cfsr_stkof     = 1u << 20;
 
-/* PMSAv7, for reading the ARMv7-M guard back. */
+/* PMSAv7, for reading the ARMv7-M guard back, and ARMv6-M's. */
 constexpr std::uintptr_t mpu_type = 0xE000ED90u;
+constexpr std::uintptr_t mpu_ctrl = 0xE000ED94u;
 constexpr std::uintptr_t mpu_rnr  = 0xE000ED98u;
 constexpr std::uintptr_t mpu_rbar = 0xE000ED9Cu;
 constexpr std::uintptr_t mpu_rasr = 0xE000EDA0u;
 constexpr std::uint32_t  guard_bytes = 128u;
+
+/* What the ARMv6-M overrun stores into the guard, and must not find there. */
+constexpr std::uint32_t overrun_marker = 0x5a17c0deu;
 
 /* Set immediately before the deliberate overrun. A handler refuses to treat a
  * fault as success unless the test asked for one, so an accidental fault
@@ -171,17 +192,29 @@ void test_the_guard_covers_this_threads_buffer()
    *reinterpret_cast<volatile std::uint32_t*>(mpu_rnr) = mpu_regions() - 1u;
    std::uint32_t const rbar = reg(mpu_rbar);
    std::uint32_t const rasr = reg(mpu_rasr);
-   guard_bottom = rbar & ~(guard_bytes - 1u);
 
    CYROS_CHECK((rasr & 1u) != 0u);                 /* enabled                   */
-   CYROS_CHECK_EQ((rasr >> 1) & 0x1Fu, 6u);        /* 2^(6+1) = 128 bytes       */
    CYROS_CHECK_EQ((rasr >> 24) & 0x7u, 0u);        /* AP: no access at all      */
    CYROS_CHECK((rasr & (1u << 28)) != 0u);         /* XN                        */
+#  if GUARD_IS_ARMV6M
+   /* A 256-byte region, with the subregion disables leaving one half on. */
+   std::uint32_t const srd = (rasr >> 8) & 0xFFu;
+   CYROS_CHECK_EQ((rasr >> 1) & 0x1Fu, 7u);        /* 2^(7+1) = 256 bytes       */
+   CYROS_CHECK(srd == 0xF0u || srd == 0x0Fu);      /* the lower half, or upper  */
+   guard_bottom = (rbar & ~0xFFu) + (srd == 0x0Fu ? guard_bytes : 0u);
+#  else
+   CYROS_CHECK_EQ((rasr >> 1) & 0x1Fu, 6u);        /* 2^(6+1) = 128 bytes       */
+   guard_bottom = rbar & ~(guard_bytes - 1u);
+#  endif
 #endif
 
    CYROS_CHECK(guard_bottom >= base);
    CYROS_CHECK(guard_top() < top);
    CYROS_CHECK(sp > guard_top());
+   /* At the BOTTOM: no further up than the guard's own alignment takes it.
+    * A guard elsewhere in the buffer would pass every check above and leave
+    * the bottom open. */
+   CYROS_CHECK(guard_bottom - base < guard_bytes);
 
    cyros::bench::print("  stack base = ");
    cyros::bench::print_hex(base);
@@ -237,10 +270,21 @@ void test_ordinary_stack_use_does_not_trip_it()
    std::uint32_t const drop = read_sp() - (guard_top() - 16u);
 #endif
 
+#if GUARD_IS_ARMV6M
+   /* Thumb-1 has no `sub sp, sp, reg`, so SP moves through a low register. */
+   asm volatile(
+      ".syntax unified \n"
+      "mov  r2, sp     \n"
+      "subs r2, r2, %0 \n"
+      "mov  sp, r2     \n"
+      "str  %1, [sp]   \n"
+      :: "l"(drop), "l"(overrun_marker) : "r2", "memory");
+#else
    asm volatile(
       "sub sp, sp, %0  \n"
       "str r0, [sp]    \n"
       :: "r"(drop) : "memory");
+#endif
 
    /* Unreachable if the guard works, which is the assertion. */
    cyros::bench::record(false, "stack overrun did not fault", __FILE__, __LINE__);
@@ -248,6 +292,14 @@ void test_ordinary_stack_use_does_not_trip_it()
       "  SP went past the guard and nothing happened. Either the port is not\n"
       "  programming it, or the fault is not enabled in SHCSR.\n");
    cyros::bench::finish();
+}
+
+/* Registered first, so it runs first, and yields at once: the worker then
+ * runs on the guard cyros_port_switch loaded, not cyros_port_start_first's.
+ * With the worker first, a switch that never moved the guard passed. */
+void helper()
+{
+   for (;;) { this_thread::yield(); }
 }
 
 void worker()
@@ -259,7 +311,9 @@ void worker()
 
 [[noreturn]] void report_fault(char const* which, bool is_this_architectures_guard)
 {
-   std::uint32_t const cfsr = reg(scb_cfsr);
+   /* ARMv6-M has no CFSR, and a read there could fault inside the HardFault
+    * handler, which locks the core up. */
+   std::uint32_t const cfsr = GUARD_IS_ARMV6M ? 0u : reg(scb_cfsr);
 
    if (!expecting_overflow || !is_this_architectures_guard) {
       cyros::bench::print("\n*** unexpected ");
@@ -272,6 +326,23 @@ void worker()
 
 #if GUARD_IS_PSPLIM
    cyros::bench::record((cfsr & cfsr_stkof) != 0u, "UsageFault reports CFSR.STKOF", __FILE__, __LINE__);
+#elif GUARD_IS_ARMV6M
+   /* No fault address on ARMv6-M. The entry allocated its 32-byte frame below
+    * the thread's SP whether or not the guard let it be written, so PSP plus
+    * 32 is where the thread was. Then, with the MPU off so the guard reads,
+    * the overrun's store must not be there. */
+   std::uint32_t psp;
+   asm volatile("mrs %0, psp" : "=r"(psp));
+   std::uint32_t const fault_sp = psp + 32u;
+   cyros::bench::record(fault_sp >= guard_bottom && fault_sp < guard_top(),
+                        "the thread's SP at the fault is inside the guard", __FILE__, __LINE__);
+   *reinterpret_cast<volatile std::uint32_t*>(mpu_ctrl) = 0u;
+   asm volatile("dsb\n\tisb" ::: "memory");
+   cyros::bench::record(reg(fault_sp) != overrun_marker,
+                        "the store into the guard did not land", __FILE__, __LINE__);
+   cyros::bench::print("  SP at the fault = ");
+   cyros::bench::print_hex(fault_sp);
+   cyros::bench::print("\n");
 #else
    std::uint32_t const mmfar = reg(scb_mmfar);
    cyros::bench::record((cfsr & cfsr_daccviol) != 0u, "MemManage reports CFSR.DACCVIOL", __FILE__, __LINE__);
@@ -282,9 +353,11 @@ void worker()
    cyros::bench::print_hex(mmfar);
    cyros::bench::print("\n");
 #endif
+#if !GUARD_IS_ARMV6M
    cyros::bench::print("  CFSR  = ");
    cyros::bench::print_hex(cfsr);
    cyros::bench::print("\n");
+#endif
 
    cyros::bench::finish();
 }
@@ -302,8 +375,16 @@ extern "C" [[noreturn]] void UsageFault_Handler(void)
 
 extern "C" [[noreturn]] void MemManage_Handler(void)
 {
-   report_fault("MemManage", GUARD_IS_PSPLIM == 0);
+   report_fault("MemManage", GUARD_IS_PSPLIM == 0 && GUARD_IS_ARMV6M == 0);
 }
+
+#if GUARD_IS_ARMV6M
+/* ARMv6-M's only fault, which the board aliases to its reporter. */
+extern "C" [[noreturn]] void HardFault_Handler(void)
+{
+   report_fault("HardFault", true);
+}
+#endif
 
 
 extern "C" int cyros_bench_main()
@@ -311,6 +392,7 @@ extern "C" int cyros_bench_main()
    cyros::bench::print("cortex_m stack guard\n\n");
 
    kernel::initialise();
+   thread helper_thread(helper, helper_stack, thread::priority(0), core0);
    thread worker_thread(worker, worker_stack, thread::priority(0), core0);
 
    kernel::start();

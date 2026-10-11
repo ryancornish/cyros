@@ -11,7 +11,7 @@ config = "test_mtime_tickless_config.hpp"
 hosted = false
 
 [components]
-port = ["riscv_virt", "rp2350_hazard3", "rp2350_m33"]
+port = ["riscv_virt", "rp2350_hazard3", "rp2350_m33", "rp2040"]
 time_driver = "tickless"
 
 [link]

@@ -23,11 +23,12 @@
  * so the same file builds on an older tree and the two can be compared.
  *
  * Cycles come from cyros_port_timestamp: the DWT counter on most Arm boards,
- * MTIME at the core clock on the RP2350 on either ISA. QEMU models neither, so
- * there every figure is zero (or host time on RISC-V) and only the checks mean
- * anything: run it on a board (cyros-builder test -p
- * build/profiles/unit_test_rp2350_m33.toml, or tests/hardware/u575/run_test.sh
- * test_target_wait_cost).
+ * MTIME at the core clock on the RP2350 on either ISA. On the RP2040 they are
+ * microseconds, its TIMER's unit, since ARMv6-M has no cycle counter. QEMU
+ * models none of them, so there every figure is zero (or host time on
+ * RISC-V) and only the checks mean anything: run it on a board (cyros-builder
+ * test -p build/profiles/unit_test_rp2350_m33.toml, or
+ * tests/hardware/u575/run_test.sh test_target_wait_cost).
  */
 
 #include <cyros/kernel/kernel.hpp>

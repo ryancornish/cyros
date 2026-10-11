@@ -18,11 +18,12 @@
  * @def CYROS_PORT_CONTEXT_SIZE
  * @brief Size of `port_context_t` in bytes.
  *
- * Two words, the saved PSP and the TLS base. No stack guard bound, since
- * ARMv6-M has no stack-limit register and the M0 no MPU, and no FP state.
- * The registers live on the thread's own stack, as on the Mainline layer.
+ * Three words: the saved PSP, the TLS base, and the MPU guard's base, which
+ * stays 0 on an M0 (no MPU) and is the guard on an M0+ that has one. No FP
+ * state. The registers live on the thread's own stack, as on the Mainline
+ * layer.
  */
-#define CYROS_PORT_CONTEXT_SIZE  8
+#define CYROS_PORT_CONTEXT_SIZE  12
 
 /**
  * @def CYROS_PORT_CONTEXT_ALIGN

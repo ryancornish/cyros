@@ -2,8 +2,8 @@
  * @file port_core_armv6m.cpp
  * @brief ARMv6-M CORE LAYER: all of port_core.h, for the Cortex-M0 and M0+.
  *
- * Bench: QEMU's microbit (a Cortex-M0, cortex_m0 target). Hardware, when it
- * comes, the RP2040's M0+ (roadmap P1). Everything here is architectural.
+ * Bench: QEMU's microbit (a Cortex-M0, cortex_m0 target). Hardware: the
+ * RP2040's M0+ (rp2040 target). Everything here is architectural.
  *
  * The Mainline layer (armv7m_armv8m) is the model, and its header says why
  * every switch happens in PendSV at the lowest priority. That holds here
@@ -16,9 +16,9 @@
  *   no DWT         the timestamp is the target's counter alone
  *   no FPU         nothing to save, and EXC_RETURN is the same for every
  *                  thread, so unlike the Mainline layer it is not saved
- *   no stack guard the M0 has no MPU. The M0+'s optional one is for the
- *                  RP2040 work, by the policy that a guard is hardware or
- *                  nothing
+ *   no PSPLIM      the stack guard is an MPU region where the part has an
+ *                  MPU (the M0+'s is optional, the RP2040's has 8 regions),
+ *                  and nothing on an M0, which has none (below)
  *
  *
  * The preempt grade: a software deferral (Ryan, 2026-10-04)
@@ -53,6 +53,36 @@
  * What it costs over BASEPRI: a reschedule pended inside a preempt-disabled
  * region takes PendSV once to be deferred and once more to be delivered, and
  * the deferred entry still saves and restores r4 to r11.
+ *
+ *
+ * The stack guard: an MPU region, or nothing
+ * ==========================================
+ * The Mainline layer's ARMv7-M guard, as far as ARMv6-M's MPU allows. A
+ * 128-byte no-access, execute-never window at the bottom of the running
+ * thread's buffer, in the HIGHEST-numbered region so that no application
+ * region can override it, moved on every switch. A store into it faults.
+ * 128 bytes for the Mainline layer's reason: a frame larger than the window
+ * steps over it in one `sub sp`, the more easily the thinner it is.
+ *
+ * What ARMv6-M changes:
+ *
+ *   - Regions are 256 bytes at the least, so the guard is HALF of one: a
+ *     256-byte region over the 256-aligned window holding the 128-aligned
+ *     guard, with the subregion disables (SRD) leaving the guard's four
+ *     32-byte subregions on. Each switch writes the base and SRD both, two
+ *     stores, masked, because between them the region briefly guards the
+ *     wrong half of the new window, where an interrupt may be working.
+ *   - Every fault is a HardFault, and there is no fault address. Measured on
+ *     the RP2040 (arm-port-notes.md 19g): a push into the guard faults, the
+ *     HardFault's own stacking is not written where it falls in the guard,
+ *     and the handler still runs, with PSP lowered by the frame. So an
+ *     overflow is reported, not a lockup, and the frame's upper words,
+ *     the stacked PC among them, survive where they land above the guard.
+ *   - No MPU (DREGION 0, the M0 and QEMU's microbit) means no guard, by
+ *     policy, as on Mainline.
+ *
+ * CYROS_ARMV6M_STACK_GUARD 0 builds the guard out: no MPU writes, no alignment
+ * of the buffer's bottom, and only the guard's own test notices.
  */
 
 #include <cyros/port/port_core.h>
@@ -70,6 +100,11 @@
 #  error "armv6m is the ARMv6-M core layer: a Mainline build uses armv7m_armv8m"
 #endif
 
+/* The stack guard, on unless built with 0 (see the header). */
+#ifndef CYROS_ARMV6M_STACK_GUARD
+#define CYROS_ARMV6M_STACK_GUARD 1
+#endif
+
 namespace cortex_m = cyros::port::cortex_m;
 
 /* ============================================================================
@@ -79,13 +114,14 @@ namespace cortex_m = cyros::port::cortex_m;
 /**
  * @brief A suspended thread's port state.
  *
- * Two words: the registers live on the thread's own stack, the hardware's
- * frame (r0 to r3, r12, LR, PC, xPSR) above the eight PendSV stores below it.
+ * The registers live on the thread's own stack, the hardware's frame (r0 to
+ * r3, r12, LR, PC, xPSR) above the eight PendSV stores below it.
  */
 struct cyros_port_context
 {
-   std::uint32_t sp;    /* PSP, pointing at the saved r4 slot */
-   void*         tls;   /* saved thread TLS base              */
+   std::uint32_t sp;            /* PSP, pointing at the saved r4 slot       */
+   void*         tls;           /* saved thread TLS base                    */
+   std::uint32_t stack_limit;   /* the guard's base, 0 when there is none   */
 };
 
 static_assert(sizeof(cyros_port_context) <= CYROS_PORT_CONTEXT_SIZE,
@@ -122,6 +158,49 @@ inline std::uint32_t this_core() noexcept
  * exists to split them. */
 constexpr std::uint32_t pendsv_priority  = 0xC0u;
 constexpr std::uint32_t systick_priority = 0x80u;
+
+/* The stack guard (see the header). */
+constexpr bool guard_built = CYROS_ARMV6M_STACK_GUARD != 0;
+
+/* The MPU region the guard uses, plus one, so that zero means no guard:
+ * derived in cyros_port_init from MPU_TYPE, written once by the bootstrap
+ * core. */
+std::uint32_t guard_region_plus_one = 0u;
+
+constexpr std::uint32_t guard_bytes  = 128u;
+constexpr std::uint32_t window_bytes = 256u;
+
+/* No access (AP 0), execute-never, SIZE such that 2^(SIZE+1) == window_bytes,
+ * enabled. The subregion disables are the guard's half, per thread. */
+constexpr std::uint32_t window_rasr =
+   cortex_m::mpu_rasr_xn | (0u << 24) | ((8u - 1u) << 1) | cortex_m::mpu_rasr_enable;
+static_assert((1u << (((window_rasr >> 1) & 0x1Fu) + 1u)) == window_bytes);
+
+/* Of the window's eight 32-byte subregions, a lower-half guard keeps 0 to 3
+ * and an upper-half one 4 to 7: SRD disables the rest. */
+constexpr std::uint32_t srd_keep_lower = 0xF0u << 8;
+constexpr std::uint32_t srd_keep_upper = 0x0Fu << 8;
+
+inline bool guarded() noexcept { return guard_built && guard_region_plus_one != 0u; }
+
+/* After moving PSP: guard the stack that is about to run. */
+inline void load_stack_guard(std::uint32_t limit) noexcept
+{
+   if (!guarded()) {
+      return;
+   }
+   std::uint32_t const srd = (limit & guard_bytes) != 0u ? srd_keep_upper : srd_keep_lower;
+   std::uint32_t const primask = cortex_m::get_primask();
+   cortex_m::disable_irq();
+   /* VALID makes the same write select the region. */
+   cortex_m::reg(cortex_m::mpu_rbar) =
+      (limit & ~(window_bytes - 1u)) | cortex_m::mpu_rbar_valid | (guard_region_plus_one - 1u);
+   cortex_m::reg(cortex_m::mpu_rasr) = window_rasr | srd;
+   /* Landed before the exception return that follows a switch, which is
+    * context-synchronising. */
+   cortex_m::dsb();
+   cortex_m::set_primask(primask);
+}
 
 [[noreturn]] void thread_return_trap()
 {
@@ -165,6 +244,18 @@ void init_this_core()
    CYROS_ASSERT_OP((cortex_m::reg(cortex_m::scb_shpr3) >> 16) & 0xFFu, ==, pendsv_priority);
    CYROS_ASSERT_OP(cortex_m::reg(cortex_m::scb_shpr3) >> 24, ==, systick_priority);
 
+   if (guarded()) {
+      /* The region stays disabled until cyros_port_start_first has a thread
+       * to guard. ENABLE and PRIVDEFENA are ORed in, not written, so an MPU
+       * the application already set up keeps its configuration. PRIVDEFENA
+       * keeps the default map for privileged code, which is all of cyros, so
+       * turning the MPU on changes nothing but the guard. */
+      cortex_m::reg(cortex_m::mpu_rbar) = cortex_m::mpu_rbar_valid | (guard_region_plus_one - 1u);
+      cortex_m::reg(cortex_m::mpu_rasr) = 0u;
+      cortex_m::reg(cortex_m::mpu_ctrl) =
+         cortex_m::reg(cortex_m::mpu_ctrl) | cortex_m::mpu_ctrl_privdefena | cortex_m::mpu_ctrl_enable;
+   }
+
    /* A reschedule or a SysTick left pending by a previous lifecycle. */
    cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvclr | cortex_m::icsr_pendstclr;
 
@@ -178,6 +269,12 @@ void cyros_port_init(cyros_port_reschedule_t handler)
 {
    CYROS_ASSERT(handler != nullptr);
    reschedule_handler = handler;
+   if constexpr (guard_built) {
+      /* The highest-numbered region, because on overlap the higher number
+       * wins and an application region must not be able to switch the guard
+       * off. No MPU (DREGION 0) means no guard, by policy (see the header). */
+      guard_region_plus_one = (cortex_m::reg(cortex_m::mpu_type) >> 8) & 0xFFu;
+   }
    cyros::port::cortex_m::init_this_core();
 }
 
@@ -252,10 +349,17 @@ void cyros_port_context_init(cyros_port_context* context,
    CYROS_ASSERT(entry != nullptr);
    CYROS_ASSERT_OP(stack_size, >=, 128u);
 
+   /* AAPCS's 8 at both ends. With a guard the bottom rounds up to the guard's
+    * own alignment instead, and the usable stack starts above it, which costs
+    * up to 248 bytes of the buffer, as on Mainline. The probe in
+    * cyros_port_init decides whether there is a guard to align. */
+   CYROS_ASSERT(reschedule_handler != nullptr);
+   std::uintptr_t const guard_align = guarded() ? guard_bytes : 8u;
+   std::uintptr_t const guard_size  = guarded() ? guard_bytes : 0u;
    auto const base = reinterpret_cast<std::uintptr_t>(stack_base);
-   std::uintptr_t const bottom = (base + 7u) & ~static_cast<std::uintptr_t>(7u);
+   std::uintptr_t const bottom = (base + guard_align - 1u) & ~(guard_align - 1u);
    std::uintptr_t const top    = (base + stack_size) & ~static_cast<std::uintptr_t>(7u);
-   CYROS_ASSERT_OP(top, >, bottom + 64u);
+   CYROS_ASSERT_OP(top, >, bottom + guard_size + 64u);
 
    auto* sp = reinterpret_cast<std::uint32_t*>(top);
 
@@ -272,8 +376,9 @@ void cyros_port_context_init(cyros_port_context* context,
    /* r11 down to r4, so memory reads r4 to r11 upward, as PendSV stores them. */
    for (int i = 0; i < 8; ++i) { *--sp = 0u; }
 
-   context->sp  = reinterpret_cast<std::uint32_t>(sp);
-   context->tls = nullptr;
+   context->sp          = reinterpret_cast<std::uint32_t>(sp);
+   context->tls         = nullptr;
+   context->stack_limit = guarded() ? static_cast<std::uint32_t>(bottom) : 0u;
 }
 
 void cyros_port_context_destroy(cyros_port_context* context)
@@ -281,8 +386,9 @@ void cyros_port_context_destroy(cyros_port_context* context)
    CYROS_ASSERT(context != nullptr);
    /* Nothing owned. Poisoned so a resume of a destroyed context faults on a
     * null PSP instead of running stale registers. */
-   context->sp  = 0u;
-   context->tls = nullptr;
+   context->sp          = 0u;
+   context->tls         = nullptr;
+   context->stack_limit = 0u;
 }
 
 void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
@@ -298,6 +404,7 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
       from->tls = current_tls[core];
    }
    cortex_m::set_psp(to->sp);
+   load_stack_guard(to->stack_limit);
    current_tls[core] = to->tls;
 }
 
@@ -371,6 +478,9 @@ void cyros_port_start_first(cyros_port_context* first)
 
    current_tls[this_core()] = first->tls;
    cortex_m::set_psp(first->sp);
+   /* The region was configured disabled in init_this_core, and this enables
+    * it over the first thread's guard. */
+   load_stack_guard(first->stack_limit);
 
    /* Thread mode cannot use an exception return, so the frame is unstacked
     * by hand, in the order PendSV and the hardware would. r4 and r5 carry the

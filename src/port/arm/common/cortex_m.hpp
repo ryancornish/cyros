@@ -127,8 +127,10 @@ inline constexpr std::uintptr_t shpr_pendsv  = scb_shpr + 10u;
 inline constexpr std::uintptr_t shpr_systick = scb_shpr + 11u;
 inline constexpr std::uintptr_t scb_shpr3    = scb_shpr + 8u;   /* PendSV [23:16], SysTick [31:24] */
 
-/* PMSAv7 MPU, for the ARMv7-M stack guard (port_core_armv7m_armv8m.cpp).
- * ARMv8-M has a different MPU (PMSAv8, base and limit) and does not use these. */
+/* PMSAv7 MPU, for the ARMv7-M stack guard (port_core_armv7m_armv8m.cpp), and
+ * ARMv6-M's, the same registers with 256-byte regions at the least
+ * (port_core_armv6m.cpp). ARMv8-M has a different MPU (PMSAv8, base and limit)
+ * and does not use these. */
 inline constexpr std::uintptr_t mpu_type = 0xE000ED90u;   /* DREGION in [15:8], 0 means no MPU */
 inline constexpr std::uintptr_t mpu_ctrl = 0xE000ED94u;
 inline constexpr std::uintptr_t mpu_rbar = 0xE000ED9Cu;   /* writing VALID also selects the region */

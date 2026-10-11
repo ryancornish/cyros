@@ -1,0 +1,39 @@
+name = "arm-none-eabi-rp2040"
+extends = "arm-none-eabi-debug-m0.toml"
+
+# The ARMv6-M debug toolchain for the RP2040 Pico's Cortex-M0+ core 0 instead
+# of QEMU's microbit: its board and its runner. The image runs from SRAM.
+#
+# For the tests: this board's port keeps time on the TIMER through the MTIME
+# time source, a 64-bit counter with no period to cross, not on SysTick
+# (test_target_idle says why it matters).
+[flags]
+common_add = ["-mcpu=cortex-m0plus", "-DCYROS_BENCH_MTIME=1"]
+common_remove = ["-mcpu=cortex-m0"]
+
+# The board's startup enters at _entry from the debugger, brings up 125 MHz
+# and the TIMER at 1 MHz, and gives the tests an RTT console
+# (tests/hardware/rp2040/startup_rp2040.c says how).
+[board]
+linker_script = "../../tests/hardware/rp2040/rp2040.ld"
+sources = [
+   "../../tests/hardware/rp2040/startup_rp2040.c",
+   "../../tests/hardware/rp2040/console_rtt.c",
+   "../../tests/unit/common/syscall_stubs.c",
+]
+
+# run_test.sh loads the image, streams its console and exits with its status.
+# The builder runs a test from the test's own directory and does not resolve
+# a runner's path, so the script is found from the repository root.
+[runner]
+command = [
+   "sh", "-c",
+   "exec \"$(git rev-parse --show-toplevel)/tests/hardware/rp2040/run_test.sh\" \"$0\"",
+   "{binary}",
+]
+
+# The driver gives up on a started image after RP2040_TEST_TIMEOUT (30 s by
+# default) and resets the board, and run_test.sh retries once an image the
+# board never visibly started. This backstop applies only under
+# --test-timeout 0, because the builder's own default of 60 s otherwise wins.
+timeout = 120

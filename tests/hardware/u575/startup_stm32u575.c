@@ -42,9 +42,9 @@ extern void SysTick_Handler(void);
  * all, and naming it plainly says that nothing here is the C startup contract. */
 extern int cyros_bench_main(void);
 
-/* C++ static constructors. The kernel has file-scope objects, and while most
- * are constant-initialised, nothing guarantees that for all of them and a
- * missed constructor is a silent zero rather than a link error. */
+/* C++ static constructors: running them is the C and C++ runtime's job, for
+ * whatever the image links in. Cyros's own globals are constant-initialised
+ * (constinit), but a test or an application may have constructors. */
 extern void (*__init_array_start[])(void);
 extern void (*__init_array_end[])(void);
 

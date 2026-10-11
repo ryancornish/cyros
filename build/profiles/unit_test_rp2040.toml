@@ -1,0 +1,20 @@
+# Unit-test profile for the RP2040's Cortex-M0+ core 0, on the RP2040 Pico.
+#
+# Tests run on the board through the toolchain's runner, as the Pico 2 W's
+# profiles do. The TIMER keeps time, so the MTIME tests run here too.
+[profile]
+name = "unit_test_rp2040"
+toolchain = "../toolchains/arm-none-eabi-rp2040.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "rp2040"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

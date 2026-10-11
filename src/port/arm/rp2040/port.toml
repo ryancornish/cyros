@@ -1,0 +1,21 @@
+name = "rp2040"
+
+description = "The RP2040's Cortex-M0+ core 0: its 1 us TIMER for time and timestamps."
+
+# The same core layer as cortex_m0, unchanged. What the RP2040 adds is its
+# TIMER, a 64-bit counter both cores share, which serves as the MTIME of the
+# time source ../../common compiles for the RP2350 and the RISC-V targets, and
+# as the timestamp. The two-core target and its SIO spinlock atomics are still
+# to come.
+extends = "armv6m"
+
+sources = [
+   "port_mcu_rp2040.cpp",
+   "../../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]
