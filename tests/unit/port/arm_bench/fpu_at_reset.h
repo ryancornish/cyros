@@ -1,19 +1,21 @@
 /**
  * @file fpu_at_reset.h
- * @brief The FPU on before any compiled code runs, for the ARM benches' reset
- *        handlers.
+ * @brief The FPU on before any compiled code runs, for the reset handlers of
+ *        the ARM benches and of the U575 board (tests/hardware/u575).
  *
  * A hard-float image may execute an FP instruction anywhere: GCC at -O2 moves
  * 64-bit values through the d registers, in the kernel and the port as much
  * as in a test. The port turns the FPU on only in cyros_port_init, so code
- * before that, a reset handler or a test driving the port before the kernel,
- * faults NOCP. Turning it on is the reset path's job, as CMSIS's SystemInit
- * does, and it has to happen before any C, so each reset handler is a naked
- * entry that does this and then continues in C. A soft-float build (the M3)
- * has no FPU to turn on, and the entry only branches.
+ * before that, a reset handler, a global constructor, or a test driving the
+ * port before the kernel, faults NOCP. Turning it on is the reset path's job,
+ * as CMSIS's SystemInit does, and it has to happen before any C, so each reset
+ * handler is a naked entry that does this and then continues in C. A
+ * soft-float build (the M3) has no FPU to turn on, and the entry only
+ * branches.
  *
  * Found on the RP2350 (~/cyros-claude/rp2350-notes.md 11c), whose board does
- * the same in startup_rp2350_m33.c.
+ * the same in startup_rp2350_m33.c, and proved on the U575 with a constructor
+ * (~/cyros-claude/arm-port-notes.md 15h).
  */
 #ifndef CYROS_BENCH_FPU_AT_RESET_H
 #define CYROS_BENCH_FPU_AT_RESET_H
