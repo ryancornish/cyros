@@ -8,6 +8,7 @@
  * that a common abstraction would cost more readability than it saves.
  */
 
+#include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/base_mutex.hpp>
 #include <cyros/port/port.h>
 
@@ -37,8 +38,8 @@ thread_control_block* base_mutex::holder() const noexcept
  */
 base_mutex::~base_mutex()
 {
-   CYROS_ASSERT(owner.load(std::memory_order_relaxed) == nullptr); // Still owned
-   CYROS_ASSERT(queue.empty()); // Destroyed with waiters parked on it
+   CYROS_REQUIRE(owner.load(std::memory_order_relaxed) == nullptr); // Still owned
+   CYROS_REQUIRE(queue.empty()); // Destroyed with waiters parked on it
 }
 
 /**
@@ -155,7 +156,7 @@ bool base_mutex::acquire_condition(thread_control_block& tcb) noexcept
 void base_mutex::check_ceiling_contract(thread_control_block const& tcb) const noexcept
 {
    if (!uses_ceiling()) return;
-   CYROS_ASSERT_OP(ceiling_priority, <=, tcb.base_priority); // ceiling below locker
+   CYROS_REQUIRE_OP(ceiling_priority, <=, tcb.base_priority); // ceiling below locker
 }
 
 bool base_mutex::try_lock() noexcept
@@ -230,7 +231,7 @@ void base_mutex::lock() noexcept
 void base_mutex::unlock(reschedule_policy policy) noexcept
 {
    auto& tcb = scheduler_for_this_core().get_current_thread();
-   CYROS_ASSERT_OP(owner.load(std::memory_order_relaxed), ==, &tcb); // Release by non-owner
+   CYROS_REQUIRE_OP(owner.load(std::memory_order_relaxed), ==, &tcb); // Release by non-owner
 
    // Retire from the held slots FIRST, so a fold running during the handover no
    // longer counts this resource's waiters against us. Correct because we are

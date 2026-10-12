@@ -32,9 +32,9 @@ using cyros::time::simulation::mode;
  */
 struct event
 {
-   uint32_t id{0};
-   uint64_t when{0};
-   uint64_t period{0};  // 0 one-shot, else the recurring interval
+   std::uint32_t id{0};
+   std::uint64_t when{0};
+   std::uint64_t period{0};  // 0 one-shot, else the recurring interval
    callback cb{nullptr};
    void* arg{nullptr};
    bool cancelled{false};
@@ -50,7 +50,7 @@ struct per_core_state
 {
    std::mutex mutex;
    std::vector<event> events;
-   std::atomic<uint32_t> next_id{1};
+   std::atomic<std::uint32_t> next_id{1};
 };
 
 /**
@@ -64,12 +64,12 @@ struct driver_state
 {
    mode active_mode{mode::virtual_time};
 
-   uint32_t tick_frequency_hz{1000};
+   std::uint32_t tick_frequency_hz{1000};
 
    std::atomic<bool> running{false};
    std::thread realtime_thread;
 
-   std::atomic<uint64_t> virtual_now{0};
+   std::atomic<std::uint64_t> virtual_now{0};
    std::chrono::steady_clock::time_point realtime_epoch{};
 
    std::atomic<bool> started{false};
@@ -88,9 +88,9 @@ per_core_state& this_core() noexcept
 /**
  * @brief Claim the next non-zero handle id within a core's state.
  */
-uint32_t next_handle_id(per_core_state& pc) noexcept
+std::uint32_t next_handle_id(per_core_state& pc) noexcept
 {
-   uint32_t id = pc.next_id.fetch_add(1, std::memory_order_relaxed);
+   std::uint32_t id = pc.next_id.fetch_add(1, std::memory_order_relaxed);
    if (id == 0) {
       id = pc.next_id.fetch_add(1, std::memory_order_relaxed);
    }
@@ -116,7 +116,7 @@ uint32_t next_handle_id(per_core_state& pc) noexcept
  * and alarm::disarm waits out exactly that state, forever on one core. A
  * hardware timer ISR runs its batch unpreempted, so it has no such window.
  */
-void fire_due_callbacks(uint64_t now_ticks) noexcept
+void fire_due_callbacks(std::uint64_t now_ticks) noexcept
 {
    for (auto& pc : driver_instance->per_core) {
       while (true) {
@@ -171,7 +171,7 @@ void realtime_thread_main() noexcept
    }
 }
 
-[[nodiscard]] uint64_t realtime_now_ticks() noexcept
+[[nodiscard]] std::uint64_t realtime_now_ticks() noexcept
 {
    // Pre-start counts as zero.
    if (!driver_instance->started.load(std::memory_order_acquire)) {
@@ -182,7 +182,7 @@ void realtime_thread_main() noexcept
    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
    ns = std::max<long>(ns, 0);
 
-   return (static_cast<uint64_t>(ns) * driver_instance->tick_frequency_hz) / 1'000'000'000ULL;
+   return (static_cast<std::uint64_t>(ns) * driver_instance->tick_frequency_hz) / 1'000'000'000ULL;
 }
 
 } // namespace
@@ -195,7 +195,7 @@ void realtime_thread_main() noexcept
 namespace cyros::time
 {
 
-void initialise(uint32_t frequency_hz)
+void initialise(std::uint32_t frequency_hz)
 {
    CYROS_ASSERT(driver_instance == nullptr);
 
@@ -231,7 +231,7 @@ void finalise()
    }
 
    auto& pc = this_core();
-   uint32_t id = next_handle_id(pc);
+   std::uint32_t id = next_handle_id(pc);
 
    {
       std::lock_guard lk(pc.mutex);
@@ -257,7 +257,7 @@ void finalise()
    }
 
    auto& pc = this_core();
-   uint32_t id = next_handle_id(pc);
+   std::uint32_t id = next_handle_id(pc);
 
    {
       std::lock_guard lk(pc.mutex);
@@ -295,38 +295,38 @@ bool cancel(handle h) noexcept
    return false;
 }
 
-[[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
+[[nodiscard]] duration from_milliseconds(std::uint32_t ms) noexcept
 {
    CYROS_ASSERT(driver_instance != nullptr);
 
-   uint64_t const ticks = ((static_cast<uint64_t>(ms) * driver_instance->tick_frequency_hz) + 999) / 1000;
+   std::uint64_t const ticks = ((static_cast<std::uint64_t>(ms) * driver_instance->tick_frequency_hz) + 999) / 1000;
 
    return duration{ticks};
 }
 
-[[nodiscard]] duration from_microseconds(uint32_t us) noexcept
+[[nodiscard]] duration from_microseconds(std::uint32_t us) noexcept
 {
    CYROS_ASSERT(driver_instance != nullptr);
 
-   uint64_t const ticks = ((static_cast<uint64_t>(us) * driver_instance->tick_frequency_hz) + 999'999) / 1'000'000;
+   std::uint64_t const ticks = ((static_cast<std::uint64_t>(us) * driver_instance->tick_frequency_hz) + 999'999) / 1'000'000;
 
    return duration{ticks};
 }
 
-[[nodiscard]] uint64_t to_milliseconds(duration d) noexcept
+[[nodiscard]] std::uint64_t to_milliseconds(duration d) noexcept
 {
    CYROS_ASSERT(driver_instance != nullptr);
 
-   uint64_t const hz = driver_instance->tick_frequency_hz;
+   std::uint64_t const hz = driver_instance->tick_frequency_hz;
 
    return (d.value * 1000ULL + hz / 2) / hz;
 }
 
-[[nodiscard]] uint64_t to_microseconds(duration d) noexcept
+[[nodiscard]] std::uint64_t to_microseconds(duration d) noexcept
 {
    CYROS_ASSERT(driver_instance != nullptr);
 
-   uint64_t const hz = driver_instance->tick_frequency_hz;
+   std::uint64_t const hz = driver_instance->tick_frequency_hz;
 
    return (d.value * 1'000'000ULL + hz / 2) / hz;
 }
@@ -410,8 +410,8 @@ void advance_to(time_point tp) noexcept
    CYROS_ASSERT(driver_instance != nullptr);
    CYROS_ASSERT(driver_instance->active_mode == mode::virtual_time);
 
-   uint64_t cur = driver_instance->virtual_now.load(std::memory_order_relaxed);
-   uint64_t target = std::max(tp.value, cur); // monotonic clamp
+   std::uint64_t cur = driver_instance->virtual_now.load(std::memory_order_relaxed);
+   std::uint64_t target = std::max(tp.value, cur); // monotonic clamp
 
    driver_instance->virtual_now.store(target, std::memory_order_release);
    pump_due();
@@ -422,7 +422,7 @@ void advance_by(duration d) noexcept
    CYROS_ASSERT(driver_instance != nullptr);
    CYROS_ASSERT(driver_instance->active_mode == mode::virtual_time);
 
-   uint64_t current = driver_instance->virtual_now.load(std::memory_order_relaxed);
+   std::uint64_t current = driver_instance->virtual_now.load(std::memory_order_relaxed);
    advance_to(time_point{current + d.value});
 }
 

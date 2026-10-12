@@ -34,7 +34,7 @@ private:
    /* Assigned by initialise(), not at construction, so that the scheduler, and
     * kernel_state around it, is all zeros at startup (kernel.cpp). */
    std::uint32_t core_id{0};
-   std::atomic<uint32_t> pinned_thread_counter{0};
+   std::atomic<std::uint32_t> pinned_thread_counter{0};
    thread_control_block* current_thread{nullptr};
    thread_control_block*    idle_thread{nullptr};
    alignas(CYROS_PORT_STACK_ALIGN) std::array<std::byte, thread::min_stack_size> idle_stack{};
@@ -104,12 +104,12 @@ public:
    /**
     * @brief Urgency of the running thread, folded from truth.
     */
-   [[nodiscard]] uint8_t current_thread_urgency() const;
+   [[nodiscard]] std::uint8_t current_thread_urgency() const;
 
    /**
     * @brief Threads pinned here. Used by pin_thread_to_core to load balance.
     */
-   [[nodiscard]] uint32_t pinned_thread_count() const
+   [[nodiscard]] std::uint32_t pinned_thread_count() const
    {
       return pinned_thread_counter.load(std::memory_order_relaxed);
    }

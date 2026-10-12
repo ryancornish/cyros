@@ -1,7 +1,10 @@
 #include "scheduler.hpp"
 #include "trace_points.hpp"
 
+#include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/core.hpp>
+
+#include <cstdint>
 
 namespace cyros
 {
@@ -146,7 +149,7 @@ void scheduler::set_thread_terminated(thread_control_block& tcb)
    CYROS_ASSERT(tcb.disposition == thread_disposition::terminating);
    CYROS_ASSERT(&tcb != idle_thread); // A core always needs somewhere to go
    CYROS_ASSERT(!tcb.is_enqueued());
-   CYROS_ASSERT(tcb.holds_nothing()); // Thread cannot own a base_mutex on termination
+   CYROS_REQUIRE(tcb.holds_nothing()); // Thread cannot own a base_mutex on termination
 
    tcb.state = thread_state::terminated;
 
@@ -164,7 +167,7 @@ void scheduler::set_thread_terminated(thread_control_block& tcb)
    tcb.termination.terminate();
 }
 
-uint8_t scheduler::current_thread_urgency() const
+std::uint8_t scheduler::current_thread_urgency() const
 {
    return current_thread ? urgency(*current_thread) : 0;
 }

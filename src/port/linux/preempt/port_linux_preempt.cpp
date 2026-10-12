@@ -92,7 +92,7 @@ struct alignas(CYROS_PORT_CONTEXT_ALIGN) cyros_port_context
 {
    sigctx_dyn_t         sctx;        // Resumable signal-frame context, FP allocated
    void*                stack_top;
-   size_t               stack_size;
+   std::size_t               stack_size;
    cyros_port_entry_t   entry;
    void*                arg;
 };
@@ -165,7 +165,7 @@ static std::size_t fpstate_bytes()
 struct cpu_core
 {
    pthread_t               pthread{}; // core0 records pthread_self() here too
-   uint32_t                core_id{};
+   std::uint32_t                core_id{};
    cyros_port_core_entry_t entry{};
 
    /* Brought-up flag for the IPI guard in cyros_port_send_reschedule_ipi. The
@@ -192,7 +192,7 @@ struct cpu_core
 struct global_state
 {
    std::atomic<bool>       shutdown_requested{false};
-   std::atomic<uint32_t>   active_contexts{0};
+   std::atomic<std::uint32_t>   active_contexts{0};
    cyros_port_reschedule_t reschedule_handler{nullptr};
    std::vector<cpu_core> cores;
 
@@ -969,13 +969,13 @@ void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
  * thread, additional cores spawn as pthreads.
  * ------------------------------------------------------------------------- */
 
-uint32_t cyros_port_get_core_id(void)
+std::uint32_t cyros_port_get_core_id(void)
 {
    // A stored per-thread fact, never inferred. See current_core_state::core_id.
    return current_core.core_id;
 }
 
-void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
+void cyros_port_start_cores(std::size_t cores_to_use, cyros_port_core_entry_t entry)
 {
    CYROS_ASSERT(cores_to_use > 0);
    CYROS_ASSERT(cores_to_use <= CYROS_PORT_CORE_COUNT);
@@ -985,7 +985,7 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    // area is larger, that relocation would quietly demote to a legacy frame and
    // drop vector state across a preemption, so refuse to run rather than corrupt
    // registers.
-   uint32_t fp_size = sigctx_fpstate_size();
+   std::uint32_t fp_size = sigctx_fpstate_size();
    CYROS_ASSERT(fp_size <= SIGCTX_FPSTATE_CAPACITY); // raise capacity or use a dyn context
 
    // cyros_port_init() adopted this thread and put every owned signal back in
@@ -1100,7 +1100,7 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    hand_back_signals();
 }
 
-void cyros_port_send_reschedule_ipi(uint32_t core_id)
+void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 {
    CYROS_ASSERT_OP(core_id, <, global.cores.size());
 
@@ -1202,7 +1202,7 @@ void cyros_port_preempt_enable(cyros_mask_token_t token)
 
 void cyros_port_context_init(cyros_port_context_t* context,
                              void* stack_base,
-                             size_t stack_size,
+                             std::size_t stack_size,
                              cyros_port_entry_t entry,
                              void* arg)
 {
@@ -1213,8 +1213,8 @@ void cyros_port_context_init(cyros_port_context_t* context,
    CYROS_ASSERT(fp != nullptr); // Out of memory for a thread's FP area
 
    ::new (context) cyros_port_context{
-      .sctx       = { .uc = {}, .fpstate = static_cast<uint8_t*>(fp), .fpstate_size = fp_size },
-      .stack_top  = static_cast<uint8_t*>(stack_base) + stack_size,
+      .sctx       = { .uc = {}, .fpstate = static_cast<std::uint8_t*>(fp), .fpstate_size = fp_size },
+      .stack_top  = static_cast<std::uint8_t*>(stack_base) + stack_size,
       .stack_size = stack_size,
       .entry      = entry,
       .arg        = arg,
@@ -1236,7 +1236,7 @@ void cyros_port_context_destroy(cyros_port_context_t* context)
 
    CYROS_ASSERT(global.active_contexts.load(std::memory_order_relaxed) != 0);
 
-   uint32_t const remaining = global.active_contexts.fetch_sub(1, std::memory_order_seq_cst) - 1;
+   std::uint32_t const remaining = global.active_contexts.fetch_sub(1, std::memory_order_seq_cst) - 1;
 
    // A system that never started cannot have quiesced.
    if (!global.cores_launched()) return;

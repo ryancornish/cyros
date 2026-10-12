@@ -80,7 +80,7 @@ TEST_F(SimulationRealTimeTest, RealTimeModeCallbackFiresAutonomously)
 
    std::atomic<int> count{0};
    // 1 kHz: 10 ticks ~= 10 ms. Sleep well past it.
-   const uint64_t deadline = cyros::time::now().value + 10;
+   const std::uint64_t deadline = cyros::time::now().value + 10;
    ASSERT_NE(cyros::time::schedule_at(time::time_point{deadline}, counting_callback, &count).id, 0u);
 
    std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -96,7 +96,7 @@ TEST_F(SimulationRealTimeTest, RealTimeModeCancelBeforeAutonomousFire)
    cyros::time::start();
 
    std::atomic<int> count{0};
-   const uint64_t deadline = cyros::time::now().value + 100;  // ~100 ms out
+   const std::uint64_t deadline = cyros::time::now().value + 100;  // ~100 ms out
    time::handle h = cyros::time::schedule_at(time::time_point{deadline}, counting_callback, &count);
    ASSERT_NE(h.id, 0u);
 

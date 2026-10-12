@@ -35,8 +35,8 @@
 using namespace cyros;
 
 // Linux-only deterministic test hooks, implemented in the linux_coop port.
-extern void cyros_port_time_reset(uint64_t t);
-extern void cyros_port_time_advance(uint64_t delta);
+extern void cyros_port_time_reset(std::uint64_t t);
+extern void cyros_port_time_advance(std::uint64_t delta);
 extern void cyros_port_time_fire_isr(void);
 
 namespace
@@ -45,7 +45,7 @@ namespace
 // MAX_SCHEDULED_CALLBACKS is an implementation-internal constant of the
 // periodic driver (currently 16). It is not exported via a public header, so
 // we mirror it here. If the driver's limit changes, update this to match.
-constexpr uint32_t kMaxScheduledCallbacks = 16;
+constexpr std::uint32_t kMaxScheduledCallbacks = 16;
 
 // Simple counting callback: increments the std::atomic<int> passed as arg.
 void counting_callback(void* arg) noexcept
@@ -73,7 +73,7 @@ protected:
    }
 
    // Advance port time and deliver one periodic ISR.
-   static void advance_and_pump(uint64_t delta_ticks)
+   static void advance_and_pump(std::uint64_t delta_ticks)
    {
       cyros_port_time_advance(delta_ticks);
       cyros_port_time_fire_isr();
@@ -161,10 +161,10 @@ TEST_F(PeriodicDriverTest, ScheduleBeyondCapacityReturnsInvalidHandle)
    std::vector<time::handle> handles;
    handles.reserve(kMaxScheduledCallbacks);
 
-   for (uint32_t i = 0; i < kMaxScheduledCallbacks; ++i)
+   for (std::uint32_t i = 0; i < kMaxScheduledCallbacks; ++i)
    {
       time::handle h = cyros::time::schedule_at(
-         time::time_point{static_cast<uint64_t>(i) + 1000}, counting_callback, &count);
+         time::time_point{static_cast<std::uint64_t>(i) + 1000}, counting_callback, &count);
       ASSERT_NE(h.id, 0u) << "slot " << i << " should still be free";
       handles.push_back(h);
    }
@@ -455,7 +455,7 @@ TEST_F(PeriodicDriverTest, RejectedRecurringRequestsDoNotConsumeSlots)
    }
 
    std::vector<time::handle> handles;
-   for (uint32_t i = 0; i < kMaxScheduledCallbacks; ++i) {
+   for (std::uint32_t i = 0; i < kMaxScheduledCallbacks; ++i) {
       time::handle const h = cyros::time::schedule_at(time::time_point{1'000 + i}, counting_callback, &count);
       EXPECT_NE(h.id, 0u) << "slot " << i << " was consumed by a rejected request";
       handles.push_back(h);
@@ -467,7 +467,7 @@ TEST_F(PeriodicDriverTest, ScheduleRecurringBeyondCapacityReturnsInvalidHandle)
 {
    std::atomic<int> count{0};
 
-   for (uint32_t i = 0; i < kMaxScheduledCallbacks; ++i) {
+   for (std::uint32_t i = 0; i < kMaxScheduledCallbacks; ++i) {
       ASSERT_NE(cyros::time::schedule_recurring(cyros::time::from_milliseconds(10), counting_callback, &count).id, 0u)
          << "capacity reached early at " << i;
    }

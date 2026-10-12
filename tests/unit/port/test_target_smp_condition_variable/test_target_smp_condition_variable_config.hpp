@@ -1,6 +1,6 @@
 /**
- * @file test_target_smp_channel_config.hpp
- * @brief Cyros configuration for the dual-core Cortex-M33 channel test.
+ * @file test_target_smp_condition_variable_config.hpp
+ * @brief Cyros configuration for the two-core condition_variable and event_flags test.
  */
 
 #ifndef CYROS_CONFIG_HPP

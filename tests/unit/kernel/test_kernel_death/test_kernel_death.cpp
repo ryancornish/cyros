@@ -102,7 +102,7 @@ void pin_a_thread_to_a_core_that_does_not_exist()
 TEST(KernelDeath_Test, GivenAThreadThatNeverRan_WhenItsHandleIsDestroyed_ThenItStopsTheSystem)
 {
    CYROS_EXPECT_PANIC(destroy_a_handle_whose_thread_never_ran(),
-                      test::panicked_at("threading_subsystem.cpp", "CYROS_ASSERT(tcb->state == thread_state::terminated);"))
+                      test::panicked_at("threading_subsystem.cpp", "Destroyed before its thread finished"))
       << "a thread handle went out of scope while its thread could still run on the caller's stack";
 }
 

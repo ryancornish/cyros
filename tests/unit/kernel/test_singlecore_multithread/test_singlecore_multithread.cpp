@@ -100,7 +100,7 @@ TEST(SingleCoreMultiThread_Test,
    const std::array<thread::id, 6> expected{
       thread::id(1), thread::id(2), thread::id(1), thread::id(2), thread::id(1), thread::id(2)
    };
-   for (size_t i = 0; i < expected.size(); ++i) {
+   for (std::size_t i = 0; i < expected.size(); ++i) {
       EXPECT_EQ(order[i], expected[i]) << "Mismatch at index " << i;
    }
 
@@ -168,7 +168,7 @@ TEST(SingleCoreMultiThread_Test,
       thread::id(1), thread::id(2), thread::id(3),
    };
 
-   for (size_t i = 0; i < expected.size(); ++i) {
+   for (std::size_t i = 0; i < expected.size(); ++i) {
       EXPECT_EQ(order[i], expected[i]) << "Mismatch at index " << i;
    }
 
@@ -223,7 +223,7 @@ TEST(SingleCoreMultiThread_Test,
 
    std::vector<thread> threads;
    threads.reserve(stacks.size());
-   std::vector<uint32_t> markers;
+   std::vector<std::uint32_t> markers;
 
    kernel::initialise();
 
@@ -241,7 +241,7 @@ TEST(SingleCoreMultiThread_Test,
 
    ASSERT_EQ(markers.size(), 30u * 2);
 
-   auto expected_order = std::to_array<uint32_t>({
+   auto expected_order = std::to_array<std::uint32_t>({
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
    });
@@ -262,7 +262,7 @@ TEST(SingleCoreMultiThread_Test,
 
    std::vector<thread> threads;
    threads.reserve(stacks.size());
-   std::vector<uint32_t> markers;
+   std::vector<std::uint32_t> markers;
 
    kernel::initialise();
 
@@ -280,7 +280,7 @@ TEST(SingleCoreMultiThread_Test,
 
    ASSERT_EQ(markers.size(), 30u * 2);
 
-   auto expected_order = std::to_array<uint32_t>({
+   auto expected_order = std::to_array<std::uint32_t>({
       30, 30, 29, 29, 28, 28, 27, 27, 26, 26, 25, 25, 24, 24, 23, 23, 22, 22, 21, 21, 20, 20, 19, 19, 18, 18, 17, 17, 16, 16,
       15, 15, 14, 14, 13, 13, 12, 12, 11, 11, 10, 10, 9, 9, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1,
    });
@@ -405,7 +405,7 @@ TEST(SingleCoreMultiThread_Test,
 
    thread child_thread;
 
-   std::vector<uint32_t> marker;
+   std::vector<std::uint32_t> marker;
 
    // GIVEN:
 
@@ -872,7 +872,7 @@ TEST(SingleCoreMultiThread_Test,
 
    std::vector<thread> threads;
    threads.reserve(stacks.size());
-   std::vector<uint32_t> markers;
+   std::vector<std::uint32_t> markers;
 
    // GIVEN:
 

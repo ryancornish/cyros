@@ -85,7 +85,7 @@ const int timer_signo = SIGRTMIN;
 const int reschedule_signo = SIGURG;
 
 /** 1 tick == 1 microsecond, matching the coop port's convention. */
-constexpr uint64_t tick_freq_hz = 1'000'000;
+constexpr std::uint64_t tick_freq_hz = 1'000'000;
 
 /**
  * @brief One core's timer hardware.
@@ -96,10 +96,10 @@ constexpr uint64_t tick_freq_hz = 1'000'000;
  */
 struct core_timer
 {
-   std::atomic<uint64_t> armed_deadline{UINT64_MAX};
+   std::atomic<std::uint64_t> armed_deadline{UINT64_MAX};
    timer_t  timer{};
    bool     timer_created{false};
-   uint32_t tick_hz{0};    // 0 means tickless one-shot
+   std::uint32_t tick_hz{0};    // 0 means tickless one-shot
    pid_t    tid{0};        // owning core's kernel TID, target of its timer signal
 };
 
@@ -110,27 +110,27 @@ struct time_state
    std::atomic<void*>                    isr_arg{nullptr};
 
    // Shared clock. now() == base_ticks + (CLOCK_MONOTONIC now - epoch) in ticks.
-   std::atomic<uint64_t> base_ticks{0};
-   std::atomic<uint64_t> epoch_ns{0};
+   std::atomic<std::uint64_t> base_ticks{0};
+   std::atomic<std::uint64_t> epoch_ns{0};
 
    // Per-core timer hardware.
    std::array<core_timer, CYROS_PORT_CORE_COUNT> core{};
 };
 time_state ts;
 
-uint64_t monotonic_ns()
+std::uint64_t monotonic_ns()
 {
    struct timespec t;
    clock_gettime(CLOCK_MONOTONIC, &t);
-   return static_cast<uint64_t>(t.tv_sec) * 1'000'000'000ull + static_cast<uint64_t>(t.tv_nsec);
+   return static_cast<std::uint64_t>(t.tv_sec) * 1'000'000'000ull + static_cast<std::uint64_t>(t.tv_nsec);
 }
 
-uint64_t ns_to_ticks(uint64_t ns)
+std::uint64_t ns_to_ticks(std::uint64_t ns)
 {
    return ns / (1'000'000'000ull / tick_freq_hz);
 }
 
-uint64_t ticks_to_ns(uint64_t ticks)
+std::uint64_t ticks_to_ns(std::uint64_t ticks)
 {
    return ticks * (1'000'000'000ull / tick_freq_hz);
 }
@@ -141,7 +141,7 @@ core_timer& this_core_timer()
    return ts.core[cyros_port_get_core_id()];
 }
 
-void program_oneshot_ns(core_timer& ct, uint64_t rel_ns)
+void program_oneshot_ns(core_timer& ct, std::uint64_t rel_ns)
 {
    if (!ct.timer_created) return;
    if (rel_ns == 0) rel_ns = 1; // 0 would disarm, so fire as soon as possible instead
@@ -240,7 +240,7 @@ void remove_signal_handler()
  * Time Driver Port Contract API
  * ========================================================================= */
 
-void cyros_port_time_setup(uint32_t tick_hz)
+void cyros_port_time_setup(std::uint32_t tick_hz)
 {
    // Called by the calling core during its time::start(). Installs the shared
    // signal handler once, then creates THIS core's timer targeting THIS core's
@@ -314,16 +314,16 @@ void cyros_port_time_teardown(void)
    cyros::port::source_closed(timer_signo);
 }
 
-uint64_t cyros_port_time_now(void)
+std::uint64_t cyros_port_time_now(void)
 {
-   uint64_t base  = ts.base_ticks.load(std::memory_order_acquire);
-   uint64_t epoch = ts.epoch_ns.load(std::memory_order_acquire);
-   uint64_t cur   = monotonic_ns();
-   uint64_t delta = (cur > epoch) ? (cur - epoch) : 0;
+   std::uint64_t base  = ts.base_ticks.load(std::memory_order_acquire);
+   std::uint64_t epoch = ts.epoch_ns.load(std::memory_order_acquire);
+   std::uint64_t cur   = monotonic_ns();
+   std::uint64_t delta = (cur > epoch) ? (cur - epoch) : 0;
    return base + ns_to_ticks(delta);
 }
 
-uint64_t cyros_port_time_freq_hz(void)
+std::uint64_t cyros_port_time_freq_hz(void)
 {
    return tick_freq_hz;
 }
@@ -341,7 +341,7 @@ void cyros_port_time_irq_enable(void)
 
    if (ct.tick_hz > 0) {
       // Periodic tick on this core's timer.
-      uint64_t period_ns = 1'000'000'000ull / ct.tick_hz;
+      std::uint64_t period_ns = 1'000'000'000ull / ct.tick_hz;
       struct itimerspec its;
       its.it_value.tv_sec     = static_cast<time_t>(period_ns / 1'000'000'000ull);
       its.it_value.tv_nsec    = static_cast<long>(period_ns % 1'000'000'000ull);
@@ -349,10 +349,10 @@ void cyros_port_time_irq_enable(void)
       timer_settime(ct.timer, 0, &its, nullptr);
    } else {
       // Tickless: nothing to start until a deadline is armed on this core.
-      uint64_t deadline = ct.armed_deadline.load(std::memory_order_acquire);
+      std::uint64_t deadline = ct.armed_deadline.load(std::memory_order_acquire);
       if (deadline != UINT64_MAX) {
-         uint64_t now = cyros_port_time_now();
-         uint64_t rel = (deadline > now) ? (deadline - now) : 0;
+         std::uint64_t now = cyros_port_time_now();
+         std::uint64_t rel = (deadline > now) ? (deadline - now) : 0;
          program_oneshot_ns(ct, ticks_to_ns(rel));
       }
    }
@@ -363,20 +363,20 @@ void cyros_port_time_irq_disable(void)
    interceptor_disarm(this_core_timer());
 }
 
-void cyros_port_time_arm(uint64_t deadline)
+void cyros_port_time_arm(std::uint64_t deadline)
 {
    core_timer& ct = this_core_timer();
 
    // Keep the earliest deadline for this core.
-   uint64_t cur = ct.armed_deadline.load(std::memory_order_relaxed);
+   std::uint64_t cur = ct.armed_deadline.load(std::memory_order_relaxed);
    while (deadline < cur &&
           !ct.armed_deadline.compare_exchange_weak(cur, deadline,
                                                    std::memory_order_release,
                                                    std::memory_order_relaxed))
    {}
 
-   uint64_t now = cyros_port_time_now();
-   uint64_t rel = (deadline > now) ? (deadline - now) : 0;
+   std::uint64_t now = cyros_port_time_now();
+   std::uint64_t rel = (deadline > now) ? (deadline - now) : 0;
    program_oneshot_ns(ct, ticks_to_ns(rel));
 }
 
@@ -390,7 +390,7 @@ void cyros_port_time_disarm(void)
 // Linux-only test hook. The preempt port is backed by a real monotonic clock,
 // so deterministic advance is unsupported. Pumped, deterministic time-driver
 // tests should use the coop port.
-extern void cyros_port_time_advance(uint64_t delta)
+extern void cyros_port_time_advance(std::uint64_t delta)
 {
    (void)delta;
 }

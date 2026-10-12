@@ -242,7 +242,7 @@ struct cyros_port_context
 {
    context_handle       thread;  // Thread context (owned by scheduler when idle)
    void*                stack_top;
-   size_t               stack_size;
+   std::size_t               stack_size;
    cyros_port_entry_t   entry;
    void*                arg;
 };
@@ -280,7 +280,7 @@ static constexpr std::size_t scheduler_stack_size = 128 * 1024; // 128KB
 struct cpu_core
 {
    pthread_t               pthread{}; // @note This is null/unused for core0
-   uint32_t                core_id{}; // Index from 0... num cores
+   std::uint32_t                core_id{}; // Index from 0... num cores
    cyros_port_core_entry_t entry{};
 
    /**
@@ -308,10 +308,10 @@ public:
    using const_iterator = cpu_core const*;
 
    constexpr cpu_core_array() = default;
-   explicit cpu_core_array(size_t count, cyros_port_core_entry_t core_entry)
+   explicit cpu_core_array(std::size_t count, cyros_port_core_entry_t core_entry)
       : cores(std::make_unique<cpu_core[]>(count)), count(count)
    {
-      for (uint32_t i = 0; i < count; ++i) {
+      for (std::uint32_t i = 0; i < count; ++i) {
          cores[i].core_id = i;
          cores[i].entry   = core_entry;
       }
@@ -321,10 +321,10 @@ public:
    cpu_core_array(cpu_core_array const&)            = delete;
    cpu_core_array& operator=(cpu_core_array const&) = delete;
 
-   cpu_core&       operator[](size_t index)       { return cores[index]; }
-   cpu_core const& operator[](size_t index) const { return cores[index]; }
+   cpu_core&       operator[](std::size_t index)       { return cores[index]; }
+   cpu_core const& operator[](std::size_t index) const { return cores[index]; }
 
-   [[nodiscard]] size_t size() const { return count; }
+   [[nodiscard]] std::size_t size() const { return count; }
 
    iterator begin() { return cores.get(); }
    iterator end()   { return cores.get() + count; }
@@ -334,13 +334,13 @@ public:
 
 private:
    std::unique_ptr<cpu_core[]> cores;
-   size_t                      count{0};
+   std::size_t                      count{0};
 };
 
 struct global_state
 {
    std::atomic<bool>       shutdown_requested{false};
-   std::atomic<uint32_t>   active_contexts{0};
+   std::atomic<std::uint32_t>   active_contexts{0};
    cyros_port_reschedule_t reschedule_handler{nullptr};
    cpu_core_array          cores;
 
@@ -497,7 +497,7 @@ static void start_scheduler()
 {
    current_core.allocate_scheduler_stack();
 
-   auto* const stack_top = static_cast<uint8_t*>(current_core.scheduler_mapping)
+   auto* const stack_top = static_cast<std::uint8_t*>(current_core.scheduler_mapping)
                          + current_core.scheduler_mapping_bytes;
 
    current_core.scheduler_context = context_handle::fresh(
@@ -577,13 +577,13 @@ void cyros_port_init(cyros_port_reschedule_t reschedule_handler)
  * thread, additional cores spawn as pthreads.
  * ------------------------------------------------------------------------- */
 
-uint32_t cyros_port_get_core_id(void)
+std::uint32_t cyros_port_get_core_id(void)
 {
    // A stored per-thread fact, never inferred. See current_core_state::core_id.
    return current_core.core_id;
 }
 
-void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
+void cyros_port_start_cores(std::size_t cores_to_use, cyros_port_core_entry_t entry)
 {
    CYROS_ASSERT(cores_to_use > 0); // Invoking with 0 cores_to_use is invalid
    CYROS_ASSERT(cores_to_use <= CYROS_PORT_CORE_COUNT);
@@ -632,7 +632,7 @@ void cyros_port_start_cores(size_t cores_to_use, cyros_port_core_entry_t entry)
    global.reset();
 }
 
-void cyros_port_send_reschedule_ipi(uint32_t core_id)
+void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 {
    CYROS_ASSERT_OP(core_id, <, global.cores.size());
 
@@ -746,7 +746,7 @@ static void thread_trampoline(boost::context::transfer_t entry_transfer)
 
 void cyros_port_context_init(cyros_port_context_t* context,
                              void* stack_base,
-                             size_t stack_size,
+                             std::size_t stack_size,
                              cyros_port_entry_t entry,
                              void* arg)
 {
@@ -754,7 +754,7 @@ void cyros_port_context_init(cyros_port_context_t* context,
 
    ::new (context) cyros_port_context{
       .thread     = {},
-      .stack_top  = static_cast<uint8_t*>(stack_base) + stack_size,
+      .stack_top  = static_cast<std::uint8_t*>(stack_base) + stack_size,
       .stack_size = stack_size,
       .entry      = entry,
       .arg        = arg,

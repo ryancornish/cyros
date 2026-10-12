@@ -18,7 +18,7 @@ namespace
 using cyros::time::callback;
 
 /// @brief Fixed-size embedded-safe slot count, avoids heap allocation.
-constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
+constexpr std::uint32_t MAX_SCHEDULED_CALLBACKS = 16;
 
 /**
  * @brief One scheduled callback.
@@ -33,9 +33,9 @@ constexpr uint32_t MAX_SCHEDULED_CALLBACKS = 16;
  */
 struct slot
 {
-   uint32_t id{0};
-   uint64_t when{0};    // absolute deadline in driver ticks (0 = anchor at release, recurring only)
-   uint64_t period{0};  // 0 one-shot, else the recurring interval
+   std::uint32_t id{0};
+   std::uint64_t when{0};    // absolute deadline in driver ticks (0 = anchor at release, recurring only)
+   std::uint64_t period{0};  // 0 one-shot, else the recurring interval
    callback cb{nullptr};
    void* arg{nullptr};
 };
@@ -43,7 +43,7 @@ struct slot
 /// @brief RAII interrupt disable/restore guard.
 struct irq_guard
 {
-   uint32_t state;
+   std::uint32_t state;
 
    irq_guard() noexcept : state(cyros_port_irq_save()) {}
    ~irq_guard() { cyros_port_irq_restore(state); }
@@ -62,7 +62,7 @@ struct irq_guard
 struct time_config
 {
    bool initialised{false};
-   uint32_t frequency_hz{0};
+   std::uint32_t frequency_hz{0};
 };
 constinit time_config tconfig{};
 
@@ -76,7 +76,7 @@ constinit time_config tconfig{};
 struct timetable
 {
    bool started{false};
-   uint32_t next_id{1};
+   std::uint32_t next_id{1};
    std::array<slot, MAX_SCHEDULED_CALLBACKS> slots{};
 };
 constinit std::array<timetable, cyros::config::cores> timetables{};
@@ -90,9 +90,9 @@ timetable& timetable_for_this_core() noexcept
 /**
  * @brief Claim the next non-zero handle id within a core's state.
  */
-uint32_t next_handle_id(timetable& ttable) noexcept
+std::uint32_t next_handle_id(timetable& ttable) noexcept
 {
-   uint32_t id = ttable.next_id++;
+   std::uint32_t id = ttable.next_id++;
    if (id == 0) {
       id = ttable.next_id++; // skip the invalid id
    }
@@ -108,7 +108,7 @@ uint32_t next_handle_id(timetable& ttable) noexcept
  */
 void anchor_pended_recurring(timetable& ttable) noexcept
 {
-   uint64_t const now = cyros_port_time_now();
+   std::uint64_t const now = cyros_port_time_now();
 
    for (auto& slot : ttable.slots) {
       if (slot.id != 0 && slot.period != 0 && slot.when == 0) {
@@ -129,7 +129,7 @@ void anchor_pended_recurring(timetable& ttable) noexcept
  */
 void rearm_locked(timetable& ttable) noexcept
 {
-   uint64_t earliest = std::numeric_limits<uint64_t>::max();
+   std::uint64_t earliest = std::numeric_limits<std::uint64_t>::max();
 
    for (auto const& slot : ttable.slots) {
       if (slot.id != 0 && slot.when < earliest) {
@@ -137,7 +137,7 @@ void rearm_locked(timetable& ttable) noexcept
       }
    }
 
-   if (earliest == std::numeric_limits<uint64_t>::max()) {
+   if (earliest == std::numeric_limits<std::uint64_t>::max()) {
       cyros_port_time_disarm();
    } else {
       // If already due the port delivers an immediate or next-possible
@@ -155,7 +155,7 @@ void rearm_locked(timetable& ttable) noexcept
  *
  * ISR context.
  */
-void fire_due_isr(timetable& ttable, uint64_t now_ticks) noexcept
+void fire_due_isr(timetable& ttable, std::uint64_t now_ticks) noexcept
 {
    for (auto& slot : ttable.slots) {
       if (slot.id != 0 && slot.when <= now_ticks) {
@@ -178,7 +178,7 @@ void fire_due_isr(timetable& ttable, uint64_t now_ticks) noexcept
 void on_timer_isr(void*) noexcept
 {
    auto& ttable = timetable_for_this_core();
-   uint64_t const now_ticks = cyros_port_time_now();
+   std::uint64_t const now_ticks = cyros_port_time_now();
 
    fire_due_isr(ttable, now_ticks);
 
@@ -186,7 +186,7 @@ void on_timer_isr(void*) noexcept
    rearm_locked(ttable);
 }
 
-uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
+std::uint64_t ceil_div_u64(std::uint64_t a, std::uint64_t b) noexcept
 {
    return (a + b - 1) / b;
 }
@@ -201,7 +201,7 @@ uint64_t ceil_div_u64(uint64_t a, uint64_t b) noexcept
 namespace cyros::time
 {
 
-void initialise(uint32_t frequency_hz)
+void initialise(std::uint32_t frequency_hz)
 {
    // Global, once. Registers the one shared ISR entry and records the tick
    // frequency. Per-core one-shots are created later by each core's start().
@@ -325,24 +325,24 @@ bool cancel(handle h) noexcept
    return false;
 }
 
-[[nodiscard]] duration from_milliseconds(uint32_t ms) noexcept
+[[nodiscard]] duration from_milliseconds(std::uint32_t ms) noexcept
 {
-   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(ms) * tconfig.frequency_hz, 1000ULL);
+   std::uint64_t const ticks = ceil_div_u64(static_cast<std::uint64_t>(ms) * tconfig.frequency_hz, 1000ULL);
    return duration{ticks};
 }
 
-[[nodiscard]] duration from_microseconds(uint32_t us) noexcept
+[[nodiscard]] duration from_microseconds(std::uint32_t us) noexcept
 {
-   uint64_t const ticks = ceil_div_u64(static_cast<uint64_t>(us) * tconfig.frequency_hz, 1'000'000ULL);
+   std::uint64_t const ticks = ceil_div_u64(static_cast<std::uint64_t>(us) * tconfig.frequency_hz, 1'000'000ULL);
    return duration{ticks};
 }
 
-[[nodiscard]] uint64_t to_milliseconds(duration d) noexcept
+[[nodiscard]] std::uint64_t to_milliseconds(duration d) noexcept
 {
    return ((d.value * 1000ULL) + (tconfig.frequency_hz / 2)) / tconfig.frequency_hz;
 }
 
-[[nodiscard]] uint64_t to_microseconds(duration d) noexcept
+[[nodiscard]] std::uint64_t to_microseconds(duration d) noexcept
 {
    return ((d.value * 1'000'000ULL) + (tconfig.frequency_hz / 2)) / tconfig.frequency_hz;
 }

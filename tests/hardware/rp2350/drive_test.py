@@ -276,10 +276,13 @@ def main():
             print(f"\nrp2350: no exit after {a.timeout:.0f} s", file=sys.stderr)
             print(f"rp2350: console wr {ocd.word(up_wr)} rd {ocd.word(up_rd)}, "
                   f"bench_done {ocd.word(sym['bench_done'])}", file=sys.stderr)
-            # Where each core is, for the hang report. On RISC-V the halt
-            # writes a stale s0 (rp2350-notes.md 7b), which no longer matters.
+            # Where each core is, for the hang report. `halt` waits for the
+            # halt, where arp_halt only asks: on the M33s every register read
+            # after an arp_halt failed, while the Hazard3s' halt happened to
+            # land first. On RISC-V the halt writes a stale s0 (rp2350-notes.md
+            # 7b), which no longer matters.
             for hart in cores:
-                ocd.cmd(f"capture {{{hart} arp_halt}}")
+                ocd.cmd(f"capture {{targets {hart}; halt 1000}}")
                 regs = []
                 for r in arch["regs"]:
                     out = ocd.cmd(f"capture {{targets {hart}; reg {r}}}").strip().splitlines()

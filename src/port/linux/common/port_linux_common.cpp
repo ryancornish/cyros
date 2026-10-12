@@ -11,6 +11,7 @@
 #include <cyros/port/port.h>
 
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -93,13 +94,13 @@ void cyros_port_cpu_relax(void)
  * Measurement
  * ------------------------------------------------------------------------- */
 
-uint64_t cyros_port_timestamp(void)
+std::uint64_t cyros_port_timestamp(void)
 {
    // A vDSO read rather than a system call, and async-signal-safe, so it is
    // fine from the preempt port's signal handlers.
    timespec now{};
    clock_gettime(CLOCK_MONOTONIC, &now);
-   return static_cast<uint64_t>(now.tv_sec) * 1'000'000'000u + static_cast<uint64_t>(now.tv_nsec);
+   return static_cast<std::uint64_t>(now.tv_sec) * 1'000'000'000u + static_cast<std::uint64_t>(now.tv_nsec);
 }
 
 
@@ -107,7 +108,7 @@ uint64_t cyros_port_timestamp(void)
  * Debug & Diagnostics
  * ------------------------------------------------------------------------- */
 
-void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional)
+void cyros_port_system_error(std::uintptr_t auxilary1, std::uintptr_t auxilary2, char const* file_optional, int line_optional)
 {
    std::printf("KERNEL PANIC at %s:%d\n", file_optional, line_optional);
    cyros::port::print_formatted_context(file_optional, line_optional);

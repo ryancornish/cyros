@@ -10,6 +10,7 @@
 #include <atomic>
 #include <array>
 #include <bitset>
+#include <cstdint>
 #include <limits>
 
 namespace cyros
@@ -39,7 +40,7 @@ public:
    }
 };
 
-enum class thread_state : uint8_t
+enum class thread_state : std::uint8_t
 {
    created,
    ready,
@@ -62,7 +63,7 @@ enum class thread_request : std::uint8_t
    make_ready, ///< Admit this thread to its core's runnable set
 };
 
-enum class thread_disposition : uint8_t
+enum class thread_disposition : std::uint8_t
 {
    none,        ///< No pending wish - scheduled purely on position.
    prepared,    ///< Wishes to block but still deciding - stays runnable if preempted.
@@ -106,7 +107,7 @@ struct thread_control_block
     * urgency(), never stored. A stored copy would be a cache whose
     * inputs live on other cores, which is what every priority-inheritance bug in
     * this project's history has been. */
-   uint8_t base_priority;
+   std::uint8_t base_priority;
 
    // Core pinning
    std::uint32_t pinned_core{0};

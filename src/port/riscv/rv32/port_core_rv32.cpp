@@ -696,7 +696,7 @@ void cyros_port_idle(void)
  * Measurement
  * ========================================================================= */
 
-uint64_t cyros_port_timestamp(void)
+std::uint64_t cyros_port_timestamp(void)
 {
    /* The target's counter (riscv.hpp). mcycle on a target content with
     * per-hart stamps, a shared counter where they must compare. */

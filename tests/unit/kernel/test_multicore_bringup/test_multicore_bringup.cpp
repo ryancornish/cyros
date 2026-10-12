@@ -66,8 +66,8 @@ TEST_F(MultiCoreBringUp_Test,
 
    bool ran0 = false;
    bool ran1 = false;
-   uint32_t seen_core0 = std::numeric_limits<uint32_t>::max();
-   uint32_t seen_core1 = std::numeric_limits<uint32_t>::max();
+   std::uint32_t seen_core0 = std::numeric_limits<std::uint32_t>::max();
+   std::uint32_t seen_core1 = std::numeric_limits<std::uint32_t>::max();
 
    // GIVEN:
 
@@ -120,7 +120,7 @@ TEST_F(MultiCoreBringUp_Test,
 
    std::array<int, 4> stages{0};
 
-   auto make_thread = [&](uint32_t core_id, cyros::test::guarded_stack& stack) -> thread
+   auto make_thread = [&](std::uint32_t core_id, cyros::test::guarded_stack& stack) -> thread
    {
       return {
          [&, core_id]{

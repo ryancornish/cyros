@@ -1,5 +1,7 @@
 #include "threading_subsystem.hpp"
 
+#include <cyros/kernel/assert.hpp>
+
 #include "align.hpp"
 #include "scheduler.hpp"
 
@@ -27,7 +29,7 @@ thread::~thread()
 {
    if (tcb == nullptr) return; // thread handle has been moved from, or is otherwise empty
 
-   CYROS_ASSERT(tcb->state == thread_state::terminated);
+   CYROS_REQUIRE(tcb->state == thread_state::terminated); // Destroyed before its thread finished
 }
 
 thread::thread(thread&& other) noexcept : tcb(other.tcb)
@@ -46,7 +48,7 @@ thread& thread::operator=(thread&& other) noexcept
    // contract: the thread it owned must already have terminated. This used to
    // abandon a live thread silently.
    if (tcb != nullptr) {
-      CYROS_ASSERT(tcb->state == thread_state::terminated); // Assigned over a live thread
+      CYROS_REQUIRE(tcb->state == thread_state::terminated); // Assigned over a live thread
    }
 
    tcb = other.tcb;
@@ -56,21 +58,21 @@ thread& thread::operator=(thread&& other) noexcept
 
 [[nodiscard]] thread::id thread::get_id() const noexcept
 {
-   CYROS_ASSERT(tcb != nullptr);
+   CYROS_REQUIRE(tcb != nullptr); // An empty handle, moved from or never assigned
 
    return tcb->id;
 }
 
 [[nodiscard]] thread::priority thread::get_priority() const noexcept
 {
-   CYROS_ASSERT(tcb != nullptr);
+   CYROS_REQUIRE(tcb != nullptr); // An empty handle, moved from or never assigned
 
    return urgency(*tcb);
 }
 
 void thread::join() noexcept
 {
-   CYROS_ASSERT(tcb != nullptr);
+   CYROS_REQUIRE(tcb != nullptr); // An empty handle, moved from or never assigned
 
    this_thread::wait_on(tcb->termination);
 }
@@ -103,7 +105,7 @@ stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const 
    auto const tls_top  = tcb_start;
    auto const tls_base = align_down(tls_top - tls_size, alignof(std::max_align_t));
 
-   CYROS_ASSERT_OP(tls_base, >=, base); // Buffer too small for TLS+TCB
+   CYROS_REQUIRE_OP(tls_base, >=, base); // Buffer too small for TLS+TCB
 
    auto const tls_offset = static_cast<std::size_t>(tls_base - base);
    auto const tls_length = static_cast<std::size_t>(tls_top  - tls_base);
@@ -111,7 +113,7 @@ stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const 
 
    // User stack: everything below TLS
    auto const stack_len = static_cast<std::size_t>(tls_base - base);
-   CYROS_ASSERT_OP(stack_len, >, 64); // Buffer too small after carving TCB/TLS
+   CYROS_REQUIRE_OP(stack_len, >, 64); // Buffer too small after carving TCB/TLS
 
    user_stack = buffer.subspan(0, stack_len);
 }

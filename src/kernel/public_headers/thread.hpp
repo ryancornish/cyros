@@ -27,7 +27,7 @@ struct core_affinity
    constexpr explicit operator std::uint32_t() const { return mask; }
    constexpr core_affinity operator|(core_affinity rhs) const { return core_affinity{mask | rhs.mask}; }
    constexpr core_affinity operator&(core_affinity rhs) const { return core_affinity{mask & rhs.mask}; }
-   [[nodiscard]] constexpr bool allows(uint32_t core_id) const noexcept { return (mask & (1u << core_id)) != 0; }
+   [[nodiscard]] constexpr bool allows(std::uint32_t core_id) const noexcept { return (mask & (1u << core_id)) != 0; }
    [[nodiscard]] constexpr static core_affinity from_id(std::uint32_t core_id) { return core_affinity{1u << core_id}; }
 };
 // Predefined core masks
@@ -56,7 +56,7 @@ public:
    {
       std::uint8_t val;
       constexpr priority(std::uint8_t v) : val(v) {}     // Intentionally implicit
-      constexpr operator uint8_t() const { return val; } // Intentionally implicit
+      constexpr operator std::uint8_t() const { return val; } // Intentionally implicit
    };
 
 

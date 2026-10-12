@@ -576,7 +576,7 @@ void cyros_port_idle(void)
  * Measurement
  * ========================================================================= */
 
-uint64_t cyros_port_timestamp(void)
+std::uint64_t cyros_port_timestamp(void)
 {
    /* No cycle counter on ARMv6-M: the target's counter is the only one. */
    return cortex_m::timestamp();

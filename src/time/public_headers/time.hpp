@@ -24,10 +24,10 @@ namespace cyros::time
  */
 struct time_point
 {
-   uint64_t value{0};
+   std::uint64_t value{0};
 
    constexpr time_point() = default;
-   constexpr explicit time_point(uint64_t v) : value(v) {}
+   constexpr explicit time_point(std::uint64_t v) : value(v) {}
 
    constexpr bool operator==(time_point rhs) const { return value == rhs.value; }
    constexpr bool operator!=(time_point rhs) const { return value != rhs.value; }
@@ -38,7 +38,7 @@ struct time_point
 
    [[nodiscard]] static constexpr time_point max()
    {
-      return time_point{std::numeric_limits<uint64_t>::max()};
+      return time_point{std::numeric_limits<std::uint64_t>::max()};
    }
 };
 
@@ -50,10 +50,10 @@ struct time_point
  */
 struct duration
 {
-   uint64_t value{0};
+   std::uint64_t value{0};
 
    constexpr duration() = default;
-   constexpr explicit duration(uint64_t v) : value(v) {}
+   constexpr explicit duration(std::uint64_t v) : value(v) {}
 
    constexpr time_point operator+(time_point tp) const
    {
@@ -100,7 +100,7 @@ using callback = void(*)(void*);
  */
 struct handle
 {
-   uint32_t id{0};
+   std::uint32_t id{0};
 };
 
 
@@ -116,7 +116,7 @@ struct handle
  * This frequency defines the tick units used by time_point, duration, and the
  * conversion helpers such as from_milliseconds().
  */
-CYROS_PUBLIC void initialise(uint32_t frequency_hz);
+CYROS_PUBLIC void initialise(std::uint32_t frequency_hz);
 
 /**
  * @brief Finalise the active time driver.
@@ -183,28 +183,28 @@ CYROS_PUBLIC bool cancel(handle h) noexcept;
  *
  * Conversion is rounded up so that non-zero durations do not undersleep.
  */
-[[nodiscard]] CYROS_PUBLIC duration from_milliseconds(uint32_t ms) noexcept;
+[[nodiscard]] CYROS_PUBLIC duration from_milliseconds(std::uint32_t ms) noexcept;
 
 /**
  * @brief Convert microseconds to a driver duration.
  *
  * Conversion is rounded up so that non-zero durations do not undersleep.
  */
-[[nodiscard]] CYROS_PUBLIC duration from_microseconds(uint32_t us) noexcept;
+[[nodiscard]] CYROS_PUBLIC duration from_microseconds(std::uint32_t us) noexcept;
 
 /**
  * @brief Convert a driver duration to milliseconds.
  *
  * Conversion is rounded to the nearest millisecond.
  */
-[[nodiscard]] CYROS_PUBLIC uint64_t to_milliseconds(duration d) noexcept;
+[[nodiscard]] CYROS_PUBLIC std::uint64_t to_milliseconds(duration d) noexcept;
 
 /**
  * @brief Convert a driver duration to microseconds.
  *
  * Conversion is rounded to the nearest microsecond.
  */
-[[nodiscard]] CYROS_PUBLIC uint64_t to_microseconds(duration d) noexcept;
+[[nodiscard]] CYROS_PUBLIC std::uint64_t to_microseconds(duration d) noexcept;
 
 /**
  * @brief Start the time driver.

@@ -26,6 +26,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 using namespace cyros;
@@ -73,7 +74,7 @@ alignas(16) std::array<std::byte, 64 * 1024> s_pump;
 
 TEST_F(ChronoAlarmSim_Test, GivenArmedAlarm_WhenDeadlinePasses_ThenWaiterWakesAtExactTick)
 {
-   uint64_t woke_at = 0;
+   std::uint64_t woke_at = 0;
    bool early = false;
 
    thread sleeper(
@@ -97,7 +98,7 @@ TEST_F(ChronoAlarmSim_Test, GivenArmedAlarm_WhenDeadlinePasses_ThenWaiterWakesAt
 
 TEST_F(ChronoAlarmSim_Test, GivenSleepUntil_WhenDeadlinePasses_ThenSleeperResumesAtDeadline)
 {
-   uint64_t woke_at = 0;
+   std::uint64_t woke_at = 0;
 
    thread sleeper(
       [&]{
@@ -116,8 +117,8 @@ TEST_F(ChronoAlarmSim_Test, GivenSleepUntil_WhenDeadlinePasses_ThenSleeperResume
 
 TEST_F(ChronoAlarmSim_Test, GivenSleepFor_WhenDurationElapses_ThenSleeperResumesAfterExactlyThatManyTicks)
 {
-   uint64_t slept_from = 0;
-   uint64_t woke_at = 0;
+   std::uint64_t slept_from = 0;
+   std::uint64_t woke_at = 0;
 
    thread sleeper(
       [&]{
@@ -223,8 +224,8 @@ TEST_F(ChronoAlarmSim_Test, GivenFiredAlarm_WhenWaitStartsAfterTheFire_ThenItRet
 
 TEST_F(ChronoAlarmSim_Test, GivenExpiredAlarm_WhenReArmed_ThenItFiresAgainAtTheNewDeadline)
 {
-   uint64_t first = 0;
-   uint64_t second = 0;
+   std::uint64_t first = 0;
+   std::uint64_t second = 0;
 
    thread sleeper(
       [&]{
@@ -346,7 +347,7 @@ TEST_F(ChronoAlarmSim_Test, GivenTimedAcquire_WhenNothingReleases_ThenItReturnsF
 {
    sync::semaphore sem(0);
    bool got = true;
-   uint64_t returned_at = 0;
+   std::uint64_t returned_at = 0;
 
    thread waiter(
       [&]{

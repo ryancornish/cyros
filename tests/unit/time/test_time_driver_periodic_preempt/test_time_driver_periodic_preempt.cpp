@@ -150,9 +150,9 @@ TEST(PeriodicPreemptRestartTest, StopThenStartKeepsOneTimerAndItStillFires)
 // now() advances on its own from the real monotonic clock.
 TEST_F(PeriodicPreemptTest, NowAdvancesMonotonically)
 {
-   uint64_t const t0 = cyros::time::now().value;
+   std::uint64_t const t0 = cyros::time::now().value;
    std::this_thread::sleep_for(20ms);
-   uint64_t const t1 = cyros::time::now().value;
+   std::uint64_t const t1 = cyros::time::now().value;
    EXPECT_GT(t1, t0);
 }
 

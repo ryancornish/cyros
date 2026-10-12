@@ -64,7 +64,7 @@ TEST_F(MultiCoreScheduling_Test,
    cyros::test::guarded_stack s_remote;
 
    bool remote_ran = false;
-   uint32_t remote_seen_core = std::numeric_limits<uint32_t>::max();
+   std::uint32_t remote_seen_core = std::numeric_limits<std::uint32_t>::max();
 
    thread remote_thread;
 

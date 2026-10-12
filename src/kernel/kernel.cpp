@@ -1,4 +1,5 @@
 #include <cyros/config/config.hpp>
+#include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/port/port.h>
 #include <cyros/port/port_traits.h>
@@ -74,7 +75,7 @@ void pin_thread_to_core(thread_control_block& tcb) noexcept
          found = true;
       }
    }
-   CYROS_ASSERT(found); // Thread affinity mask allows no cores
+   CYROS_REQUIRE(found); // Thread affinity mask allows no cores
 
    scheduler_for_core(best_core).pin_thread(tcb);
 }
@@ -228,7 +229,7 @@ namespace kernel
 
 void initialise() noexcept
 {
-   CYROS_ASSERT(!k.initialised); // Cannot invoke kernel::initialise twice (without finalising down in between)
+   CYROS_REQUIRE(!k.initialised); // Cannot invoke kernel::initialise twice (without finalising down in between)
 
    cyros_port_init(reschedule_this_core);
 
@@ -248,8 +249,8 @@ void initialise() noexcept
 
 void start() noexcept
 {
-   CYROS_ASSERT(k.initialised); // kernel::initialise() must be called first
-   CYROS_ASSERT(k.active_threads > 0); // Starting the kernel with no registered threads is not allowed
+   CYROS_REQUIRE(k.initialised); // kernel::initialise() must be called first
+   CYROS_REQUIRE(k.active_threads > 0); // Starting the kernel with no registered threads is not allowed
 
    k.running.store(true, std::memory_order_release);
 
@@ -258,7 +259,7 @@ void start() noexcept
 
 void finalise() noexcept
 {
-   CYROS_ASSERT(k.initialised);
+   CYROS_REQUIRE(k.initialised); // kernel::finalise() without kernel::initialise()
 
    k.running.store(false, std::memory_order_relaxed);
    k.thread_id_generator.store(0, std::memory_order_relaxed);

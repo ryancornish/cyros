@@ -817,7 +817,7 @@ cycle_extension cycle_extensions[CYROS_PORT_CORE_COUNT] = {};
 
 } // namespace
 
-uint64_t cyros_port_timestamp(void)
+std::uint64_t cyros_port_timestamp(void)
 {
    /* The target's counter: the DWT below on most, a shared timer where stamps
     * must compare across cores (cortex_m.hpp). */

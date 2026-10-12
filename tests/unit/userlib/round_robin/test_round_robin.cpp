@@ -114,7 +114,7 @@ TEST(RoundRobin_Test,
    kernel::finalise();
 }
 
-class RoundRobinCpuMeasure : public ::testing::TestWithParam<uint32_t>
+class RoundRobinCpuMeasure : public ::testing::TestWithParam<std::uint32_t>
 {
 private:
    static constexpr std::uint32_t total_work_base = 10'000;
@@ -122,8 +122,8 @@ private:
 protected:
    static constexpr std::uint32_t frequency = 1'000'000; // 1 MHz, matches the port clock
 
-   uint32_t quantum_us{0};
-   uint32_t total_work{0};
+   std::uint32_t quantum_us{0};
+   std::uint32_t total_work{0};
 
    void SetUp() override
    {
@@ -263,7 +263,7 @@ TEST_P(RoundRobinCpuMeasure,
    EXPECT_GT(total_switches, 10u);
 }
 
-std::string QuantumName(testing::TestParamInfo<uint32_t> const& info)
+std::string QuantumName(testing::TestParamInfo<std::uint32_t> const& info)
 {
    return std::to_string(info.param) + "us";
 }

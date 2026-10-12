@@ -25,15 +25,15 @@
 struct time_state
 {
    std::atomic<bool>        irq_enabled{false};
-   std::atomic<uint64_t>            now{0};
-   std::atomic<uint64_t> armed_deadline{UINT64_MAX};
+   std::atomic<std::uint64_t>            now{0};
+   std::atomic<std::uint64_t> armed_deadline{UINT64_MAX};
 
    std::atomic<cyros_port_isr_handler_t> isr{nullptr};
    std::atomic<void*>                 isr_arg{nullptr};
 };
 static constinit time_state time_instance;
 
-void cyros_port_time_setup(uint32_t tick_hz)
+void cyros_port_time_setup(std::uint32_t tick_hz)
 {
    (void)tick_hz;
 }
@@ -49,12 +49,12 @@ void cyros_port_time_teardown(void)
    time_instance.isr.store(nullptr, std::memory_order_release);
 }
 
-uint64_t cyros_port_time_now(void)
+std::uint64_t cyros_port_time_now(void)
 {
    return time_instance.now.load(std::memory_order_relaxed);
 }
 
-uint64_t cyros_port_time_freq_hz(void)
+std::uint64_t cyros_port_time_freq_hz(void)
 {
    return 1'000'000ull; // 1 tick = 1 us (recommend)
 }
@@ -68,10 +68,10 @@ void cyros_port_time_register_isr_handler(cyros_port_isr_handler_t h, void* arg)
 void cyros_port_time_irq_enable(void)  { time_instance.irq_enabled.store(true,  std::memory_order_release); }
 void cyros_port_time_irq_disable(void) { time_instance.irq_enabled.store(false, std::memory_order_release); }
 
-void cyros_port_time_arm(uint64_t deadline)
+void cyros_port_time_arm(std::uint64_t deadline)
 {
    // Keep earliest
-   uint64_t cur = time_instance.armed_deadline.load(std::memory_order_relaxed);
+   std::uint64_t cur = time_instance.armed_deadline.load(std::memory_order_relaxed);
    while (deadline < cur &&
             !time_instance.armed_deadline.compare_exchange_weak(cur, deadline,
                                                    std::memory_order_release,
@@ -90,13 +90,13 @@ void cyros_port_time_disarm(void)
 // Set the counter and clear any armed deadline, so each test case starts from
 // a known time. It was in the contract once, which made every port implement
 // it for these tests alone.
-extern void cyros_port_time_reset(uint64_t t)
+extern void cyros_port_time_reset(std::uint64_t t)
 {
    time_instance.now.store(t, std::memory_order_release);
    time_instance.armed_deadline.store(UINT64_MAX, std::memory_order_release);
 }
 
-extern void cyros_port_time_advance(uint64_t delta)
+extern void cyros_port_time_advance(std::uint64_t delta)
 {
    time_instance.now.fetch_add(delta, std::memory_order_release);
 }

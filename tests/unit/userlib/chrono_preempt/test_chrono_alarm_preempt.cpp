@@ -36,6 +36,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 
 using namespace cyros;
 
@@ -67,8 +68,8 @@ alignas(16) std::array<std::byte, 128 * 1024> s_b;
 
 TEST_F(ChronoAlarmPreempt_Test, GivenBlockedWaiter_WhenTheAlarmFiresInTheTimerIsr_ThenItWakesAtOrAfterTheDeadline)
 {
-   uint64_t deadline = 0;
-   uint64_t woke_at = 0;
+   std::uint64_t deadline = 0;
+   std::uint64_t woke_at = 0;
    bool was_expired = false;
 
    thread waiter(
@@ -94,8 +95,8 @@ TEST_F(ChronoAlarmPreempt_Test, GivenBlockedWaiter_WhenTheAlarmFiresInTheTimerIs
 
 TEST_F(ChronoAlarmPreempt_Test, GivenSleepFor_WhenRealTimeElapses_ThenAtLeastTheDurationPassed)
 {
-   uint64_t before = 0;
-   uint64_t after = 0;
+   std::uint64_t before = 0;
+   std::uint64_t after = 0;
 
    thread sleeper(
       [&]{
@@ -201,8 +202,8 @@ TEST_F(ChronoAlarmPreempt_Test, GivenTimedAcquire_WhenNothingReleases_ThenItTime
 {
    sync::semaphore sem(0);
    bool got = true;
-   uint64_t before = 0;
-   uint64_t after = 0;
+   std::uint64_t before = 0;
+   std::uint64_t after = 0;
 
    thread waiter(
       [&]{
@@ -235,8 +236,8 @@ TEST_F(ChronoAlarmPreempt_Test, GivenTimedAcquire_WhenAReleaseArrivesBeforeTheDe
    sync::semaphore sem(0);
    bool got = false;
    bool took_a_second = true;
-   uint64_t before = 0;
-   uint64_t after = 0;
+   std::uint64_t before = 0;
+   std::uint64_t after = 0;
 
    thread waiter(
       [&]{
@@ -273,7 +274,7 @@ TEST_F(ChronoAlarmPreempt_Test, GivenADeadlineAtNow_WhenTimedAcquiring_ThenItDeg
    sync::semaphore stocked(1);
    bool got_empty = true;
    bool got_stocked = false;
-   uint64_t elapsed = ~uint64_t{0};
+   std::uint64_t elapsed = ~std::uint64_t{0};
 
    thread waiter(
       [&]{
@@ -303,7 +304,7 @@ TEST_F(ChronoAlarmPreempt_Test, GivenAZeroDuration_WhenTimedAcquiring_ThenItDegr
    sync::semaphore stocked(1);
    bool got_empty = true;
    bool got_stocked = false;
-   uint64_t elapsed = ~uint64_t{0};
+   std::uint64_t elapsed = ~std::uint64_t{0};
 
    thread waiter(
       [&]{

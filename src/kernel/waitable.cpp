@@ -351,7 +351,7 @@ bool wait_queue::wake_one_and_transfer(transfer_fn transfer, reschedule_policy p
 waitable::~waitable()
 {
    // It is a programming error to destroy an waitable with parked waiters.
-   CYROS_ASSERT(queue.empty());
+   CYROS_REQUIRE(queue.empty()); // Destroyed with waiters parked on it
 }
 
 void waitable::wake_one(reschedule_policy policy) noexcept
@@ -476,8 +476,8 @@ namespace this_thread
 
 [[nodiscard]] std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept
 {
-   CYROS_ASSERT(!waitables.empty());
-   CYROS_ASSERT_OP(waitables.size(), <=, config::max_wait_nodes);
+   CYROS_REQUIRE(!waitables.empty()); // Nothing to wait on
+   CYROS_REQUIRE_OP(waitables.size(), <=, config::max_wait_nodes); // More than config::max_wait_nodes
 
    auto& tcb = scheduler_for_this_core().get_current_thread();
    wait_node_vector nodes(waitables.size(), tcb);

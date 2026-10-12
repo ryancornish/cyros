@@ -69,7 +69,7 @@ TEST(SingleCoreSingleThread_Test,
 
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
 
-   uint32_t thread_executed_on_core = std::numeric_limits<uint32_t>::max();
+   std::uint32_t thread_executed_on_core = std::numeric_limits<std::uint32_t>::max();
 
    thread thread(
       [&thread_executed_on_core]{ thread_executed_on_core = this_core::id(); },
@@ -102,7 +102,7 @@ TEST(SingleCoreSingleThread_Test,
 
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
 
-   thread::priority threads_priority(std::numeric_limits<uint8_t>::max());
+   thread::priority threads_priority(std::numeric_limits<std::uint8_t>::max());
 
    thread thread(
       [&threads_priority]{ threads_priority = this_thread::priority(); },
