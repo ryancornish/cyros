@@ -42,8 +42,8 @@ extern "C" {
 #endif
 
 #define SIGCTX_VERSION_MAJOR 1
-#define SIGCTX_VERSION_MINOR 0
-#define SIGCTX_VERSION_PATCH 0
+#define SIGCTX_VERSION_MINOR 1
+#define SIGCTX_VERSION_PATCH 1
 
 /*
  * Result of sigctx_copy. A faithful copy is SIGCTX_OK. When the source carries
@@ -63,9 +63,11 @@ typedef enum
 
 /*
  * Inline FP capacity for sigctx_inl_t. A compile-time BOUND on the FP area, not
- * the live frame size. It MUST be >= sigctx_fpstate_size() on the target machine, or
- * sigctx_intercept_install returns -ERANGE rather than silently dropping vector
- * state. The default below suits SSE/AVX/AVX-512 on typical configurations, but the
+ * the live frame size. It MUST be >= sigctx_fpstate_size() on the target machine:
+ * sigctx_copy into a smaller buffer demotes a capture to a legacy frame, dropping
+ * the vector state above SSE, and says so only by returning
+ * SIGCTX_TRUNCATED_TO_LEGACY. A handler stack sized by SIGCTX_INTERCEPT_MIN_FRAME
+ * makes sigctx_intercept_install return -ERANGE on such a machine. The default below suits SSE/AVX/AVX-512 on typical configurations, but the
  * enabled XSAVE area is machine-dependent and can be much larger (e.g. ~11 KB with a
  * wide AVX-512 component set, or +8 KB again under AMX). If sigctx_fpstate_size()
  * exceeds this on your target, either raise SIGCTX_FPSTATE_CAPACITY to cover it or
@@ -107,9 +109,9 @@ typedef struct
  * legacy floor), and stack_size is at least the minimum usable stack. Violating
  * any of these aborts via assert() unless built with NDEBUG.
  *
- * entry must not return. As a debugging containment measure, sigctx installs a trap
- * return address, so a returning entry is expected to terminate the process rather
- * than continue into arbitrary memory. Callers must not rely on this as normal control flow.
+ * entry must not return. As a debugging containment measure, entry is called from a
+ * launcher that traps (ud2) if it returns, so a returning entry terminates the
+ * process rather than continuing into arbitrary memory. Callers must not rely on this as normal control flow.
  * entry_arg is an optional caller-supplied argument passed as entry's first parameter.
  */
 void sigctx_create(sigctx_ucontext_t* out,
@@ -144,10 +146,13 @@ __attribute__((noreturn))
 void sigctx_resume(sigctx_ucontext_t const* ctx);
 
 /*
- * Byte size of the FP/XSAVE area the kernel will produce for THIS process's enabled
- * XCR0 (CPUID leaf 0x0D sub-leaf 0, EBX). Use it to size a dynamic buffer and to
- * check against SIGCTX_FPSTATE_CAPACITY at startup. Fixed for the life of the
- * process but NOT a compile-time constant. Returns 0 if XSAVE is unsupported.
+ * Byte size of the FP area the kernel's signal frame carries for THIS process's
+ * enabled XCR0: the XSAVE area (CPUID leaf 0x0D sub-leaf 0, EBX) plus the
+ * SIGCTX_FP_XSTATE_MAGIC2_SIZE bytes the kernel appends after it, which a frame's
+ * extended_size counts. A buffer of this size holds a capture without demotion.
+ * Use it to size a dynamic buffer and to check against SIGCTX_FPSTATE_CAPACITY at
+ * startup. Fixed for the life of the process but NOT a compile-time constant.
+ * Returns 0 if XSAVE is unsupported.
  */
 uint32_t sigctx_fpstate_size(void);
 

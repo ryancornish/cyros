@@ -151,8 +151,13 @@ uint32_t sigctx_fpstate_size(void)
       return 0;
    }
 
+   /* EBX is the XSAVE area for the features XCR0 enables. The kernel's signal
+    * frame appends FP_XSTATE_MAGIC2 after it and counts that in extended_size,
+    * so a buffer of EBX bytes is 4 short of a real capture, and sigctx_copy
+    * would demote every capture to a legacy frame, losing the upper YMM and
+    * ZMM halves. */
    sigctx_cpuid(0x0D, 0, &a, &b, &c, &d);
-   return b;
+   return b + SIGCTX_FP_XSTATE_MAGIC2_SIZE;
 }
 
 void sigctx_rebind(sigctx_inl_t* c)
