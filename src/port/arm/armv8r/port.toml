@@ -1,0 +1,16 @@
+name = "armv8r"
+
+# ARMv8-R AArch32 at EL1: the Cortex-R52, with its integrated GICv3 and the
+# generic timer. The core layer of the R-profile tree, as armv7m_armv8m is of
+# the M-profile one. ~/cyros-claude/r52-port-notes.md has the design.
+description = "ARMv8-R AArch32 CORE LAYER (Cortex-R52). Not selectable: targets extend it."
+
+# Deliberately absent from port/component.toml `variants`, which is what makes
+# this a layer rather than a port. It implements port_core.h and nothing else.
+sources = [
+   "port_core_armv8r.cpp",
+]
+
+# So a target can include armv8r.hpp, which declares the one function this
+# layer needs from it (the timer interrupt's body) and the helpers it shares.
+private_includes = ["."]

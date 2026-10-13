@@ -1,0 +1,13 @@
+[test]
+name = "test_armv8r_smp_bringup"
+layer = 2
+kind = "unit"
+source = "test_armv8r_smp_bringup.cpp"
+config = "test_armv8r_smp_bringup_config.hpp"
+hosted = false
+
+[components]
+port = ["cortex_r52_smp"]
+
+[link]
+system_libraries = []

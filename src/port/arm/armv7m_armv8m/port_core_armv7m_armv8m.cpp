@@ -92,6 +92,12 @@
  * every frame is 32 bytes and that reason goes, but a frame larger than the
  * window steps over it more easily the thinner it is, so both builds keep 128.
  *
+ * Each core enables its guard's fault in its own SHCSR (UsageFault or
+ * MemManage), so the application's vector table needs that entry. Without the
+ * enable the fault escalates to HardFault, which is where a PSPLIM overrun on
+ * the RP2350's core 1 landed while only the board's reset code, which that core
+ * never runs, set the bit.
+ *
  *
  * Floating point: saved exactly when the image can have it
  * ========================================================
@@ -356,7 +362,13 @@ void init_this_core()
    cortex_m::reg8(cortex_m::shpr_pendsv)  = static_cast<std::uint8_t>(pendsv_priority);
    cortex_m::reg8(cortex_m::shpr_systick) = static_cast<std::uint8_t>(systick_priority);
 
-#if !CYROS_CORTEX_M_HAS_STACK_LIMIT
+#if CYROS_CORTEX_M_HAS_STACK_LIMIT
+   /* SHCSR is per core, and a core whose boot code never enables UsageFault
+    * gets PSPLIM's fault as a HardFault, unnamed. The RP2350's core 1 runs no
+    * boot code at all, so the port enables its own guard's fault on every core,
+    * as the MPU guard below does with MemManage. */
+   cortex_m::reg(cortex_m::scb_shcsr) = cortex_m::reg(cortex_m::scb_shcsr) | cortex_m::shcsr_usgfaultena;
+#else
    if (guard_region_plus_one != 0u) {
       /* The region stays disabled until cyros_port_start_first has a thread to
        * guard. ENABLE and PRIVDEFENA are ORed in, not written, so an MPU the

@@ -80,18 +80,25 @@ inline void print(char const* text) noexcept
  * the return address and resuming, which is what the trap handling expects.
  * The extra call/return is nothing against a trap that costs microseconds.
  */
-#if defined(__riscv)
-/* On RISC-V the BOARD makes the call (the operation numbers are ARM's). QEMU's
- * virt traps to QEMU. The Pico 2 W's Hazard3 answers "unsupported" without
- * trapping, because OpenOCD's RISC-V semihosting there writes a stale s0 back
- * into the caller (rp2350-notes.md 7b), and it supports neither elapsed-time
- * call anyway. */
+#if defined(__riscv) || (defined(__ARM_ARCH_PROFILE) && __ARM_ARCH_PROFILE == 'R')
+#define CYROS_BENCH_BOARD_SEMIHOSTS 1
+#else
+#define CYROS_BENCH_BOARD_SEMIHOSTS 0
+#endif
+
+#if CYROS_BENCH_BOARD_SEMIHOSTS
+/* On RISC-V and the ARM R-profile the BOARD makes the call (the operation
+ * numbers are ARM's). QEMU's virt traps to QEMU. The Pico 2 W's Hazard3
+ * answers "unsupported" without trapping, because OpenOCD's RISC-V
+ * semihosting there writes a stale s0 back into the caller (rp2350-notes.md
+ * 7b), and it supports neither elapsed-time call anyway. On an R52 a BKPT is a
+ * debug event, a Prefetch Abort with no debugger, and the trap is HLT. */
 extern "C" long cyros_bench_semihost(long op, void volatile* arg) noexcept;
 #endif
 
 [[gnu::noinline]] inline long semihost(long op, void volatile* arg) noexcept
 {
-#if defined(__riscv)
+#if CYROS_BENCH_BOARD_SEMIHOSTS
    return cyros_bench_semihost(op, arg);
 #else
    register long r0 asm("r0") = op;

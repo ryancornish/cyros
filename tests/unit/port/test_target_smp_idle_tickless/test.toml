@@ -12,7 +12,7 @@ config = "test_target_smp_idle_tickless_config.hpp"
 hosted = false
 
 [components]
-port = ["riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp", "rp2040_smp"]
+port = ["riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp", "rp2040_smp", "cortex_r52_smp"]
 time_driver = "tickless"
 features = ["chrono", "sync"]
 

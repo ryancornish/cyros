@@ -102,7 +102,8 @@ TEST(SingleCoreSingleThread_Test,
 
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack;
 
-   thread::priority threads_priority(std::numeric_limits<std::uint8_t>::max());
+   // A plain byte, since no thread::priority can hold the "not read yet" value.
+   std::uint8_t threads_priority = std::numeric_limits<std::uint8_t>::max();
 
    thread thread(
       [&threads_priority]{ threads_priority = this_thread::priority(); },

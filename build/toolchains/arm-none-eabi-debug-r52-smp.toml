@@ -1,0 +1,18 @@
+name = "arm-none-eabi-debug-r52-smp"
+extends = "arm-none-eabi-debug-r52.toml"
+
+# The single-core R52 toolchain on two cores. As the M33's SMP toolchain, only
+# the machine differs, and the runner is a property of the toolchain.
+[runner]
+command = [
+   "qemu-system-arm",
+   "-M", "mps3-an536",
+   "-smp", "2",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+
+# Longer than one core's 30 s: a core never released, or a rendezvous that
+# never completes, shows up as a hang, and two TCG cores run slower than one.
+timeout = 60

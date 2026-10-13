@@ -21,6 +21,10 @@
  *   kernel lifecycle out of order, a stack too small for its TCB, a thread
  *   pinned to a core the build does not have
  *      Each would otherwise run on into state the kernel never set up.
+ *   a priority beyond config::max_priorities
+ *      Checked where the priority is made. Without that, the first check it
+ *      meets is the ready matrix's own, which describes cyros's state rather
+ *      than the caller's mistake.
  *
  * Every test uses CYROS_EXPECT_PANIC (`common/death.hpp`), which requires the
  * panic to come from the named file, on the line holding the named text, as
@@ -29,6 +33,7 @@
 
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/thread.hpp>
+#include <cyros/config/config.hpp>
 #include <cyros/port/port_traits.h>
 
 #include <common/death.hpp>
@@ -37,6 +42,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 
 using namespace cyros;
@@ -97,6 +103,13 @@ void pin_a_thread_to_a_core_that_does_not_exist()
    thread t(never_runs, stack, thread::priority(0), core1);
 }
 
+void give_a_thread_a_priority_beyond_the_configured_levels()
+{
+   kernel::initialise();
+   static test::guarded_stack stack;
+   thread t(never_runs, stack, thread::priority(static_cast<std::uint8_t>(config::max_priorities)), core0);
+}
+
 }  // namespace
 
 TEST(KernelDeath_Test, GivenAThreadThatNeverRan_WhenItsHandleIsDestroyed_ThenItStopsTheSystem)
@@ -142,4 +155,11 @@ TEST(KernelDeath_Test, GivenAnAffinityNamingNoConfiguredCore_WhenAThreadIsCreate
 {
    CYROS_EXPECT_PANIC(pin_a_thread_to_a_core_that_does_not_exist(),
                       test::panicked_at("kernel.cpp", "affinity mask allows no cores"));
+}
+
+TEST(KernelDeath_Test, GivenAPriorityBeyondTheConfiguredLevels_WhenAThreadIsCreated_ThenItStopsTheSystem)
+{
+   CYROS_EXPECT_PANIC(give_a_thread_a_priority_beyond_the_configured_levels(),
+                      test::panicked_at("thread.hpp", "A priority beyond config::max_priorities"))
+      << "an out-of-range priority got past its constructor, or only the ready matrix caught it later";
 }

@@ -1,0 +1,18 @@
+[test]
+name = "test_armv8r_device_irq"
+layer = 6
+kind = "unit"
+source = "test_armv8r_device_irq.cpp"
+config = "test_armv8r_device_irq_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+[components]
+# Locked to the R52: it programs the GIC's distributor and takes the armv8r
+# layer's device hook. test_target_device_irq is the RP boards' equivalent.
+port = ["cortex_r52"]
+features = ["sync"]
+
+[link]
+system_libraries = []

@@ -1,0 +1,21 @@
+[test]
+name = "test_armv8r_fpu"
+layer = 6
+kind = "unit"
+source = "test_armv8r_fpu.cpp"
+config = "test_armv8r_fpu_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+# A hard-float toolchain. A soft-float build has no FP state to keep.
+requires = ["fpu"]
+
+[components]
+# Locked to the R52: it holds d0-d31 and FPSCR across the armv8r layer's two
+# ways into the exception path. test_cortex_m_fpu is the M-profile's.
+port = ["cortex_r52"]
+features = ["sync"]
+
+[link]
+system_libraries = []

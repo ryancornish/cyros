@@ -6,12 +6,9 @@ kind = "unit"
 # test_cortex_m_stack_guard's source with both of its threads on core 1: the
 # guard a secondary core loads on its own switches, in its own MPU or PSPLIM.
 # The bring-up test checks core 1 set its MPU up as core 0 did, and only an
-# overrun shows the guard stops one there.
-#
-# Not rp2350_m33_smp yet: the port launches its core 1 straight into
-# cyros_port_secondary_core_entry, so no board code enables that core's
-# UsageFault, and PSPLIM's fault would arrive as a HardFault the test does not
-# accept (arm-port-notes.md 19h). The SSE-200 bench enables it on CPU1 itself.
+# overrun shows the guard stops one there. On the RP2350 it is also the test
+# that the port enables UsageFault on core 1, which runs no board code: without
+# that, PSPLIM's fault arrives as a HardFault the test does not accept.
 harness_debt = { layer = 2, reason = "the stack guard covers a RUNNING thread's stack, so it cannot be observed until the kernel has started one, here on the second core" }
 source = "../test_cortex_m_stack_guard/test_cortex_m_stack_guard.cpp"
 config = "test_cortex_m_smp_stack_guard_config.hpp"
@@ -21,7 +18,7 @@ config = "test_cortex_m_smp_stack_guard_config.hpp"
 hosted = false
 
 [components]
-port = ["cortex_m33_smp", "rp2040_smp"]
+port = ["cortex_m33_smp", "rp2040_smp", "rp2350_m33_smp"]
 
 [link]
 system_libraries = []

@@ -93,6 +93,10 @@ inline constexpr std::uintptr_t scb_cpacr = scb_base + 0x88u;  /* Coprocessor Ac
  * stack guard reports, escalates to HardFault and arrives unnamed. */
 inline constexpr std::uint32_t shcsr_memfaultena = 1u << 16;
 
+/* SHCSR.USGFAULTENA. The same for the ARMv8-M guard, which reports as a
+ * UsageFault with STKOF. */
+inline constexpr std::uint32_t shcsr_usgfaultena = 1u << 18;
+
 /* CPACR grants access to CP10 and CP11, which together ARE the FPU. Both are
  * two-bit fields: 0b11 is full access from privileged and unprivileged code.
  * Touching an FP instruction with these clear is a UsageFault (NOCP), which is

@@ -1,0 +1,19 @@
+# Unit-test profile for the Cortex-R52 port on QEMU's mps3-an536, one core.
+# Tests run under QEMU through the toolchain's runner, as the Cortex-M and
+# RISC-V profiles do, and each test's port filter decides whether it runs here.
+[profile]
+name = "unit_test_cortex_r52"
+toolchain = "../toolchains/arm-none-eabi-debug-r52.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "cortex_r52"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

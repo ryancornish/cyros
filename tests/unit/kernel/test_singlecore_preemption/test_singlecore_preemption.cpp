@@ -41,6 +41,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <thread>
 
 using namespace cyros;
@@ -355,6 +356,85 @@ TEST(SingleCorePreemption_Test,
       << "the inner exit re-enabled interrupts, so the depth count is not nesting";
    EXPECT_TRUE(enabled_after_outer_exit.load())
       << "the outermost exit did not restore interrupts";
+
+   kernel::finalise();
+}
+
+
+/* ============================================================================
+ * A preempted thread's vector state comes back whole
+ * ========================================================================= */
+/* The port resumes a preempted thread from the frame sigctx captured, so every
+ * register the frame holds must survive the trip, the upper halves of the YMM
+ * registers included, which only the extended XSAVE area carries. Until sigctx's
+ * FP sizing counted the 4 bytes the kernel appends to that area, every capture
+ * was demoted to a legacy frame and those halves came back zero: on the Arch box
+ * all of them, through 1,503 reschedule interrupts in one loop. glibc's AVX2
+ * memcpy keeps data there, so a preempted copy lost it.
+ *
+ * The thread holds a pattern in YMM1 across a long loop that touches nothing
+ * else, while the interrupt source preempts it many times. */
+TEST(SingleCorePreemption_Test,
+     GivenAThreadHoldingAYmmRegister_WhenItIsPreemptedManyTimes_ThenTheUpperHalfSurvives)
+{
+   if (!__builtin_cpu_supports("avx")) {
+      GTEST_SKIP() << "no AVX on this machine";
+   }
+   kernel::initialise();
+
+   std::atomic<bool> in_loop{false};
+   std::atomic<bool> done{false};
+   std::atomic<int>  intact{-1};
+   std::atomic<int>  fired{0};
+
+   // GIVEN:
+
+   thread worker(
+      [&]{
+         alignas(32) unsigned char in[32];
+         alignas(32) unsigned char out[32] = {};
+         for (int i = 0; i < 32; ++i) {
+            in[i] = static_cast<unsigned char>(0x40 + i);
+         }
+         in_loop.store(true);
+         __asm__ volatile(
+            "vmovdqu %[in], %%ymm1\n\t"
+            "mov $400000000, %%rcx\n\t"
+            "1: dec %%rcx\n\t"
+            "jnz 1b\n\t"
+            "vmovdqu %%ymm1, %[out]\n\t"
+            : [out] "=m"(out)
+            : [in] "m"(in)
+            : "rcx", "xmm1", "memory");
+         intact.store(std::memcmp(in + 16, out + 16, 16) == 0 ? 1 : 0);
+         done.store(true);
+      },
+      a_stack,
+      thread::priority(0),
+      core0
+   );
+
+   // Bounded so a broken port fails the assertions below instead of hanging.
+   std::thread interrupt_source([&]{
+      while (!in_loop.load()) {
+         std::this_thread::yield();
+      }
+      for (int n = 0; n < 20000 && !done.load(); ++n) {
+         cyros_port_send_reschedule_ipi(0);
+         fired.fetch_add(1);
+         std::this_thread::sleep_for(std::chrono::microseconds(100));
+      }
+   });
+
+   // WHEN:
+
+   kernel::start();
+   interrupt_source.join();
+
+   // THEN:
+
+   EXPECT_GT(fired.load(), 10) << "too few interrupts landed to mean anything";
+   EXPECT_EQ(intact.load(), 1) << "YMM1's upper half did not survive preemption";
 
    kernel::finalise();
 }

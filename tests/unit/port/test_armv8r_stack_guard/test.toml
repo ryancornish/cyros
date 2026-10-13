@@ -1,0 +1,20 @@
+[test]
+name = "test_armv8r_stack_guard"
+layer = 0
+kind = "unit"
+
+# The guard covers a RUNNING thread's stack, so, as on the other ports, it
+# cannot be observed until the kernel has started one.
+harness_debt = { layer = 2, reason = "the stack guard covers a RUNNING thread's stack, so it cannot be observed until the kernel has started one" }
+source = "test_armv8r_stack_guard.cpp"
+config = "test_armv8r_stack_guard_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+[components]
+# Locked to the R52: it reads the EL1 MPU and takes the board's Data Abort.
+port = ["cortex_r52"]
+
+[link]
+system_libraries = []

@@ -1,0 +1,13 @@
+[test]
+name = "test_armv8r_bringup"
+layer = 2
+kind = "unit"
+source = "test_armv8r_bringup.cpp"
+config = "test_armv8r_bringup_config.hpp"
+hosted = false
+
+[components]
+port = ["cortex_r52"]
+
+[link]
+system_libraries = []

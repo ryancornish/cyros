@@ -18,6 +18,10 @@
  *   a mutex destroyed while held
  *      leaves a dangling pointer in its owner's held_slots, which the urgency
  *      fold dereferences on every pick.
+ *   a recursive lock() by the owner
+ *      the owner would queue on its own mutex, a cycle in the wait-for graph.
+ *      An internal check further in catches it too, but describes cyros's
+ *      state rather than the caller's mistake, so the match is on the entry's.
  *
  * Every test requires the panic's file and failing line as well as SIGABRT
  * (`common/death.hpp`), and each was mutation-verified by deleting its check.
@@ -74,6 +78,15 @@ void destroy_a_mutex_while_holding_it()
    });   // ~mutex with the lock still held
 }
 
+void lock_a_mutex_twice()
+{
+   run_as_a_thread([] {
+      static sync::mutex m;
+      m.lock();
+      m.lock();
+   });
+}
+
 }  // namespace
 
 TEST(SyncDeath_Test, GivenAMutexNobodyHolds_WhenUnlocked_ThenItStopsTheSystem)
@@ -94,4 +107,11 @@ TEST(SyncDeath_Test, GivenAHeldMutex_WhenDestroyed_ThenItStopsTheSystem)
    CYROS_EXPECT_PANIC(destroy_a_mutex_while_holding_it(),
                       test::panicked_at("base_mutex.cpp", "Still owned"))
       << "a held mutex was destroyed, leaving its owner's held slot dangling";
+}
+
+TEST(SyncDeath_Test, GivenAMutexItsCallerHolds_WhenLockedAgain_ThenItStopsTheSystem)
+{
+   CYROS_EXPECT_PANIC(lock_a_mutex_twice(),
+                      test::panicked_at("base_mutex.cpp", "Recursive lock() by the owner"))
+      << "the owner re-locked its mutex, or only the internal check further in caught it";
 }

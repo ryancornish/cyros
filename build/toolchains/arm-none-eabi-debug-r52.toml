@@ -1,0 +1,43 @@
+name = "arm-none-eabi-debug-r52"
+extends = "arm-none-eabi-debug.toml"
+
+# The ARMv8-R bench: a Cortex-R52, on QEMU's mps3-an536. Its port is
+# cortex_r52 over the armv8r core layer, which refuses any other architecture
+# (armv8r.hpp).
+#
+# Hard float, with GCC's default FPU for the R52 (-mfpu=auto: double
+# precision, 32 double registers and Advanced SIMD, which QEMU's R52 has). The
+# armv8r layer saves the whole FP state with every exception frame under
+# __ARM_FP. Thumb, as every ARM build here: -mcpu=cortex-r52 -mthumb
+# -mfloat-abi=hard selects newlib's thumb/v7+fp/hard multilib, ARMv7 code the
+# R52 runs as it is, ABI-compatible with the D32 code compiled here.
+#
+# Extends the debug toolchain, as the M3's and M0's do, removing only the
+# base's M33 flags.
+[flags]
+common_add = ["-mcpu=cortex-r52", "-mfpu=auto", "-DCYROS_BENCH_MTIME=1"]
+common_remove = ["-mcpu=cortex-m33", "-mfpu=fpv5-sp-d16"]
+
+# An FPU, for the tests that require one. The generic timer is MTIME for the
+# tests: a 64-bit count with no period to cross.
+[settings]
+provides = ["fpu"]
+
+[board]
+linker_script = "../../tests/unit/port/arm_bench/mps3_an536.ld"
+sources = [
+   "../../tests/unit/port/arm_bench/startup_mps3_an536.c",
+   "../../tests/unit/common/syscall_stubs.c",
+]
+
+# One core unless -smp says otherwise. The SMP toolchain extends this one with
+# -smp 2.
+[runner]
+command = [
+   "qemu-system-arm",
+   "-M", "mps3-an536",
+   "-nographic",
+   "-semihosting-config", "enable=on,target=native",
+   "-kernel", "{binary}",
+]
+timeout = 30
