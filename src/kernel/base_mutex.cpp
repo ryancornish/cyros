@@ -175,6 +175,10 @@ bool base_mutex::try_lock() noexcept
 void base_mutex::lock() noexcept
 {
    auto& tcb = scheduler_for_this_core().get_current_thread();
+   // Relaxed is exact here: only this thread's own CAS, or a handover while it
+   // was parked, can have made it the owner. The loop's own check below would
+   // catch this too, but names cyros's state rather than the caller's mistake.
+   CYROS_REQUIRE(owner.load(std::memory_order_relaxed) != &tcb); // Recursive lock() by the owner
    check_ceiling_contract(tcb);
 
    wait_queue::wait_node node{};

@@ -2,6 +2,8 @@
 #define CYROS_THREAD_HPP
 
 #include <cyros/port/port_traits.h>
+#include <cyros/config/config.hpp>
+#include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/function.hpp>
 #include <cyros/kernel/visibility.hpp>
 
@@ -52,10 +54,19 @@ public:
    using id = std::uint32_t;
    using entry_fn = function<void(), 48, heap_policy::no_heap>;
 
+   /**
+    * @brief A thread priority, 0 the most urgent, below config::max_priorities.
+    *
+    * Checked where it is made, so every API taking one checks it, and an
+    * out-of-range constant fails to compile.
+    */
    struct priority
    {
       std::uint8_t val;
-      constexpr priority(std::uint8_t v) : val(v) {}     // Intentionally implicit
+      constexpr priority(std::uint8_t v) : val(v)               // Intentionally implicit
+      {
+         CYROS_REQUIRE_OP(v, <, config::max_priorities);        // A priority beyond config::max_priorities
+      }
       constexpr operator std::uint8_t() const { return val; } // Intentionally implicit
    };
 
