@@ -1,0 +1,14 @@
+name = "sparc-elf-debug"
+extends = "sparc-elf-base.toml"
+
+# -Og -g3, as arm-none-eabi-debug and riscv32-elf-debug, for the same
+# reasons: a 32-bit MCU, and sparc-elf-gdb attaches to QEMU's gdbstub.
+[flags]
+common_add = ["-Og", "-g3"]
+
+[settings]
+debug = true
+optimization = "g"
+
+[archive]
+strategy = "simple"

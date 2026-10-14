@@ -80,19 +80,21 @@ inline void print(char const* text) noexcept
  * the return address and resuming, which is what the trap handling expects.
  * The extra call/return is nothing against a trap that costs microseconds.
  */
-#if defined(__riscv) || (defined(__ARM_ARCH_PROFILE) && __ARM_ARCH_PROFILE == 'R')
+#if defined(__riscv) || (defined(__ARM_ARCH_PROFILE) && __ARM_ARCH_PROFILE == 'R') || defined(__sparc__)
 #define CYROS_BENCH_BOARD_SEMIHOSTS 1
 #else
 #define CYROS_BENCH_BOARD_SEMIHOSTS 0
 #endif
 
 #if CYROS_BENCH_BOARD_SEMIHOSTS
-/* On RISC-V and the ARM R-profile the BOARD makes the call (the operation
- * numbers are ARM's). QEMU's virt traps to QEMU. The Pico 2 W's Hazard3
- * answers "unsupported" without trapping, because OpenOCD's RISC-V
+/* On RISC-V, the ARM R-profile and SPARC the BOARD makes the call (the
+ * operation numbers are ARM's). QEMU's virt traps to QEMU. The Pico 2 W's
+ * Hazard3 answers "unsupported" without trapping, because OpenOCD's RISC-V
  * semihosting there writes a stale s0 back into the caller (rp2350-notes.md
  * 7b), and it supports neither elapsed-time call anyway. On an R52 a BKPT is a
- * debug event, a Prefetch Abort with no debugger, and the trap is HLT. */
+ * debug event, a Prefetch Abort with no debugger, and the trap is HLT. QEMU
+ * has no semihosting on SPARC, so the LEON3 board asks its runner for host
+ * time over the console instead, and answers the two elapsed-time calls. */
 extern "C" long cyros_bench_semihost(long op, void volatile* arg) noexcept;
 #endif
 

@@ -1,0 +1,10 @@
+name = "sparc-elf-debug-soft"
+extends = "sparc-elf-debug.toml"
+
+# Soft float, as many LEON3 FPGA builds have no FPU: the soft multilib, no
+# FP state in a trap frame, and no FP instruction anywhere in the image.
+[flags]
+common_add = ["-msoft-float"]
+
+[settings]
+provides = []

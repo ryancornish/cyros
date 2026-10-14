@@ -1,0 +1,21 @@
+[test]
+name = "test_sparc_fpu"
+layer = 6
+kind = "unit"
+source = "test_sparc_fpu.cpp"
+config = "test_sparc_fpu_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+# A hard-float toolchain. A soft-float build has no FP state to keep.
+requires = ["fpu"]
+
+[components]
+# Locked to the SPARC port: it holds f0-f31 and FSR across the sparcv8
+# layer's two ways into the trap path.
+port = ["leon3"]
+features = ["sync"]
+
+[link]
+system_libraries = []

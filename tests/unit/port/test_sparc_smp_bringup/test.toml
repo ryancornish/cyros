@@ -1,0 +1,14 @@
+[test]
+name = "test_sparc_smp_bringup"
+layer = 2
+kind = "unit"
+source = "test_sparc_smp_bringup.cpp"
+config = "test_sparc_smp_bringup_config.hpp"
+hosted = false
+
+[components]
+# Locked to the two-core SPARC port: it reads each LEON3's own state.
+port = ["leon3_smp"]
+
+[link]
+system_libraries = []

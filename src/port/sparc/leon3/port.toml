@@ -1,0 +1,18 @@
+name = "leon3"
+
+description = "A GRLIB LEON3 system, one core: QEMU's leon3_generic. IRQMP, GPTIMER as MTIME, APBUART, found by plug and play."
+
+extends = "sparcv8"
+
+# The identity trio, and the MTIME time source on GPTIMER, which is shared
+# with the RISC-V, RP2350, RP2040 and R52 targets and lives in src/port/common.
+sources = [
+   "port_mcu_leon3.cpp",
+   "../../common/port_time_mtime.cpp",
+]
+
+private_includes = ["../../common"]
+
+public_headers = [
+   "public_headers/port_traits.h -> cyros/port/port_traits.h",
+]

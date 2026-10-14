@@ -1,0 +1,17 @@
+[test]
+name = "test_rp2040_smp_atomic_store"
+layer = 2
+kind = "unit"
+source = "test_rp2040_smp_atomic_store.cpp"
+config = "test_rp2040_smp_atomic_store_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+# Holds the RP2040's SIO spinlock 14, the lock rp2040_smp lends its atomics.
+port = ["rp2040_smp"]
+
+[link]
+system_libraries = []

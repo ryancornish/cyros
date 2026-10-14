@@ -1,0 +1,12 @@
+name = "sparc-elf-debug-smp"
+extends = "sparc-elf-debug.toml"
+
+# QEMU's leon3_generic with two LEON3s, for the leon3_smp target. The board is
+# the same: core 1 stays powered down until the port starts it.
+[runner]
+command = [
+   "sh", "-c",
+   "exec python3 \"$(git rev-parse --show-toplevel)/tests/unit/port/sparc_bench/run_leon3.py\" --smp 2 \"$0\"",
+   "{binary}",
+]
+timeout = 30

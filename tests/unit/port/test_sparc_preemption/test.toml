@@ -1,0 +1,18 @@
+[test]
+name = "test_sparc_preemption"
+layer = 6
+kind = "unit"
+source = "test_sparc_preemption.cpp"
+config = "test_sparc_preemption_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+[components]
+# Locked to the SPARC port: it holds every integer register and a window
+# chain across an interrupt that switches threads.
+port = ["leon3"]
+features = ["sync"]
+
+[link]
+system_libraries = []

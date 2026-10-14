@@ -7,8 +7,17 @@ extends = "arm-none-eabi-debug.toml"
 #
 # Extends the debug toolchain, as the M3's does, removing only the base's
 # Mainline flags.
+#
+# -fno-inline-atomics on every ARMv6-M build: GCC then calls __atomic_load_N
+# and __atomic_store_N for every atomic load and store, not only the
+# read-modify-writes, so on two cores a store takes the same lock as a
+# read-modify-write and cannot land inside one (port_atomic_armv6m.cpp). One
+# core needs none of that, and takes it anyway, so that the whole
+# architecture compiles one way and QEMU's M0 suite runs the calls every
+# time (test_armv6m_atomics_out_of_line). An ARMv6-M build without it is
+# unsupported on more than one core.
 [flags]
-common_add = ["-mcpu=cortex-m0", "-mfloat-abi=soft"]
+common_add = ["-mcpu=cortex-m0", "-mfloat-abi=soft", "-fno-inline-atomics"]
 common_remove = ["-mcpu=cortex-m33", "-mfloat-abi=hard", "-mfpu=fpv5-sp-d16"]
 
 # No FPU.

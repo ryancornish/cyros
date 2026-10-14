@@ -1,0 +1,21 @@
+[test]
+name = "test_armv6m_atomics_out_of_line"
+layer = 2
+kind = "unit"
+source = "test_armv6m_atomics_out_of_line.cpp"
+config = "test_armv6m_atomics_out_of_line_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+# Skipped by every hosted profile.
+hosted = false
+
+[components]
+# Every ARMv6-M target: the flag is on the architecture's root toolchain.
+port = ["cortex_m0", "rp2040", "rp2040_smp"]
+
+[link]
+system_libraries = []
+
+# Every reference to the four, the archive's included, goes to the test's
+# counting wrappers, which forward to the port's own.
+flags = ["-Wl,--wrap=__atomic_load_1,--wrap=__atomic_store_1,--wrap=__atomic_load_4,--wrap=__atomic_store_4"]

@@ -18,41 +18,34 @@
  * masked region, and on one core the calls are compiled out.
  *
  *
- * The stores the lock cannot reach
- * ================================
- * GCC's inline loads and stores take no lock. A load is harmless: it sees the
- * value before a read-modify-write's store or after it. An inline store from
- * another core is not, because it can land between a read-modify-write's load
- * and its store and be overwritten, lost. Nothing here can stop that, and two
- * rules keep it from mattering:
+ * Loads and stores, and -fno-inline-atomics
+ * ==========================================
+ * By default GCC keeps aligned loads and stores up to a word inline, and an
+ * inline store takes no lock. One from another core can land between a
+ * read-modify-write's load and its store and be overwritten, lost. So every
+ * ARMv6-M build compiles with -fno-inline-atomics (the architecture's root
+ * toolchain, arm-none-eabi-debug-m0.toml), and GCC calls __atomic_load_N and
+ * __atomic_store_N as well, which this file supplies: a store under the lock,
+ * a load bare. One core needs none of it and compiles the same way, so the
+ * architecture has one code generation and QEMU's M0 runs the calls.
+ * test_armv6m_atomics_out_of_line fails a build without the flag. A
+ * downstream ARMv6-M toolchain must carry it, and a prebuilt object compiled
+ * without it keeps its inline stores.
  *
- *   1. A read-modify-write stores only when it changes the value. Then one
- *      that changes nothing can always be ordered before the store it raced.
- *      The case that needs it is cyros's own spinlock, released by an inline
- *      store of 0 (std::atomic_flag::clear) while the other core retries its
- *      test-and-set: one that always stored 1 put the lock back, held by
- *      nobody, 1,820 times in 40,000 rounds on the RP2040, and one that
- *      stores only over a 0 never did (arm-port-notes.md 19h).
- *   2. No cyros object takes an inline store from one core while another
- *      core's read-modify-write can change it to something else. Audited
- *      object by object in arm-port-notes.md 19h: each is stored to or
- *      read-modify-written but not both, both on one core only, or a
- *      compare-exchange that cannot succeed while the store is possible (a
- *      mutex's owner, a held slot). A new atomic in the kernel is checked
- *      against that list.
- *
- * An application that wants its own stores safe too compiles with
- * -fno-inline-atomics, and GCC then calls __atomic_load_N and
- * __atomic_store_N as well, which this file also supplies: a store under the
- * lock, a load bare. std::atomic_flag::clear stays inline even then (GCC 16),
- * and rule 1 covers it.
+ * One store stays inline even with the flag: std::atomic_flag::clear (GCC
+ * 16). So a read-modify-write stores only when it changes the value. Then one
+ * that changes nothing can always be ordered before the store it raced. The
+ * case that needs it is cyros's own spinlock, released by clear while the
+ * other core retries its test-and-set: one that always stored 1 put the lock
+ * back, held by nobody, 1,820 times in 40,000 rounds on the RP2040, and one
+ * that stores only over a 0 never did (arm-port-notes.md 19h).
  *
  *
  * Ordering
  * ========
  * On one core: a single in-order core with no write buffer that reorders
  * normal memory needs no fence for these to be sequentially consistent with
- * each other and with the inline loads and stores. What it needs is that the
+ * each other and with atomic_flag's inline clear. What it needs is that the
  * COMPILER keeps memory accesses on the right side of each, which the
  * "memory" clobbers on the PRIMASK accessors and the call itself provide.
  * On more than one, the lock's acquire and release are fences, which makes
@@ -106,7 +99,7 @@ T read_modify_write(volatile void* address, Op op) noexcept
    std::uint32_t const primask = enter();
    T const old = *object;
    T const updated = op(old);
-   /* Rule 1 in the header: no store when nothing changes. */
+   /* No store when nothing changes, for atomic_flag::clear (the header). */
    if (updated != old) {
       *object = updated;
    }
@@ -122,7 +115,7 @@ bool compare_exchange(volatile void* address, void* expected, T desired) noexcep
    std::uint32_t const primask = enter();
    T const current = *object;
    bool const equal = current == *want;
-   /* Rule 1 again. */
+   /* Likewise. */
    if (equal && desired != current) {
       *object = desired;
    }
@@ -133,9 +126,9 @@ bool compare_exchange(volatile void* address, void* expected, T desired) noexcep
    return equal;
 }
 
-/* -fno-inline-atomics only (see the header). Fenced on more than one core, as
- * GCC's inline seq_cst load is. Fencing only what the memory order asks for
- * changed no figure measured (arm-port-notes.md 19h). */
+/* Fenced on more than one core, as GCC's inline seq_cst load is. Fencing only
+ * what the memory order asks for changed no figure measured
+ * (arm-port-notes.md 19h). */
 template <typename T>
 T load(volatile void const* address) noexcept
 {
@@ -219,8 +212,8 @@ CYROS_ARMV6M_ATOMICS(4, unsigned int)
 #undef CYROS_ARMV6M_ATOMICS
 
 /* std::atomic_flag's test_and_set. Byte-wide, as GCC lays the flag out, and
- * set to 1 only over a 0, which is rule 1 in the header and what keeps a
- * spinlock's release, an inline store, from being overwritten. */
+ * set to 1 only over a 0, which keeps a spinlock's release, an inline clear,
+ * from being overwritten (the header). */
 extern "C" bool __atomic_test_and_set(volatile void* p, int)
 {
    auto const set = [](unsigned char old) { return old != 0u ? old : static_cast<unsigned char>(1); };

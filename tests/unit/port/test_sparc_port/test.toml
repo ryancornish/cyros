@@ -1,0 +1,17 @@
+[test]
+name = "test_sparc_port"
+layer = 0
+kind = "unit"
+source = "test_sparc_port.cpp"
+config = "test_sparc_port_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+[components]
+# Locked to one LEON3. It reads the PSR, WIM and TBR and QEMU's IRQMP
+# directly, so it is meaningless anywhere else.
+port = ["leon3"]
+
+[link]
+system_libraries = []

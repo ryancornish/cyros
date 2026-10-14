@@ -10,7 +10,7 @@ config = "test_target_smp_cv_herd_config.hpp"
 hosted = false
 
 [components]
-port = ["cortex_m33_smp", "riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp", "rp2040_smp", "cortex_r52_smp"]
+port = ["cortex_m33_smp", "riscv_virt_smp", "rp2350_hazard3_smp", "rp2350_m33_smp", "rp2040_smp", "cortex_r52_smp", "leon3_smp"]
 time_driver = "periodic"
 features = ["sync"]
 

@@ -1,0 +1,72 @@
+name = "sparc-elf-base"
+
+# Bare-metal SPARC V8 on LEON3, supervisor mode: QEMU's leon3_generic.
+# GCC 16 with newlib, as the ARM and RISC-V toolchains, so every ISA builds
+# cyros the same way (~/cyros-claude/sparc-port-plan.md 2). No GCC 16
+# sparc-elf is packaged for Arch, so `sparc-elf-*` must be on PATH from a
+# cross built from source; GCC 14 (the Zephyr SDK's) cannot build cyros
+# (std::function_ref, std::inplace_vector, = delete("reason")).
+#
+# -mcpu=leon3 selects the default multilib of a cross configured
+# --with-cpu=leon3: hard float, the register windows, CASA for
+# compare-exchange (with the user-data ASI, 0x0A, which supervisor code may
+# use too) and the ldstub fence GCC places for TSO.
+#
+# Compiled hosted, not -ffreestanding, for arm-none-eabi-base.toml's reason:
+# libstdc++ is built against newlib and expects it.
+
+[tools]
+cc = "sparc-elf-gcc"
+cxx = "sparc-elf-g++"
+ar = "sparc-elf-gcc-ar"
+asm = "sparc-elf-gcc"
+objcopy = "sparc-elf-objcopy"
+
+# CYROS_BENCH_MTIME is for the tests: the leon3 targets present GPTIMER as
+# MTIME, a 64-bit count with no period for a test to cross.
+[flags]
+common = [
+   "-mcpu=leon3",
+   "-ffunction-sections",
+   "-fdata-sections",
+   "-DCYROS_BENCH_MTIME=1",
+]
+c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions"]
+cxx = ["-std=gnu++26", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions", "-fno-rtti"]
+asm = []
+
+# As arm-none-eabi-base.toml: the board owns the reset path (-nostartfiles),
+# and cyros has no link dependency on libstdc++ (-nostdlib++, enforced). The
+# image is one RWX segment in RAM, which ld otherwise warns about.
+link = ["-nostartfiles", "-Wl,--gc-sections", "-nostdlib++", "-Wl,--no-warn-rwx-segments"]
+
+[settings]
+family = "gcc"
+debug = false
+optimization = "0"
+warnings_as_errors = false
+hosted = false
+
+# QEMU's LEON3 has an FPU (FSR version 4), and this is the hard-float
+# multilib. sparc-elf-debug-soft.toml drops it.
+provides = ["fpu"]
+
+# QEMU's leon3_generic: the board installs the port's trap table before any
+# compiled code and reaches the console through the APBUART. QEMU has no
+# semihosting for SPARC and exits 0 whatever the guest did, so the runner
+# reads the board's "EXIT: n" line. syscall_stubs.c is newlib's OS interface,
+# as on ARM and RISC-V.
+[board]
+linker_script = "../../tests/unit/port/sparc_bench/leon3.ld"
+sources = [
+   "../../tests/unit/port/sparc_bench/startup_leon3.c",
+   "../../tests/unit/common/syscall_stubs.c",
+]
+
+[runner]
+command = [
+   "sh", "-c",
+   "exec python3 \"$(git rev-parse --show-toplevel)/tests/unit/port/sparc_bench/run_leon3.py\" --smp 1 \"$0\"",
+   "{binary}",
+]
+timeout = 30

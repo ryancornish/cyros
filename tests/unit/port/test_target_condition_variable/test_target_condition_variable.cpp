@@ -44,6 +44,7 @@
 #include <cyros/sync/condition_variable.hpp>
 #include <cyros/sync/mutex.hpp>
 #include <cyros/sync/semaphore.hpp>
+#include <cyros/kernel/diagnostics.hpp>
 #include <cyros/config/config.hpp>
 #include <cyros/port/port.h>
 #include <cyros/port/port_traits.h>
@@ -83,6 +84,10 @@ bool  go = false;            // guarded by m
 int   completed = 0;         // guarded by m
 std::array<int, max_waiters> order{};
 bool  order_ok = true;
+bool  chain_ok = true;
+
+// The waiters' handles, for the chain's check. Set before the kernel starts.
+thread const* waiter_threads = nullptr;
 
 void waiter(std::size_t const index)
 {
@@ -125,8 +130,22 @@ std::uint64_t run_round(shape s, std::size_t n)
    }
    // Each waiter is more urgent, so it runs the moment it is enlisted and parks
    // (in lock() for chain, in wait() otherwise) before this returns.
-   for (std::size_t i = 0; i < n; ++i) {
-      enlist[i].release();
+   //
+   // The chain enlists the least urgent first. A waiter parked in lock() lends
+   // the driver its urgency, so after waiter 0 (priority 2) parked, waiters 1
+   // and up were less urgent than the boosted driver: they stayed ready, never
+   // parked, and the "chain" timed one handover and n - 1 free locks. Least
+   // urgent first, each new waiter outranks the boost so far and parks.
+   for (std::size_t k = 0; k < n; ++k) {
+      enlist[s == shape::chain ? n - 1 - k : k].release();
+   }
+
+   // A chain only if every waiter is queued on m behind the driver by now.
+   if (s == shape::chain) {
+      for (std::size_t i = 0; i < n; ++i) {
+         auto const behind = diagnostics::blocking_chain_of(waiter_threads[i]);
+         chain_ok = chain_ok && behind.length == 1 && behind.holders[0] == this_thread::id();
+      }
    }
 
    std::uint64_t const t0 = cyros_port_timestamp();
@@ -182,6 +201,9 @@ void driver()
    cyros::bench::start("every waiter completed, most urgent first, in every round");
    CYROS_CHECK(order_ok);
 
+   cyros::bench::start("every chain waiter was queued behind the driver before the release");
+   CYROS_CHECK(chain_ok);
+
    cyros::bench::start("release to last unlock, cycles (min / mean over 16 rounds)");
    for (std::size_t z = 0; z < sizes.size(); ++z) {
       for (std::size_t k = 0; k < shapes.size(); ++k) {
@@ -218,6 +240,7 @@ extern "C" int cyros_bench_main()
    for (std::size_t i = 0; i < max_waiters; ++i) {
       waiters[i] = thread(entries[i], waiter_stacks[i], thread::priority(static_cast<std::uint8_t>(2 + i)), core0);
    }
+   waiter_threads = waiters.data();
    thread driving(driver, driver_stack, thread::priority(driver_priority), core0);
 
    kernel::start();

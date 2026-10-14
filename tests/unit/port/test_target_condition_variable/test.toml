@@ -10,7 +10,7 @@ config = "test_target_condition_variable_config.hpp"
 hosted = false
 
 [components]
-port = ["cortex_m", "cortex_m0", "riscv_virt", "rp2350_hazard3", "rp2350_m33", "rp2040", "cortex_r52"]
+port = ["cortex_m", "cortex_m0", "riscv_virt", "rp2350_hazard3", "rp2350_m33", "rp2040", "cortex_r52", "leon3"]
 time_driver = "periodic"
 features = ["sync"]
 

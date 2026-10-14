@@ -1,0 +1,20 @@
+# Unit-test profile for the SPARC port on QEMU's leon3_generic, two cores.
+# Tests run under QEMU through the toolchain's runner, as the Cortex-M,
+# Cortex-R52 and RISC-V profiles do, and each test's port filter decides
+# whether it runs here.
+[profile]
+name = "unit_test_leon3_smp"
+toolchain = "../toolchains/sparc-elf-debug-smp.toml"
+
+[layout]
+source_root = "../../src"
+output_root = "../../out"
+
+[components]
+port = "leon3_smp"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

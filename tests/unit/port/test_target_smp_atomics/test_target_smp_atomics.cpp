@@ -33,9 +33,10 @@
  * The RP2040's M0+s have no exclusives at all, and the armv6m core layer
  * makes each read-modify-write a load and a store under an SIO spinlock
  * (port_atomic_armv6m.cpp). Without the lock the counts here come up short.
- * With it, what remains is the store GCC compiles INLINE, which takes no lock
- * and can land inside another core's read-modify-write. The kernel's spinlock
- * is released by exactly such a store (std::atomic_flag::clear), so a
+ * With it, what remains is the one store GCC compiles INLINE even under
+ * -fno-inline-atomics, which takes no lock and can land inside another core's
+ * read-modify-write. The kernel's spinlock is released by exactly that store
+ * (std::atomic_flag::clear), so a
  * test-and-set that always stored 1 would put the lock back, held by nobody:
  * about 4.5 percent of contended releases on the board (arm-port-notes.md
  * 19h). The kernel's own tests never contend a spinlock hard enough to see it,

@@ -15,9 +15,9 @@ void condition_variable::notify_all() noexcept
    // No requeue onto the mutex: the waiters are woken and each relocks, which
    // costs a wakeup per waiter. Moving them onto the mutex's PI queue without
    // waking them would nest a pi_wait_queue lock under this one and touch the
-   // inheritance cache. Measured not to be worth it on one core,
-   // arm-port-notes.md 15l. Across two cores the herd's excess over a handover
-   // chain is larger, measured in rp2350-notes.md 11d.
+   // inheritance cache, to save 2 to 16 us a waiter on the boards measured,
+   // one core and two, now that lock() takes a free mutex without arming
+   // (archive/decision-requeue.md).
    wake_all();
 }
 

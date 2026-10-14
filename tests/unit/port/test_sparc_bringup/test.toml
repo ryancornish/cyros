@@ -1,0 +1,14 @@
+[test]
+name = "test_sparc_bringup"
+layer = 2
+kind = "unit"
+source = "test_sparc_bringup.cpp"
+config = "test_sparc_bringup_config.hpp"
+hosted = false
+
+[components]
+# Locked to the SPARC port: it reads the register windows.
+port = ["leon3"]
+
+[link]
+system_libraries = []

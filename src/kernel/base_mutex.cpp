@@ -159,17 +159,28 @@ void base_mutex::check_ceiling_contract(thread_control_block const& tcb) const n
    CYROS_REQUIRE_OP(ceiling_priority, <=, tcb.base_priority); // ceiling below locker
 }
 
-bool base_mutex::try_lock() noexcept
+/**
+ * @brief Take the mutex if nobody owns it, without touching its queue.
+ *
+ * Cannot jump a handover: a release with waiters stores the chosen thread in
+ * owner, never null, so null means no waiter has been chosen. A waiter still
+ * polling races this CAS exactly as it races a newcomer's first poll.
+ */
+bool base_mutex::take_if_free(thread_control_block& tcb) noexcept
 {
-   auto& tcb = scheduler_for_this_core().get_current_thread();
-   check_ceiling_contract(tcb);
-
    thread_control_block* expected = nullptr;
    if (!owner.compare_exchange_strong(expected, &tcb, std::memory_order_acq_rel)) {
       return false;
    }
    register_held(tcb);
    return true;
+}
+
+bool base_mutex::try_lock() noexcept
+{
+   auto& tcb = scheduler_for_this_core().get_current_thread();
+   check_ceiling_contract(tcb);
+   return take_if_free(tcb);
 }
 
 void base_mutex::lock() noexcept
@@ -180,6 +191,12 @@ void base_mutex::lock() noexcept
    // catch this too, but names cyros's state rather than the caller's mistake.
    CYROS_REQUIRE(owner.load(std::memory_order_relaxed) != &tcb); // Recursive lock() by the owner
    check_ceiling_contract(tcb);
+
+   // A free mutex is taken without arming, so an uncontended lock() costs one
+   // CAS and never the queue's lock. Only a failure pays for the loop below.
+   if (take_if_free(tcb)) {
+      return;
+   }
 
    wait_queue::wait_node node{};
    node.owner = &tcb;

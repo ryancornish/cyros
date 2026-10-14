@@ -1,0 +1,17 @@
+name = "sparcv8"
+
+# SPARC V8 in supervisor mode with LEON3's extensions (ASR17, CASA,
+# power-down): the trap table, the register windows, the trap path and the
+# masks. ~/cyros-claude/sparc-port-plan.md has the design.
+description = "SPARC V8 / LEON3 CORE LAYER. Not selectable: targets extend it."
+
+# Deliberately absent from port/component.toml `variants`, which is what makes
+# this a layer rather than a port. It implements port_core.h and nothing else.
+sources = [
+   "port_core_sparcv8.cpp",
+]
+
+# So a target can include sparcv8.hpp, which declares what this layer needs
+# from it (the reschedule's interrupt, every other level, the counter and a
+# console) and the helpers it shares.
+private_includes = ["."]

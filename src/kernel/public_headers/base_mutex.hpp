@@ -132,6 +132,8 @@ private:
 
    void check_ceiling_contract(thread_control_block const& tcb) const noexcept;
 
+   bool take_if_free(thread_control_block& tcb) noexcept;
+
    bool acquire_condition(thread_control_block& tcb) noexcept;
 
    void hand_over(reschedule_policy policy) noexcept;
