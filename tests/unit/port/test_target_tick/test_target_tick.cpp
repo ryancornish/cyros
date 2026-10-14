@@ -218,10 +218,12 @@ void test_the_tick_rate_is_actually_what_was_configured()
       return;
    }
 
-   std::uint64_t const t0 = time::now().value;
+   /* The clock read straight after each host call, at both edges, so a
+    * call's round trip falls out of the difference (bench.hpp). Long enough
+    * that what is left, the jitter of a call, is noise. */
    std::uint64_t const ns0 = cyros::bench::elapsed_ns();
+   std::uint64_t const t0 = time::now().value;
 
-   /* Long enough that the semihosting traps at each end are noise. */
    while ((cyros::bench::elapsed_ns() - ns0) < 200'000'000ull) { }
 
    std::uint64_t const ns = cyros::bench::elapsed_ns() - ns0;

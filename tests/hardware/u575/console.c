@@ -13,6 +13,11 @@
  * DMA driven on purpose: a transmit interrupt would land inside the masking and
  * timing the tests measure. Nothing timing-sensitive should print either way.
  *
+ * It also carries bench.hpp's host time. OpenOCD answers neither of the two
+ * elapsed-time semihosting calls, so the board asks run_test.sh instead, the
+ * LEON3 board's protocol: it writes "@@cyros-host tickfreq" or
+ * "@@cyros-host elapsed" and reads back a decimal line on RX.
+ *
  * On the host: `picocom -b 500000 /dev/ttyACM0`, or console.sh.
  */
 
@@ -30,6 +35,8 @@
 #define USART1_CR1    REG(0x40013800u)
 #define USART1_BRR    REG(0x4001380Cu)
 #define USART1_ISR    REG(0x4001381Cu)
+#define USART1_ICR    REG(0x40013820u)
+#define USART1_RDR    REG(0x40013824u)
 #define USART1_TDR    REG(0x40013828u)
 
 #define USART_CR1_UE      (1u << 0)
@@ -37,8 +44,10 @@
 #define USART_CR1_TE      (1u << 3)
 #define USART_CR1_OVER8   (1u << 15)
 #define USART_CR1_FIFOEN  (1u << 29)
+#define USART_ISR_RXFNE   (1u << 5)
 #define USART_ISR_TC      (1u << 6)
 #define USART_ISR_TXFNF   (1u << 7)
+#define USART_ICR_ORECF   (1u << 3)
 
 /* Writes before init are dropped rather than spun on: an unclocked USART never
  * reports FIFO space, so a fault in the clock bring-up would otherwise hang
@@ -90,4 +99,59 @@ void cyros_bench_write(char const* text)
       while ((USART1_ISR & USART_ISR_TXFNF) == 0u) {}
       USART1_TDR = (uint8_t)*text;
    }
+}
+
+/* One decimal line from run_test.sh, which answers in about a millisecond
+ * (40 at worst, seen once). Bounded, so an image run with no runner attached
+ * (console.sh) gives up and its checks skip, after 1.6 s at 160 MHz and 5 s
+ * at 4 MHz (measured). */
+static int read_reply(uint64_t* value)
+{
+   uint64_t number = 0u;
+   int digits = 0;
+   for (uint32_t pass = 0u; pass < BOARD_SYSCLK_HZ / 8u; ++pass) {
+      if ((USART1_ISR & USART_ISR_RXFNE) == 0u) {
+         continue;
+      }
+      char const c = (char)USART1_RDR;
+      if (c >= '0' && c <= '9') {
+         number = number * 10u + (uint64_t)(c - '0');
+         ++digits;
+      } else if (c == '\n' && digits > 0) {
+         *value = number;
+         return 1;
+      }
+   }
+   return 0;
+}
+
+/* The board's half of bench.hpp's elapsed-time calls (its operation numbers
+ * are semihosting's). Anything the runner left unread, and an overrun that
+ * would stop reception, is dropped first, so a reply is always this
+ * request's. */
+long cyros_bench_semihost(long op, void volatile* arg)
+{
+   if (!console_ready) { return -1; }
+   USART1_ICR = USART_ICR_ORECF;
+   while ((USART1_ISR & USART_ISR_RXFNE) != 0u) {
+      uint32_t const stale = USART1_RDR;
+      (void)stale;
+   }
+
+   uint64_t value = 0u;
+   if (op == 0x31) {   /* SYS_TICKFREQ */
+      cyros_bench_write("@@cyros-host tickfreq\n");
+      return read_reply(&value) ? (long)value : -1;
+   }
+   if (op == 0x30) {   /* SYS_ELAPSED, into a two-word block, low word first */
+      cyros_bench_write("@@cyros-host elapsed\n");
+      if (!read_reply(&value)) {
+         return -1;
+      }
+      volatile uint32_t* const block = (volatile uint32_t*)arg;
+      block[0] = (uint32_t)value;
+      block[1] = (uint32_t)(value >> 32);
+      return 0;
+   }
+   return -1;
 }

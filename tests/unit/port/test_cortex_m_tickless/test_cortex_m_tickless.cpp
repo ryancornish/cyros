@@ -145,8 +145,9 @@ void test_the_counter_rate_is_real()
       return;
    }
 
-   std::uint64_t const t0 = time::now().value;
+   /* The clock read straight after each host call (bench.hpp). */
    std::uint64_t const ns0 = cyros::bench::elapsed_ns();
+   std::uint64_t const t0 = time::now().value;
    while ((cyros::bench::elapsed_ns() - ns0) < 200'000'000ull) { }
    std::uint64_t const ns = cyros::bench::elapsed_ns() - ns0;
    std::uint64_t const cycles = time::now().value - t0;
@@ -391,29 +392,42 @@ void test_repeated_arming_does_not_corrupt_the_clock()
       return;
    }
 
-   std::uint64_t const t0 = time::now().value;
+   /* The clock read straight after each host call (bench.hpp). */
    std::uint64_t const ns0 = cyros::bench::elapsed_ns();
+   std::uint64_t const t0 = time::now().value;
 
    bool monotonic = true;
    std::uint64_t previous = t0;
+   std::uint32_t rearms = 0;
+   std::uint64_t ns = 0;
 
-   for (int i = 0; i < 200; ++i) {
-      auto const h = time::schedule_at(
-         time::time_point{time::now().value + hardware_period / 2u}, on_deadline, nullptr);
-      std::uint64_t const current = time::now().value;
-      if (current < previous) { monotonic = false; break; }
-      previous = current;
-      (void)time::cancel(h);
-   }
+   /* Re-arm in batches of 200 until 200 ms of host time have passed. 200
+    * re-arms alone take a few ms at 160 MHz, which a board's host reference,
+    * a console round trip of about a millisecond, cannot time. The re-arms
+    * stay as dense as ever, so the span costs no sensitivity: what this
+    * catches, a wrap lost or counted twice, is a whole hardware period. */
+   do {
+      for (int i = 0; i < 200 && monotonic; ++i) {
+         auto const h = time::schedule_at(
+            time::time_point{time::now().value + hardware_period / 2u}, on_deadline, nullptr);
+         std::uint64_t const current = time::now().value;
+         if (current < previous) { monotonic = false; }
+         previous = current;
+         (void)time::cancel(h);
+         ++rearms;
+      }
+      ns = cyros::bench::elapsed_ns() - ns0;
+   } while (monotonic && ns < 200'000'000ull);
 
    std::uint64_t const cycles = time::now().value - t0;
-   std::uint64_t const ns = cyros::bench::elapsed_ns() - ns0;
    std::uint64_t const measured_hz = ns ? (cycles * 1'000'000'000ull) / ns : 0;
    std::uint64_t const claimed_hz = cyros_port_time_freq_hz();
 
    CYROS_CHECK(monotonic);
 
-   cyros::bench::print("  after 200 re-arms, measured rate = ");
+   cyros::bench::print("  re-arms = ");
+   cyros::bench::print_hex(rearms);
+   cyros::bench::print(", measured rate = ");
    cyros::bench::print_hex(static_cast<std::uint32_t>(measured_hz));
    cyros::bench::print("\n");
 

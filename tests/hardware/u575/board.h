@@ -42,9 +42,11 @@ void board_console_init(void);
 /* Wait until everything written has left the wire. */
 void board_console_drain(void);
 
-/* The two hooks bench.hpp declares for C++: print to the console (console.c),
- * and end the image with a status (startup_stm32u575.c). */
+/* The hooks bench.hpp declares for C++: print to the console (console.c),
+ * end the image with a status (startup_stm32u575.c), and answer its two
+ * elapsed-time calls by asking run_test.sh over the console (console.c). */
 void cyros_bench_write(char const* text);
 __attribute__((noreturn)) void cyros_bench_exit(uint32_t code);
+long cyros_bench_semihost(long op, void volatile* arg);
 
 #endif /* CYROS_U575_BOARD_H */

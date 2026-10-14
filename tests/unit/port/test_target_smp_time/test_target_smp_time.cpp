@@ -226,8 +226,9 @@ void thread_on_core0()
     * counter, and the clock then ran at twice its rate. */
    cyros::bench::start("the clock runs at the configured rate with both cores ticking");
    if (cyros::bench::elapsed_ns_is_available()) {
-      std::uint64_t const t0  = time::now().value;
+      /* The clock read straight after each host call (bench.hpp). */
       std::uint64_t const ns0 = cyros::bench::elapsed_ns();
+      std::uint64_t const t0  = time::now().value;
       while ((cyros::bench::elapsed_ns() - ns0) < 200'000'000ull) { }
       std::uint64_t const ns    = cyros::bench::elapsed_ns() - ns0;
       std::uint64_t const ticks = time::now().value - t0;

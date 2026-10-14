@@ -16,18 +16,22 @@
 #      are, since the test's config header is baked into both;
 #   3. the test's own sources are recompiled with the U575 board files instead
 #      of the bench's, with the ARM toolchain's flags, and linked for the U575;
-#   4. OpenOCD programs the board, and the test's output is read from the
-#      ST-LINK's virtual COM port until the board prints its final "EXIT: n"
-#      line (console.c, startup_stm32u575.c).
+#   4. OpenOCD programs the board, and console_host.py reads the test's output
+#      from the ST-LINK's virtual COM port until the board prints its final
+#      "EXIT: n" line (console.c, startup_stm32u575.c), answering the board's
+#      host-time requests on the way.
 #
 # --mhz is the board clock (board.h): 4, the reset clock and the default, or
 # 160 from PLL1. It changes the SysTick rate cyros is told and the console's
 # baud divisor together, from the one constant.
 #
 # OpenOCD stays attached while the test runs, although no test output goes
-# through it, because two things still use semihosting: the PORT's panic report
-# (src/port/arm/common/cortex_m.hpp) and bench.hpp's elapsed-time reference. A
-# panic therefore still arrives, on OpenOCD's output, and this script shows it.
+# through it, because the PORT's panic report is still semihosting
+# (src/port/arm/common/cortex_m.hpp). A panic therefore still arrives, on
+# OpenOCD's output, and this script shows it. bench.hpp's elapsed-time
+# reference, which OpenOCD does not implement, comes over the console instead:
+# the board asks and console_host.py answers with host time, so the
+# absolute-rate checks run here.
 #
 # Single-core tests only (the cortex_m port). The U575 has one core.
 set -euo pipefail
@@ -68,7 +72,9 @@ echo "== QEMU baseline"
 common=(-mcpu=cortex-m33 -mthumb -mfloat-abi=hard -mfpu=fpv5-sp-d16
         -ffunction-sections -fdata-sections -Og -g3 "-DBOARD_SYSCLK_HZ=$((mhz * 1000000))u")
 cflags=("${common[@]}" -std=gnu23 -Wall -Werror -Wextra -Wpedantic -fno-exceptions)
-cxxflags=("${common[@]}" -std=gnu++26 -Wall -Werror -Wextra -Wpedantic -fno-exceptions -fno-rtti)
+# The board answers bench.hpp's elapsed-time calls itself (console.c).
+cxxflags=("${common[@]}" -std=gnu++26 -Wall -Werror -Wextra -Wpedantic -fno-exceptions -fno-rtti
+          -DCYROS_BENCH_BOARD_SEMIHOSTS=1)
 includes=(-I "$build_root/include" -I "$cyros_root/src/port/internal_headers"
           -I "$cyros_root/tests/unit" -I "$test_dir")
 
@@ -130,28 +136,11 @@ log="$out/$test.log"
 ocd_log="$out/$test.openocd.log"
 echo "== running on the NUCLEO-U575ZI-Q at ${mhz} MHz (console: $tty, log: $log)"
 
-# The port is opened, and configured while held open, BEFORE the board is
-# programmed, so the first line cannot be lost. Raw, no echo: an echo would
-# send every received byte back to the board's RX.
-cat "$tty" > "$log" &
-reader=$!
-stty -F "$tty" "$baud" raw -echo
-openocd -f "$here/openocd.cfg" \
-   -c "init" -c "program $elf verify" -c "reset run" > "$ocd_log" 2>&1 &
-ocd=$!
-trap 'kill "$ocd" "$reader" 2>/dev/null || true' EXIT
-
-deadline=$((SECONDS + ${U575_TEST_TIMEOUT:-180}))
 verdict=""
-until grep -q "^EXIT: " "$log" 2>/dev/null; do
-   # OpenOCD ends itself on a semihosting exit, which on this board means the
-   # port panicked. Its report is in OpenOCD's log.
-   if ! kill -0 "$ocd" 2>/dev/null; then verdict="openocd exited (a port panic reports this way)"; break; fi
-   if [ "$SECONDS" -ge "$deadline" ]; then verdict="timed out waiting for EXIT"; break; fi
-   sleep 0.2
-done
-kill "$reader" "$ocd" 2>/dev/null || true
-wait 2>/dev/null || true
+python3 "$here/console_host.py" --elf "$elf" --cfg "$here/openocd.cfg" \
+   --tty "$tty" --baud "$baud" --log "$log" --ocd-log "$ocd_log" \
+   --timeout "${U575_TEST_TIMEOUT:-180}" 2> "$out/$test.runner.err" \
+   || verdict="$(cat "$out/$test.runner.err")"
 
 cat "$log"
 # OpenOCD's log matters only when something went wrong: a port panic arrives

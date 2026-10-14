@@ -80,10 +80,12 @@ inline void print(char const* text) noexcept
  * the return address and resuming, which is what the trap handling expects.
  * The extra call/return is nothing against a trap that costs microseconds.
  */
+#if !defined(CYROS_BENCH_BOARD_SEMIHOSTS)
 #if defined(__riscv) || (defined(__ARM_ARCH_PROFILE) && __ARM_ARCH_PROFILE == 'R') || defined(__sparc__)
 #define CYROS_BENCH_BOARD_SEMIHOSTS 1
 #else
 #define CYROS_BENCH_BOARD_SEMIHOSTS 0
+#endif
 #endif
 
 #if CYROS_BENCH_BOARD_SEMIHOSTS
@@ -94,7 +96,9 @@ inline void print(char const* text) noexcept
  * 7b), and it supports neither elapsed-time call anyway. On an R52 a BKPT is a
  * debug event, a Prefetch Abort with no debugger, and the trap is HLT. QEMU
  * has no semihosting on SPARC, so the LEON3 board asks its runner for host
- * time over the console instead, and answers the two elapsed-time calls. */
+ * time over the console instead, and answers the two elapsed-time calls. A
+ * board on any other ISA that does the same defines the macro as 1 itself:
+ * the U575's runner does, because OpenOCD has neither call. */
 extern "C" long cyros_bench_semihost(long op, void volatile* arg) noexcept;
 #endif
 
@@ -123,11 +127,13 @@ extern "C" long cyros_bench_semihost(long op, void volatile* arg) noexcept;
  * rather than merely a monotonic one. A port that gets its clock wrong by 25
  * per cent, as this one did, passes every relative check.
  *
- * It costs a semihosting trap per call, so it belongs at the edges of a
- * measurement and never inside one. It stays semihosting on every board
- * because it is a HOST service by nature. On the U575 OpenOCD does not
- * implement it, so the checks that need it skip, and it needs OpenOCD attached
- * to answer even that, which run_test.sh keeps.
+ * It costs a trap per call on QEMU, and a console round trip of about a
+ * millisecond where the board's runner answers it (LEON3, the U575), so it
+ * belongs at the edges of a measurement and never inside one. Read the clock
+ * under test straight AFTER each call, at both edges: the round trips then
+ * cancel, where reading it before the first call adds one to the span. Where
+ * nothing answers (OpenOCD on the other boards), the checks that need it
+ * skip.
  */
 inline constexpr long sys_elapsed  = 0x30;
 inline constexpr long sys_tickfreq = 0x31;

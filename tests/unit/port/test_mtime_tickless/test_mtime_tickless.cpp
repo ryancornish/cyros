@@ -184,8 +184,9 @@ void test_the_counter_rate_is_real()
       return;
    }
 
-   std::uint64_t const t0 = time::now().value;
+   /* The clock read straight after each host call (bench.hpp). */
    std::uint64_t const ns0 = cyros::bench::elapsed_ns();
+   std::uint64_t const t0 = time::now().value;
    while ((cyros::bench::elapsed_ns() - ns0) < 200'000'000ull) { }
    std::uint64_t const ns = cyros::bench::elapsed_ns() - ns0;
    std::uint64_t const counts = time::now().value - t0;
