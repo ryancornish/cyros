@@ -17,7 +17,8 @@
  *          only, so the two compose in any order, including overlapping
  *          ones; that a preempt-disable masks the reschedule and not a
  *          device; that a reschedule pended under either waits for the unmask
- *          and then runs once, masked; that a yield runs it synchronously;
+ *          and then runs once, at its own level; that a yield runs it
+ *          synchronously;
  *          that every register, Y and the condition codes survive a trap, a
  *          yield, a trap taken in the invalid window and a handler deep enough
  *          to spill the interrupted window; that `ta 3` flushes and every
@@ -383,7 +384,7 @@ void test_pend_while_preemption_disabled_waits_for_the_enable()
 
 void test_pend_at_baseline_runs_promptly()
 {
-   cyros::bench::start("a reschedule pended at baseline runs promptly, masked, below this frame");
+   cyros::bench::start("a reschedule pended at baseline runs promptly, at its level, below this frame");
 
    open_pil();
    int const before = reschedule_calls;
@@ -392,10 +393,11 @@ void test_pend_at_baseline_runs_promptly()
    settle();
    CYROS_CHECK_EQ(reschedule_calls, before + 1);
 
-   /* Handlers run at PIL 15. Before the first thread there is no interrupt
+   /* A handler runs at its own level, the reschedule's 1: preemption off,
+    * every other level open. Before the first thread there is no interrupt
     * stack, so this one ran on the stack it arrived on, below the frame the
     * entry stored under this function's sp. */
-   CYROS_CHECK_EQ(handler_pil, 15u);
+   CYROS_CHECK_EQ(handler_pil, 1u);
    CYROS_CHECK(handler_sp != 0u);
    CYROS_CHECK(handler_sp + 80u < here);
    CYROS_CHECK_EQ(pil(), 0u);   /* and the exit put PIL back */

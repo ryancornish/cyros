@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_sparc_nesting"
+layer = 0
+kind = "unit"
+source = "test_sparc_nesting.cpp"
+config = "test_sparc_nesting_config.hpp"
+
+# Runs on bare metal, on the machine the toolchain's board and runner name.
+hosted = false
+
+[components]
+# Locked to one LEON3. It reads the PSR and QEMU's IRQMP directly and starts
+# its own context through the port, so it is meaningless anywhere else.
+port = ["leon3"]
+
+[link]
+system_libraries = []

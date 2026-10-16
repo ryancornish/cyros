@@ -72,6 +72,10 @@
 
 #include <cyros/port/port_mcu.h>
 
+/* For the masks around the time source: a target may call the core
+ * contract, it may not implement it. */
+#include <cyros/port/port_core.h>
+
 #include "mtime.hpp"
 #include "sparcv8.hpp"
 
@@ -458,7 +462,14 @@ void reschedule_setup(std::uint32_t core) noexcept
 void interrupt(std::uint32_t level) noexcept
 {
    if (level == compare_level()) {
+      /* Masked for the time source, which mtime.hpp asks for, as the ARM
+       * targets' handlers mask: the handler runs at the timer's level, and a
+       * device nesting above it could arm a deadline between the time source
+       * reading a compare and writing it back, or spin on this core's timer
+       * lock or epoch sequence while this core holds them. */
+      cyros_mask_token_t const token = cyros_port_irq_save();
       mtime::interrupt();
+      cyros_port_irq_restore(token);
    } else {
       cyros_sparc_device_interrupt(level);
    }

@@ -13,12 +13,12 @@
  * ============================================================
  * As on RISC-V and the R52. A reschedule is interrupt level 1, the lowest,
  * raised through the interrupt controller's force register (the target's).
- * It is taken only when PSR.PIL is 0, and every handler runs with PIL 15, so
- * a reschedule pended inside an interrupt is taken when that interrupt
- * returns, never during it. `cyros_port_thread_yield` is a software trap
- * (`ta 9`), which enters the same path synchronously: a force-register write
- * crosses the bus and lands some cycles later, so a yield built on it could
- * return before the switch.
+ * It is taken only when PSR.PIL is 0, and every handler runs at PIL 1 or
+ * above, so a reschedule pended inside an interrupt, nested or not, is taken
+ * when the outermost one returns to its thread, never during it.
+ * `cyros_port_thread_yield` is a software trap (`ta 9`), which enters the
+ * same path synchronously: a force-register write crosses the bus and lands
+ * some cycles later, so a yield built on it could return before the switch.
  *
  *
  * Register windows, and what a trap saves
@@ -58,10 +58,45 @@
  * is left to spill.
  *
  * Handlers run on the core's interrupt stack, the stack the core stood on
- * when it started its first thread, as on RISC-V. Its top reads ZERO while a
- * trap is handled, and before the first thread, so a fault inside a handler,
- * or a trap the port test raises during bring-up, stays on the stack it is
- * on.
+ * when it started its first thread, as on RISC-V. Its top reads ZERO before
+ * the first thread, so a trap the port test raises during bring-up stays on
+ * the stack it arrives on.
+ *
+ *
+ * Nested interrupts
+ * =================
+ * SPARC prioritises its fifteen levels in hardware: level n is taken only
+ * while PIL is below n. So a handler runs at its OWN level, PIL n, and every
+ * level above it may interrupt it, while its own and those below wait for it
+ * to return. The reschedule, and the yield that stands in for it, run at
+ * level 1, so the kernel's reschedule is interruptible by every device and by
+ * the timer, as PendSV is on Cortex-M. A fault runs at 15, as everything did
+ * before nesting: it is the application's hook, and usually a panic.
+ *
+ * Only the outermost trap's frame is a thread's, and only it moves to the
+ * interrupt stack. A nested trap interrupted a handler, which is on that
+ * stack already, so its frame lands below that handler's sp and its handler
+ * runs below that, never on a thread's stack and never over the handler it
+ * interrupted. The interrupt stack is sized for the deepest nesting: one
+ * frame and one handler's calls per level in use. A nested trap may still
+ * spill a THREAD's window, to that window's own save area, which the ABI
+ * reserves above the thread's sp and every handler's calls already use.
+ *
+ * Which trap is the outermost is the core's DEPTH, and the entry counts it,
+ * records the outermost frame as the thread's, and picks the stack, all with
+ * traps still off. The exit counts it back down with traps off again. So no
+ * trap can arrive between a trap being taken and its being counted, which is
+ * what lets one nest anywhere traps are on: in the handler, in the dispatch
+ * around it, in the entry's FP save, and in the exit's FP restore. Level 15,
+ * which no PIL masks, can arrive in all of those.
+ *
+ * The trap path's own code still runs at PIL 15, and lowers it to the
+ * handler's level only around the handler. That is not for the count, which
+ * is safe with traps on, but for the exit's traps-off write: WRPSR is delayed
+ * by up to three instructions, so an interrupt could be taken just after the
+ * write that clears ET, and its rett would set ET again under the exit's
+ * window handling. At 15 only level 15 can. QEMU applies WRPSR at once, so no
+ * test here can show that.
  *
  *
  * Masking: two fields of one PIL
@@ -76,7 +111,11 @@
  * 0 open, 1 preempt-disabled, 14 masked, 15 both, with 14 and 15 masking
  * exactly the same interrupts. Each TOKEN is its own field's previous bits,
  * and a restore rewrites only its own field, so regions compose in any order
- * without memory, as PRIMASK and BASEPRI do. Handlers run at 15.
+ * without memory, as PRIMASK and BASEPRI do. They compose inside a handler
+ * too, at whatever bits its level n has: an irq_save there takes PIL to 14
+ * or 15 and its restore gives back n's bits 1 to 3, and a preempt-disable at
+ * an even level masks the level above it too while it is held, which only
+ * delays that level.
  *
  * Baseline priority is PIL 0 outside a trap. WRPSR is delayed by up to three
  * instructions, so every write is followed by three nops: a raised PIL is in
@@ -143,20 +182,22 @@ static_assert(alignof(cyros_port_context) <= CYROS_PORT_CONTEXT_ALIGN,
               "CYROS_PORT_CONTEXT_ALIGN in port_traits.h is too weak for this port");
 
 /**
- * @brief What each core's trap path keeps. The assembly reads the first two
- *        words, so the layout is fixed (sparcv8.hpp's offsets).
+ * @brief What each core's trap path keeps. The assembly reads and writes the
+ *        first three words, so the layout is fixed (sparcv8.hpp's offsets).
  *
  * `frame` is the RUNNING thread's frame while a trap is in progress, which
- * cyros_port_switch replaces with the incoming thread's and the exit then
- * resumes. `irq_stack` is where the entry moves to, zero while a trap is
- * handled or before the first thread. No core touches another's.
+ * cyros_port_switch replaces with the incoming thread's and the outermost
+ * exit then resumes. `irq_stack` is the top of the stack the outermost trap
+ * moves to, zero before the first thread. `depth` is how many traps are in
+ * progress, nested ones included, and only the entry and exit change it,
+ * with traps off ("Nested interrupts"). No core touches another's.
  */
 struct cyros_sparc_core_state
 {
    std::uint32_t* frame;
    std::uintptr_t irq_stack;
    std::uint32_t  depth;
-   std::uintptr_t irq_stack_top;
+   std::uint32_t  unused;   /* the stride the entry indexes by */
 };
 
 static_assert(offsetof(cyros_sparc_core_state, frame) == CYROS_SPARC_CORE_FRAME);
@@ -229,7 +270,8 @@ inline std::uint32_t psr_set(std::uint32_t bits) noexcept
    return previous;
 }
 
-/* Replace the PSR's `field` with `value`'s bits of it. */
+/* Replace the PSR's `field` with `value`'s bits of it. An interrupt between
+ * the read and the write returns with this context's PSR as it was. */
 inline void psr_restore(std::uint32_t field, std::uint32_t value) noexcept
 {
    std::uint32_t current, next;
@@ -244,6 +286,13 @@ inline void psr_restore(std::uint32_t field, std::uint32_t value) noexcept
                 : "=&r"(current), "=&r"(next)
                 : "r"(field), "r"(value)
                 : "memory", "cc");
+}
+
+/* PIL := `level`, both fields at once: the trap path's, around a handler.
+ * Lowered, any pending level above it is taken within the write's nops. */
+inline void set_pil(std::uint32_t level) noexcept
+{
+   psr_restore(sparcv8::psr_pil_mask, level << sparcv8::psr_pil_shift);
 }
 
 } // namespace
@@ -590,16 +639,26 @@ asm(
    "   std   %i4, [%sp + " CYROS_SPARC_OFF(CYROS_SPARC_F_O4) "]     \n"
    "   std   %i6, [%sp + " CYROS_SPARC_OFF(CYROS_SPARC_F_O6) "]     \n"
    "   mov   %sp, %l6                                               \n"   /* the entered frame */
-   /* 3. The interrupt stack, or this one when none is set (a trap inside a
-    *    handler, or before the first thread). Zero while handled. */
+   /* 3. Count the trap, traps still off. The outermost one's frame is the
+    *    thread's, and it moves to the interrupt stack, if there is one yet.
+    *    A nested one stays below the handler it interrupted, which is on that
+    *    stack already, so it never lands on a thread's. %l7 keeps the core's
+    *    state for the exit. */
    CYROS_SPARC_THIS_CORE_STATE
-   "   ld    [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_IRQ_STACK) "], %g1 \n"
-   "   cmp   %g1, 0                                                 \n"
-   "   be,a  2f                                                     \n"
-   "    mov  %l6, %g1                                               \n"
-   "   st    %g0, [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_IRQ_STACK) "] \n"
+   "   ld    [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_DEPTH) "], %g2 \n"
+   "   add   %g2, 1, %g1                                            \n"
+   "   st    %g1, [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_DEPTH) "] \n"
+   "   cmp   %g2, 0                                                 \n"
+   "   bne   2f                                                     \n"   /* nested */
+   "    mov  %l6, %g1                                               \n"   /* (either way) below the frame */
+   "   st    %l6, [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_FRAME) "] \n"
+   "   ld    [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_IRQ_STACK) "], %g2 \n"
+   "   cmp   %g2, 0                                                 \n"
+   "   bne,a 2f                                                     \n"
+   "    mov  %g2, %g1                                               \n"   /* (taken only) the interrupt stack */
    "2: sub   %g1, 96, %sp                                           \n"
-   /* 4. PIL 15 and traps on: window traps happen in the C below. */
+   /* 4. PIL 15 and traps on: window traps happen in the C below, and a
+    *    level 15 may nest from here. */
    "   or    %l0, 0xf00, %g1                                        \n"
    "   wr    %g1, 0x20, %psr                                        \n"
    "   nop                                                          \n"
@@ -618,6 +677,9 @@ asm(
    "   nop                                                          \n"
    "   nop                                                          \n"
    "   nop                                                          \n"
+   "   ld    [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_DEPTH) "], %g2 \n"   /* uncounted, now nothing can nest */
+   "   sub   %g2, 1, %g2                                            \n"
+   "   st    %g2, [%l7 + " CYROS_SPARC_OFF(CYROS_SPARC_CORE_DEPTH) "] \n"
    "   and   %g1, 0x1f, %g3                                         \n"   /* g3 = T */
    "   rd    %wim, %g2                                              \n"
    "   cmp   %l5, %l6                                               \n"
@@ -717,49 +779,46 @@ asm(
  *        resume.
  *
  * An interrupt at the reschedule level is the reschedule, any other level
- * the target's. `ta 9` is a yield. Anything else is a fault.
+ * the target's, each run at its own level so that higher ones nest. `ta 9`
+ * is a yield, run at the reschedule's. Anything else is a fault, run at 15.
+ * Entered and left at PIL 15 ("Nested interrupts").
  */
 extern "C" std::uint32_t* cyros_sparc_trap_dispatch(std::uint32_t* frame, std::uint32_t tt)
 {
    cyros_sparc_core_state& state = cyros_sparc_cores[this_core()];
-   ++state.depth;
-   /* Only the outermost trap's frame is the thread's. A trap inside a
-    * handler (a fault) has its own, which it resumes, and must not replace
-    * the thread's, or the outer trap would resume the inner one's frame. */
-   if (state.depth == 1u) {
-      state.frame = frame;
-   }
+   /* The entry counted this trap, and recorded the outermost one's frame as
+    * the thread's. A nested trap has its own frame, which it resumes, and
+    * must not replace the thread's, or the outer trap would resume it. */
+   bool const outermost = state.depth == 1u;
 
    if (tt >= sparcv8::tt_interrupt_first && tt <= sparcv8::tt_interrupt_last) {
       std::uint32_t const level = tt - 0x10u;
+      set_pil(level);
       if (level == sparcv8::reschedule_level) {
          /* The interrupt controller dropped the request when the trap was
           * taken, so a reschedule asked for while this one runs (a wake from
-          * inside the scheduler) is kept for the next. */
+          * inside the scheduler, or from a handler nested in it) is kept for
+          * the next. */
          run_reschedule(state);
       } else {
          sparcv8::interrupt(level);
       }
+      set_pil(sparcv8::pil_masked_preempt);
    }
-   else if (tt == sparcv8::tt_yield && state.depth == 1u) {
+   else if (tt == sparcv8::tt_yield && outermost) {
       /* Resume after the ta. Done on THIS thread's frame, before a switch
        * replaces it. */
       frame[sparcv8::frame_pc]  = frame[sparcv8::frame_npc];
       frame[sparcv8::frame_npc] = frame[sparcv8::frame_npc] + 4u;
+      set_pil(sparcv8::reschedule_level);
       run_reschedule(state);
+      set_pil(sparcv8::pil_masked_preempt);
    }
    else {
       cyros_sparc_fault_handler(tt, frame);
    }
 
-   --state.depth;
-   if (state.depth != 0u) {
-      return frame;
-   }
-   /* Re-arm the interrupt stack for the next trap. rett is still ahead and
-    * PIL stays 15 until it, so no interrupt can arrive in between. */
-   state.irq_stack = state.irq_stack_top;
-   return state.frame;
+   return outermost ? state.frame : frame;
 }
 
 /**
@@ -813,10 +872,9 @@ void init_this_core()
    std::uint32_t const core = core_number();
    CYROS_ASSERT_OP(core, <, static_cast<std::uint32_t>(CYROS_PORT_CORE_COUNT));
    cyros_sparc_core_state& state = cyros_sparc_cores[core];
-   state.frame         = nullptr;
-   state.depth         = 0u;
-   state.irq_stack     = 0u;   /* no interrupt stack until the first thread */
-   state.irq_stack_top = 0u;
+   state.frame     = nullptr;
+   state.depth     = 0u;
+   state.irq_stack = 0u;   /* no interrupt stack until the first thread */
 
    reschedule_setup(core);
 }
@@ -958,8 +1016,7 @@ void cyros_port_start_first(cyros_port_context* first)
     * above it is ever returned to, and everything a handler uses lies below. */
    std::uintptr_t sp;
    asm volatile("mov %%sp, %0" : "=r"(sp));
-   state.irq_stack_top = sp & ~static_cast<std::uintptr_t>(7u);
-   state.irq_stack     = state.irq_stack_top;
+   state.irq_stack = sp & ~static_cast<std::uintptr_t>(7u);
 
    /* This window plays the trap window: traps off, then the exit loads the
     * thread's window above it and enters it. */

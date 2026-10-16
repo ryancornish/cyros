@@ -41,7 +41,9 @@
  * Every trap that can switch (an interrupt, the yield, a fault) stores the
  * interrupted thread's state on that thread's OWN stack, below its sp, where
  * the SPARC ABI keeps nothing. A suspended thread is a pointer to it, as on
- * RISC-V and the R52.
+ * RISC-V and the R52. A trap nested inside a handler stores the handler's
+ * state the same way, below the handler's sp, which is on the interrupt
+ * stack: only the outermost trap's frame is ever on a thread's stack.
  *
  * What it holds is what the register windows do not: the globals, Y, the
  * PSR, PC and nPC, and the interrupted window's OUTS, which are the trap
@@ -86,8 +88,8 @@
 #define CYROS_SPARC_F_BYTES  80
 #endif
 
-/* Per-core state the assembly reads: four words a core, so the entry indexes
- * it with one shift. */
+/* Per-core state the assembly reads and writes: four words a core, so the
+ * entry indexes it with one shift. */
 #define CYROS_SPARC_CORE_FRAME       0
 #define CYROS_SPARC_CORE_IRQ_STACK   4
 #define CYROS_SPARC_CORE_DEPTH       8
@@ -145,7 +147,8 @@ inline constexpr std::uint32_t psr_ef       = 1u << 12;
 
 /* The PIL values the masks use (port_core_sparcv8.cpp, "Masking"). 14 and 15
  * mask the same interrupts, every level but the non-maskable 15, so the pair
- * carries whether preemption is also off. */
+ * carries whether preemption is also off. The trap path's own code runs at
+ * 15, and a handler at its own level ("Nested interrupts"). */
 inline constexpr std::uint32_t pil_open           = 0u;
 inline constexpr std::uint32_t pil_preempt        = 1u;
 inline constexpr std::uint32_t pil_masked         = 14u;
@@ -243,7 +246,9 @@ void reschedule_raise(std::uint32_t core) noexcept;
 void reschedule_setup(std::uint32_t core) noexcept;
 
 /** Every interrupt level but the reschedule's, on the calling core, inside
- * the trap with interrupts masked. The target's timer, or a device's. */
+ * the trap at PIL `level`, so every higher level may nest into it. The
+ * target's timer, or a device's. A body that must not be nested into masks
+ * for itself, as an ARM handler does. */
 void interrupt(std::uint32_t level) noexcept;
 
 /** The counter behind cyros_port_timestamp. */
@@ -270,8 +275,11 @@ extern "C" std::uint32_t const cyros_sparc_trap_table[];
  *        target's own: a device's. WEAK, so the application supplies its
  *        devices' handlers, as it owns an M-profile vector table.
  *
- * Called inside the trap with interrupts masked, on the core's interrupt
- * stack. The default panics, naming the level.
+ * Called inside the trap at PIL `level`, on the core's interrupt stack: a
+ * higher level may nest into it, this level and those below wait for it, and
+ * the kernel's own masks work inside it as anywhere. Level 15 cannot be
+ * masked, so its handler must not call the kernel, as an ARM NMI's must not.
+ * The default panics, naming the level.
  */
 extern "C" void cyros_sparc_device_interrupt(std::uint32_t level);
 
@@ -280,9 +288,10 @@ extern "C" void cyros_sparc_device_interrupt(std::uint32_t level);
  *        fault, or a software trap nothing claims. WEAK, so the application,
  *        or a test, may replace it.
  *
- * Called inside the trap with interrupts masked, on the core's interrupt
- * stack, with the trap type and the trapped thread's frame (the layout
- * above). Returning resumes the frame at its PC and nPC, so a handler that
+ * Called inside the trap with interrupts masked (PIL 15), on the core's
+ * interrupt stack, with the trap type and the trapped context's frame (the
+ * layout above): a thread's, or a handler's when the fault was taken inside
+ * one. Returning resumes the frame at its PC and nPC, so a handler that
  * wants to skip the trapping instruction moves them on itself. The default
  * reports and panics.
  */
