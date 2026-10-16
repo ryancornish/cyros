@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # gdb setup for stepping cyros on the U575.
 target extended-remote :3333
 

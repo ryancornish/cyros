@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_riscv_port.cpp
  * @brief Port-contract test for the rv32 core layer. Runs on QEMU's virt.

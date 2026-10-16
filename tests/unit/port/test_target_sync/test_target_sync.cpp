@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_sync.cpp
  * @brief Semaphore, mutex and priority inheritance, on the target.

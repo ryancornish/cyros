@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_chrono_event_flags_sim.cpp
  * @brief The timed event_flags methods, on the simulation driver.

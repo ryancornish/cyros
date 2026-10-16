@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_linux_preempt_internal.hpp
  * @brief Contract between port_linux_preempt.cpp and its time driver.

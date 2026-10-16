@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # Run one of the on-target unit tests on the EK-TM4C123GXL instead of QEMU.
 #
 #   ./run_test.sh <test name> [--mhz 16|80] [--build-only]

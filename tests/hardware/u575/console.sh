@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # Watch the board's console: USART1 through the ST-LINK's virtual COM port.
 #
 # The rate comes from board.h, so this never needs telling which clock the

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # Build the NUCLEO-U575ZI-Q image.
 #
 #   ./build.sh               the 4 MHz reset clock

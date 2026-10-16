@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_trace.cpp
  * @brief The kernel trace on the target, stamped by the port's cycle counter.

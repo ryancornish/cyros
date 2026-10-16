@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_sync_mutex_pi_chain.cpp
  * @brief Deep transitive priority-inheritance chains, parameterised on depth.

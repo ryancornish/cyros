@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # Cortex-M33 bring-up: the port and the kernel, nothing else.
 #
 # NO time_driver on purpose. The first thing to prove on a new target is that

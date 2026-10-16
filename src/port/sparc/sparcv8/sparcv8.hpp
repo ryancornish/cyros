@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file sparcv8.hpp
  * @brief The sparcv8 core layer's internal header: the processor state

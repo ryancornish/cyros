@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_armv8r_bringup.cpp
  * @brief First kernel bring-up on the armv8r core layer. Runs on QEMU's

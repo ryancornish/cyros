@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_rp2040_smp_atomic_store_config.hpp
  * @brief Cyros configuration for test_rp2040_smp_atomic_store.

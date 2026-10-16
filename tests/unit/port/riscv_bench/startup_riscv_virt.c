@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_riscv_virt.c
  * @brief Reset path and console for cyros's on-target tests on QEMU's RISC-V

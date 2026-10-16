@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file cortex_m33.hpp
  * @brief Cyros configuration for the single-core Cortex-M33 target.

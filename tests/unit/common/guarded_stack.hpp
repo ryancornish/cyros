@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file guarded_stack.hpp
  * @brief Thread stacks backed by mmap with a guard page, for unit tests.

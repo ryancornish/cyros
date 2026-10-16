@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "riscv_virt_smp"
 
 description = "QEMU's RISC-V virt machine, two harts: CLINT soft IRQ as the IPI, shared MTIME."

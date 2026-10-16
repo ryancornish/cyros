@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_traits.h
  * @brief Port traits for the leon3 target: GRLIB LEON3, 1 core (QEMU's leon3_generic).

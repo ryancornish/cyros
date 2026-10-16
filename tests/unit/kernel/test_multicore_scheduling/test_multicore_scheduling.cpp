@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_multicore_scheduling.cpp
  * @brief cross-core scheduling and wake (L5)

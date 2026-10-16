@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file orbit.cpp
  * @brief The Orbit BoosterPack's drivers. Pin table and contract in orbit.hpp.

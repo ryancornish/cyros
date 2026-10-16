@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_wait_cost.cpp
  * @brief What the ordinary wait path costs, in cycles, on the target.

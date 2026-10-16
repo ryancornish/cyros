@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file cortex_m.hpp
  * @brief Minimal Cortex-M register access, barriers and semihosting.

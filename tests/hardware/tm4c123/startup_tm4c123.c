@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_tm4c123.c
  * @brief Reset path and vector table for the EK-TM4C123GXL board.

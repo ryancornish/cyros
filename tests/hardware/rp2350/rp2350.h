@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file rp2350.h
  * @brief The RP2350 registers this board uses, and the 150 MHz clock bring-up.

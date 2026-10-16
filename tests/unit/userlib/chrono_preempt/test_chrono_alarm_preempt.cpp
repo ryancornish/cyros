@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_chrono_alarm_preempt.cpp
  * @brief The alarm's real-ISR path: preempt port, periodic driver.

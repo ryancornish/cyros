@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_rp2350_m33.cpp
  * @brief The RP2350's Cortex-M33 cores: identity, bring-up, the IPI, the

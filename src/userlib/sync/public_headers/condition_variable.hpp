@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 #ifndef CYROS_CONDITION_VARIABLE_HPP
 #define CYROS_CONDITION_VARIABLE_HPP
 

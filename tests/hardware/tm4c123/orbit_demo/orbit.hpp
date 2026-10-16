@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file orbit.hpp
  * @brief The Digilent Orbit BoosterPack on the EK-TM4C123GXL, register level.

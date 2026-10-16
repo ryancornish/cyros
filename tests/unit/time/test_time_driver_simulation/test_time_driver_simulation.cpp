@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_simulation_driver.cpp
  * @brief Unit tests for the simulation time driver (src/time/simulation).

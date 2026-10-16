@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_traits.h
  * @brief Port traits for the rp2350_hazard3 target: the RP2350's Hazard3 core

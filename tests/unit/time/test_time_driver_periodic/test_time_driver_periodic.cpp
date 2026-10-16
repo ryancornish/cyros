@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_periodic_driver.cpp
  * @brief Unit tests for the periodic (tickful) time driver.

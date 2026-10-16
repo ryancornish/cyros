@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_cortex_m_port.cpp
  * @brief Port-contract test for the cortex_m port. Runs on the target.

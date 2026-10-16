@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_wait_cost.cpp
  * @brief What a wake ACROSS cores costs, in cycles, on the target.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_core.h
  * @brief Cyros CORE port contract (C ABI): everything an architecture provides.

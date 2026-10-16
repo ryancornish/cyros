@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file screen.hpp
  * @brief What the demo draws, as pure functions of a snapshot of its state.

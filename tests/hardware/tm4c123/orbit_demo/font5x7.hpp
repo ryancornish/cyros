@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file font5x7.hpp
  * @brief The classic 5x7 ASCII font, printable characters 0x20 to 0x7E.

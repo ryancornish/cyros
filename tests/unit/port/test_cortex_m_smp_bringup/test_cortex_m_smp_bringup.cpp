@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_cortex_m_smp_bringup.cpp
  * @brief Two Cortex-M cores, one kernel (L2).

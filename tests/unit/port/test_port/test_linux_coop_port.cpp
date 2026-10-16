@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_linux_coop_port.cpp
  * @brief Unit tests for port layer (boost.context backend)

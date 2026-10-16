@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* QEMU's RISC-V virt: 128 MB of RAM at 0x80000000, where `-bios none` starts
  * every hart. One image in RAM, so .data needs no copy. */
 OUTPUT_ARCH(riscv)

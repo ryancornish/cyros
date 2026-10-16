@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_leon3.cpp
  * @brief A GRLIB LEON3 system: identity, bring-up, the IPI, the console, and

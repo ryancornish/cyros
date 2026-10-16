@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file round_robin.hpp
  * @brief Round-robin time-slicing: rotate equal-priority threads on a timer.

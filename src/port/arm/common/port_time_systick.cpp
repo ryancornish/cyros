@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_time_systick.cpp
  * @brief SysTick time source for the generic Cortex-M target. Periodic and tickless.

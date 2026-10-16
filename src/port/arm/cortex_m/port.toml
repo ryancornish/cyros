@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "cortex_m"
 
 description = "Generic single-core Cortex-M (ARMv7-M or ARMv8-M Mainline): core peripherals only."

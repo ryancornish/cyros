@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 [test]
 name = "test_armv6m_atomics_out_of_line"
 layer = 2

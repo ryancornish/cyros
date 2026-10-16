@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "armv6m"
 
 # The ARMv6-M (Baseline) core layer, for the Cortex-M0 and M0+. A layer of its

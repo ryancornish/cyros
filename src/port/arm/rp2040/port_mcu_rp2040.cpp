@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_rp2040.cpp
  * @brief The RP2040's Cortex-M0+ cores: identity, bring-up, the IPI, the TIMER

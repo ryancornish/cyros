@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "leon3"
 
 description = "A GRLIB LEON3 system, one core: QEMU's leon3_generic. IRQMP, GPTIMER as MTIME, APBUART, found by plug and play."

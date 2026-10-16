@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_chrono_alarm_sim.cpp
  * @brief Deterministic alarm and sleep tests on the simulation driver.

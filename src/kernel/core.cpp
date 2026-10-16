@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 #include <cyros/kernel/core.hpp>
 #include <cyros/port/port.h>
 

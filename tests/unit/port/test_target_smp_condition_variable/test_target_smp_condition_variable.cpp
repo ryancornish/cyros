@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_condition_variable.cpp
  * @brief condition_variable and event_flags across two real Cortex-M33 cores (L8).

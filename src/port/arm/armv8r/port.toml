@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "armv8r"
 
 # ARMv8-R AArch32 at EL1: the Cortex-R52, with its integrated GICv3 and the

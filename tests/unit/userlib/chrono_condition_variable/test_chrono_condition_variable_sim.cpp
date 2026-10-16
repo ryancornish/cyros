@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_chrono_condition_variable_sim.cpp
  * @brief The timed condition_variable methods, on the simulation driver.

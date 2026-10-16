@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "rp2350_hazard3"
 
 description = "The RP2350's Hazard3 core 0: SIO soft IRQ and MTIME."

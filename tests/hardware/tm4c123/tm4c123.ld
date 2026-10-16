@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* Linker script for the TM4C123GH6PM on an EK-TM4C123GXL.
  *
  * ROM + RAM: code and read-only data execute in place from the 256 KB of flash

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_atomic_armv6m.cpp
  * @brief The atomic operations ARMv6-M has no instructions for.

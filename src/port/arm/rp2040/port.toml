@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "rp2040"
 
 description = "The RP2040's Cortex-M0+ core 0: its 1 us TIMER for time and timestamps."

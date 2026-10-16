@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_sparc_preemption.cpp
  * @brief Every integer register, Y, the condition codes and the register

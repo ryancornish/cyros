@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_condition_variable.cpp
  * @brief condition_variable on the target, and what notify_all's herd costs.

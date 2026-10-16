@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 """Program the NUCLEO-U575ZI-Q, read its console, and answer its host-time
 requests, for run_test.sh.
 

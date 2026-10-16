@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_channel_isr.cpp
  * @brief The reason the feature exists: an ISR hands work to a thread.

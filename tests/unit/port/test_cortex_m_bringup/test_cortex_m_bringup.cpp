@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_cortex_m_bringup.cpp
  * @brief First kernel bring-up on the target. Runs under QEMU.

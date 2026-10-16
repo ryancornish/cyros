@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "rp2350_hazard3_smp"
 
 description = "The RP2350's two Hazard3 cores: SIO soft IRQ as the IPI, shared SIO MTIME."

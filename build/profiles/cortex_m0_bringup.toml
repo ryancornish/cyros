@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # Cortex-M0 bring-up: the ARMv6-M port and the kernel, nothing else.
 #
 # What ~/cyros-claude/tools-port-layers.py reads for the armv6m core layer,

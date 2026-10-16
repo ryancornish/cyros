@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_time_mtime.cpp
  * @brief The time half of port_mcu.h on an MTIME timer: one 64-bit counter

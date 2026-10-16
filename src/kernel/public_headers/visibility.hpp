@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file visibility.hpp
  * @brief Marks declarations that form the public ABI of libcyros.

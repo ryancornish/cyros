@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file assert.hpp
  * @brief The public hard-error channel: checks a consumer may write, and the

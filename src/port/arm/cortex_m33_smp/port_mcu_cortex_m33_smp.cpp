@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_cortex_m33_smp.cpp
  * @brief Dual Cortex-M33 on an SSE-200 subsystem: identity, bring-up, the IPI.

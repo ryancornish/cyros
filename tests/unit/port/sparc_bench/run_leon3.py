@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 """Run a cyros test image on QEMU's leon3_generic and exit with its status.
 
 The builder's [runner] for the SPARC toolchains. QEMU has no semihosting on

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 """Run one cyros test image on the Pico 2 W over OpenOCD's Tcl port, for
 run_test.sh, on either ISA: the Hazard3 cores or the Cortex-M33s.
 

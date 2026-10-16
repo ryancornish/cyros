@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "cortex_m0"
 
 description = "Generic single-core Cortex-M0 or M0+ (ARMv6-M): core peripherals only."

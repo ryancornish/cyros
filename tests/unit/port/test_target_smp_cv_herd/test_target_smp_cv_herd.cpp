@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_cv_herd.cpp
  * @brief What notify_all's herd costs when the waiters are on the other core.

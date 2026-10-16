@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* Linker script for QEMU's microbit, a Cortex-M0 (nRF51), the ARMv6-M bench.
  *
  * Code in the 256 kB flash at 0, which QEMU loads from the ELF and the core

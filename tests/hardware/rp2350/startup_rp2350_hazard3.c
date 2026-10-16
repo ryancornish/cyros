@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_rp2350_hazard3.c
  * @brief Reset path for cyros's on-target tests on the Pico 2 W's Hazard3 core

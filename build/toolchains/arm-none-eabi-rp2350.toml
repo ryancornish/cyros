@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "arm-none-eabi-rp2350"
 extends = "arm-none-eabi-debug.toml"
 

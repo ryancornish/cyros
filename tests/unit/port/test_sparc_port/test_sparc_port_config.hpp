@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_sparc_port_config.hpp
  * @brief Cyros configuration for the single-core LEON3 target (`leon3`).

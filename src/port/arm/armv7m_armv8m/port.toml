@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "armv7m_armv8m"
 
 # One layer for both architectures because they differ in one mechanism, the

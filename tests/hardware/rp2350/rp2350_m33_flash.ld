@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* The Pico 2 W's flash as one Arm image, executed in place, the sibling of
  * rp2350_m33.ld (SRAM): code and constants in flash, .data copied to SRAM by
  * board_early, .bss and the stack in SRAM. The boot ROM's flash boot finds the

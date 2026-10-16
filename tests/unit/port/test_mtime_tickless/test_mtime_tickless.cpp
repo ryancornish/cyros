@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_mtime_tickless.cpp
  * @brief Tickless MTIME: a 64-bit clock read and armed in 32-bit halves.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_ipi.cpp
  * @brief The inter-core doorbell, exercised by blocking (L6).

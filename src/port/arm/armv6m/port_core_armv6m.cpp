@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_core_armv6m.cpp
  * @brief ARMv6-M CORE LAYER: all of port_core.h, for the Cortex-M0 and M0+.

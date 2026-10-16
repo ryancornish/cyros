@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_cortex_m_tickless.cpp
  * @brief Tickless SysTick: a free-running clock and one-shot deadlines.

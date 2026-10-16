@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file trace.cpp
  * @brief Kernel trace recorder: one buffer per core, appended to by that core alone.

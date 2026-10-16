@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_rp2040_smp_atomic_store.cpp
  * @brief An atomic store on one RP2040 core waits for the lock the other

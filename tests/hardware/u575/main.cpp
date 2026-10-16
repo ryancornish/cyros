@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file main.cpp
  * @brief First cyros image for real silicon: NUCLEO-U575ZI-Q.

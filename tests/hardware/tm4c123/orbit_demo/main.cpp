@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file main.cpp
  * @brief Seven cyros threads driving the Orbit BoosterPack, to show the kernel

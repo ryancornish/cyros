@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_diagnostics_deadlock.cpp
  * @brief The wait-for cycle case, in its own binary because it cannot quiesce.

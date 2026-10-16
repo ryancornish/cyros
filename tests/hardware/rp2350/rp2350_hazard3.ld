@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* The Pico 2 W's SRAM as one RISC-V image: code, data and stack, entered at
  * _entry by the boot ROM (through the IMAGE_DEF block, which must lie in the
  * first 4 kB) or by the debugger. Nothing is in flash, so .data needs no

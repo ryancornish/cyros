@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # Build the Orbit demo and put it on the EK-TM4C123GXL, where it stays.
 #
 #   ./run_demo.sh [--mhz 16|80] [--build-only] [--watch SECONDS]

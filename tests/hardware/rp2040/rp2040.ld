@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* The RP2040's striped SRAM0 to SRAM3 as one image: code, data and stack,
  * entered at _entry by the debugger. Nothing is in flash, so .data needs no
  * copy. SRAM4 and SRAM5 (0x20040000) are left to the boot ROM, whose stack is

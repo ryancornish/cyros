@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "arm-none-eabi-base"
 
 # Bare-metal ARM cross toolchain, Cortex-M33 (ARMv8-M Mainline).

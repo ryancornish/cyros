@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # Cortex-M4F bring-up: the port and the kernel, nothing else, built for ARMv7-M.
 #
 # The ARMv7-M twin of cortex_m33_bringup.toml, and the reason it exists is

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "cortex_r52_smp"
 
 description = "Two Cortex-R52s: QEMU's mps3-an536 with -smp 2. SGI 0 as the IPI, the shared generic timer."

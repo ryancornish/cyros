@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* Linker script for QEMU's mps2-an505 (Cortex-M33), SECURE aliases.
  *
  * The AN505 image exposes the same SRAM twice: the non-secure view at

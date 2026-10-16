@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file rp2040.h
  * @brief The RP2040 registers this board uses, the 125 MHz clock bring-up, and

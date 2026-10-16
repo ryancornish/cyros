@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_armv8r_stack_guard.cpp
  * @brief The armv8r core layer's stack guard: EL1 MPU region 15, read-only,

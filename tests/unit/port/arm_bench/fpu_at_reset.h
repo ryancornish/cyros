@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file fpu_at_reset.h
  * @brief The FPU on before any compiled code runs, for the reset handlers of

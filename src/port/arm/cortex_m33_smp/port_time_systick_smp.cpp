@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_time_systick_smp.cpp
  * @brief The time half of the MCU contract, for a dual-M33 SSE-200.

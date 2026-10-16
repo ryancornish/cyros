@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file posix_timers.hpp
  * @brief Count the POSIX timers alive in this process, for unit tests.

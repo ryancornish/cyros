@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file orbit_demo_config.hpp
  * @brief Cyros configuration for the Orbit demo on the EK-TM4C123GXL.

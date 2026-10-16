@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_idle_tickless_config.hpp
  * @brief Cyros configuration for the two-hart RISC-V target (`riscv_virt_smp`), tickless.

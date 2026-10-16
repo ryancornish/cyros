@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_core_armv7m_armv8m.cpp
  * @brief ARMv7-M and ARMv8-M Mainline CORE LAYER: all of port_core.h.

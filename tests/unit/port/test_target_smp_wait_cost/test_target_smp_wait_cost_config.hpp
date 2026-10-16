@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_wait_cost_config.hpp
  * @brief Cyros configuration for test_target_smp_wait_cost: two cores.

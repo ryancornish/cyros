@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* QEMU's mps3-an536: the image in DDR at 0x20000000, where QEMU loads the ELF
  * and starts every core at its entry. One image in RAM, so .data needs no copy.
  * The vector table is the board's (startup_mps3_an536.c), 32-byte aligned for

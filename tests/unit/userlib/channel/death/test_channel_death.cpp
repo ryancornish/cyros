@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_channel_death.cpp
  * @brief The strict send() really does stop the system on a full channel (L7).

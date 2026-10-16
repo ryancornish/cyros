@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # The builder's runner for the RP2040 Pico: runs one test image and exits with
 # its status, as QEMU does for the benches.
 #

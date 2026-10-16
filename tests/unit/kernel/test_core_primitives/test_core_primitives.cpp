@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_core_primitives.cpp
  * @brief cyros/kernel/core.hpp, the public core primitives (L1)

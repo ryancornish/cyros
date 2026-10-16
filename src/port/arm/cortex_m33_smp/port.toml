@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "cortex_m33_smp"
 description = "Dual Cortex-M33 on an SSE-200 subsystem: QEMU's mps2-an521."
 

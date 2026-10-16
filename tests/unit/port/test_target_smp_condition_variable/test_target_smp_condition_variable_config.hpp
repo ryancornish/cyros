@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_condition_variable_config.hpp
  * @brief Cyros configuration for the two-core condition_variable and event_flags test.

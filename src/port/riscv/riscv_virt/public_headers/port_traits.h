@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_traits.h
  * @brief Port traits for the riscv_virt target: QEMU's RISC-V virt, one hart.

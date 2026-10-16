@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_sparc_smp_bringup.cpp
  * @brief Two LEON3s, one kernel (L2). Runs on QEMU's leon3_generic, `-smp 2`.

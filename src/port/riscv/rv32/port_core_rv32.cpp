@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_core_rv32.cpp
  * @brief 32-bit RISC-V machine-mode CORE LAYER: all of port_core.h.

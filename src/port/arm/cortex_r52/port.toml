@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "cortex_r52"
 
 description = "A Cortex-R52, one core: QEMU's mps3-an536. The generic timer as MTIME."

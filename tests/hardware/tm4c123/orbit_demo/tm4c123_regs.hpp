@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file tm4c123_regs.hpp
  * @brief The TM4C123GH6PM registers the Orbit demo touches, and nothing else.

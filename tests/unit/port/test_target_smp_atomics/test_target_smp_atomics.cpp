@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_atomics.cpp
  * @brief Atomic read-modify-writes are atomic BETWEEN the cores (L0, debt to L2).

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file board.h
  * @brief The RP2040 Pico as cyros's on-target tests see it: its clock, its

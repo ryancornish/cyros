@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_linux_preempt_return.cpp
  * @brief The thread the port borrowed as core 0 must not be handed back broken.

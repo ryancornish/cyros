@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_cortex_m.cpp
  * @brief The generic single-core Cortex-M target: multicore identity and bring-up.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_riscv_smp_bringup.cpp
  * @brief Two RISC-V harts, one kernel (L2). Runs on QEMU's virt, `-smp 2`.

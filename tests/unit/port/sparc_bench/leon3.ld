@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* QEMU's leon3_generic: the image in RAM at 0x40000000, where QEMU loads the
  * ELF and its PROM code jumps to the entry. One image in RAM, so .data needs
  * no copy. The port's trap table is 4 KB aligned by its own section. */

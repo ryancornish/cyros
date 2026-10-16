@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu.h
  * @brief Cyros MCU port contract (C ABI): what a core alone cannot answer.

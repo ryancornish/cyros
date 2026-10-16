@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_time_teardown_death.cpp
  * @brief Time teardown refuses to run while the kernel is running.

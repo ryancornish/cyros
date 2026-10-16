@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_armv8r_smp_bringup.cpp
  * @brief Two Cortex-R52s, one kernel (L2). Runs on QEMU's mps3-an536,

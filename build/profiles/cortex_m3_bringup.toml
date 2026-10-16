@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # Cortex-M3 bring-up: the port and the kernel, nothing else, built soft float.
 #
 # The FPU-less twin of cortex_m4_bringup.toml, for the same reason:

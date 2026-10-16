@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_traits.h
  * @brief Generic single-core Cortex-M port (`cortex_m`) compile-time traits.

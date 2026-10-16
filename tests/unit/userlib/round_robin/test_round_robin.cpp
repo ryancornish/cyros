@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 #include <cyros/rr/round_robin.hpp>
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/thread.hpp>

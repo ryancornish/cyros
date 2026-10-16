@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_leon3.c
  * @brief Reset path, console, exit and host time for cyros's on-target tests

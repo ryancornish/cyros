@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_time_driver_tickless_preempt.cpp
  * @brief Tickless driver over the REAL linux_preempt timer.

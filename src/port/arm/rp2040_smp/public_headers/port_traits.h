@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_traits.h
  * @brief Port traits for the rp2040_smp target: both of the RP2040's Cortex-M0+ cores.

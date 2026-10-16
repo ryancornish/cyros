@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_event_flags.cpp
  * @brief event_flags on the target, and what a set costs with idle waiters.

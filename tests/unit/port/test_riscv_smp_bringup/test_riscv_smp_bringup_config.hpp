@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_riscv_smp_bringup_config.hpp
  * @brief Cyros configuration for the two-hart RISC-V target (`riscv_virt_smp`).

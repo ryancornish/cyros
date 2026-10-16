@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_traits.h
  * @brief Port traits for the cortex_r52_smp target: Cortex-R52, two cores (QEMU's mps3-an536).

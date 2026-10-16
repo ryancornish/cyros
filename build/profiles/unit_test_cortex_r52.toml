@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # Unit-test profile for the Cortex-R52 port on QEMU's mps3-an536, one core.
 # Tests run under QEMU through the toolchain's runner, as the Cortex-M and
 # RISC-V profiles do, and each test's port filter decides whether it runs here.

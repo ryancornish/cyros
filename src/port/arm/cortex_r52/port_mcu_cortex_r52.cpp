@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_cortex_r52.cpp
  * @brief The Cortex-R52 target: identity, bring-up, the IPI, and the generic

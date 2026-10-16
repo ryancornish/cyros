@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* Linker script for the STM32U575ZIT6Q on a NUCLEO-U575ZI-Q.
  *
  * Same shape as the QEMU bench's mps2_an505.ld, different numbers, which is

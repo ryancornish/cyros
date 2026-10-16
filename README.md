@@ -258,3 +258,11 @@ Planned:
 
 If you are reading the scheduler or considering writing a port, feedback is
 welcome.
+
+## Licence
+
+Cyros is licensed under the [Mozilla Public License 2.0](LICENSE), which
+applies file by file: a modified Cyros file stays under the MPL, while your own
+files, and the program you build with Cyros, can be under any licence. Each
+source file says so in an SPDX identifier on its first lines. The vendored
+`external/sigctx` keeps its own licence, LGPL-2.1-or-later.

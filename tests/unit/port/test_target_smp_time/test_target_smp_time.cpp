@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_time.cpp
  * @brief Time on the dual-M33 target, as BOTH cores see it (L1).

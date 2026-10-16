@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_armv8r_device_irq.cpp
  * @brief A device interrupt on the Cortex-R52: a GIC SPI reaching the

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file board.h
  * @brief The Pico 2 W as cyros's on-target tests see it, on either ISA: its

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file condition_variable_timed.cpp
  * @brief The timed condition_variable methods, owned by chrono, declared by sync.

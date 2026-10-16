@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file armv8r.hpp
  * @brief The armv8r core layer's internal header: system registers, the

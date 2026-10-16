@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_time_linux_preempt.cpp
  * @brief Linux timer-driver port for the preemptive (sigctx) backend.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 #ifndef CYROS_THREADING_SUBSYSTEM_HPP
 #define CYROS_THREADING_SUBSYSTEM_HPP
 

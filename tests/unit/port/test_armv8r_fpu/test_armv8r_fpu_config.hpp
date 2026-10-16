@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_armv8r_fpu_config.hpp
  * @brief Cyros configuration for test_armv8r_fpu: one core.

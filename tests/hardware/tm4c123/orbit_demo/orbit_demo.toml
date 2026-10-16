@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # The library the Orbit demo links: the cortex_m port with the tickless SysTick
 # driver, plus sync, chrono and channel, under the demo's own config header.
 #

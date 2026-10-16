@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file riscv.hpp
  * @brief The rv32 core layer's internal header: CSR access, the trap frame,

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file syscall_stubs.c
  * @brief newlib's OS interface, for a target that has no OS.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_cortex_m_stack_guard.cpp
  * @brief The core layer's stack guard, on whichever architecture this is built for.

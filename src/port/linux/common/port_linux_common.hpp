@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_linux_common.hpp
  * @brief Contract shared by the linux ports (coop and preempt).

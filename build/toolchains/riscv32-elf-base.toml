@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "riscv32-elf-base"
 
 # Bare-metal 32-bit RISC-V in machine mode: QEMU's virt and the RP2350's

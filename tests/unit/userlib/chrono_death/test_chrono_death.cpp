@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_chrono_death.cpp
  * @brief Arming an alarm wrongly stops the system, and says whose fault it is.

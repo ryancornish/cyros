@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "sparcv8"
 
 # SPARC V8 in supervisor mode with LEON3's extensions (ASR17, CASA,

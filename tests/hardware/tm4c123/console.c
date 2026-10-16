@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file console.c
  * @brief The board's console: UART0, which the EK-TM4C123GXL wires to the

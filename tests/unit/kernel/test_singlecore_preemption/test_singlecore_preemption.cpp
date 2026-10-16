@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_singlecore_preemption.cpp
  * @brief Single-core preemption tests for the linux_preempt port.

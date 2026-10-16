@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_mps3_an536.c
  * @brief Reset path, vector table and console for cyros's on-target tests on

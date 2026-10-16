@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # Flash, then drop into gdb stopped at the reset handler.
 #
 # Runs OpenOCD as a child and kills it on exit, so there is no stray gdbserver

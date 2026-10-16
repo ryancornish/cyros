@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file semaphore_timed.cpp
  * @brief The timed semaphore methods, owned by chrono, declared by sync.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file trace_points.hpp
  * @brief The kernel's trace points: placed at notable state transition points

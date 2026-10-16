@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "riscv32-elf-rp2350-flash"
 extends = "riscv32-elf-rp2350.toml"
 

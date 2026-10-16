@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_cortex_m_smp_stack_guard_config.hpp
  * @brief Cyros configuration for the stack guard test on a two-core Cortex-M

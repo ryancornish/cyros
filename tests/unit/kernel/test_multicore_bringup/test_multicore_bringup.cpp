@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_multicore_bringup.cpp
  * @brief multicore bring-up (L2, the harness floor)

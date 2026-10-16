@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file console_rtt.c
  * @brief The board's console: SEGGER RTT, a ring buffer in SRAM that the

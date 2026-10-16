@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_mps2_an521.c
  * @brief Reset path and vector tables for the QEMU mps2-an521 dual-M33 bench.

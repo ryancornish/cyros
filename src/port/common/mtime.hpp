@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file mtime.hpp
  * @brief What the MTIME time source (port_time_mtime.cpp) needs from a target,

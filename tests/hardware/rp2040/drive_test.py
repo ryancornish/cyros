@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 """Run one cyros test image on the RP2040 Pico over OpenOCD's Tcl port, for
 run_test.sh. The Pico 2 W board's drive_test.py (../rp2350) for this chip's
 one ISA and its one boot path.

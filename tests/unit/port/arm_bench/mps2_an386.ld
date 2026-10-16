@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /* Linker script for QEMU's mps2-an386 (Cortex-M4F), the ARMv7-M bench, and
  * mps2-an385 (Cortex-M3), the FPU-less one, which has the same memory map.
  *

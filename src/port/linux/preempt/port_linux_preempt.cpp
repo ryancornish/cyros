@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_linux_preempt.cpp
  * @brief Linux simulation port using sigctx for genuine preemptive switching

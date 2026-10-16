@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_core_sparcv8.cpp
  * @brief SPARC V8 CORE LAYER (LEON3): all of port_core.h.

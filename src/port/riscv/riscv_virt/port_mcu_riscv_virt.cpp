@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_riscv_virt.cpp
  * @brief QEMU's RISC-V `virt`: identity, bring-up, the IPI, and the CLINT

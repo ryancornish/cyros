@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_idle.cpp
  * @brief The idle path: a core with nothing to run waits in WFI, and a sleeping

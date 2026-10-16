@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file base_mutex.cpp
  * @brief The kernel mutex: ownership, inheritance, and its own blocking loop.

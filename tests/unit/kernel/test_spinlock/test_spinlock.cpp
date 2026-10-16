@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_spinlock.cpp
  * @brief cyros::spinlock, the primitive the kernel builds everything else on.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 #include <cyros/config/config.hpp>
 #include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/kernel.hpp>

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_time_driver_simulation_realtime.cpp
  * @brief The simulation driver's real_time mode, against the wall clock.

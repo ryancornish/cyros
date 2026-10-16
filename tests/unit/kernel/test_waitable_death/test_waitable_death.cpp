@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_waitable_death.cpp
  * @brief Misusing a waiter_record stops the system rather than misrouting a wait.

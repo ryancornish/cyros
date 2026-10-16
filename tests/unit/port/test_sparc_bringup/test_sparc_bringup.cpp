@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_sparc_bringup.cpp
  * @brief First kernel bring-up on the sparcv8 core layer. Runs on QEMU's

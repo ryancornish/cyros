@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_microbit.c
  * @brief Reset path and vector table for QEMU's microbit, the ARMv6-M bench.

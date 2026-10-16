@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_target_smp_idle.cpp
  * @brief Both cores sleep at once, and each is woken out of its own WFI by its

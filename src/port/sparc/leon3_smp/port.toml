@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "leon3_smp"
 
 description = "Several GRLIB LEON3s: QEMU's leon3_generic with -smp. The IRQMP's force registers as the IPI, one GPTIMER compare shared."

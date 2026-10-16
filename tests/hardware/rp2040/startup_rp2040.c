@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_rp2040.c
  * @brief Reset path and vector table for cyros's on-target tests on the RP2040

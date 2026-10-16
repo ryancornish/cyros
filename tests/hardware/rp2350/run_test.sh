@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+
 # The builder's runner for the Pico 2 W, on either ISA: runs one test image
 # and exits with its status, as QEMU does for the benches. The image's ELF
 # header says which cores it is for, the Hazard3s or the Cortex-M33s, and the

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file screen.cpp
  * @brief The demo's two pages. Layout notes in screen.hpp.

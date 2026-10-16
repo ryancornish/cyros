@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_core_armv8r.cpp
  * @brief ARMv8-R AArch32 CORE LAYER (the Cortex-R52): all of port_core.h.

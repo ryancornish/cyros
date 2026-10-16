@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
 name = "sparc-elf-base"
 
 # Bare-metal SPARC V8 on LEON3, supervisor mode: QEMU's leon3_generic.

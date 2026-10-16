@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_time_driver_periodic_preempt.cpp
  * @brief Periodic driver over the REAL linux_preempt timer.

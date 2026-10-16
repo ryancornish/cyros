@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # Layer policy for the T1 test layering.
 #
 # The builder supplies the MECHANISM (compare a test's includes against this

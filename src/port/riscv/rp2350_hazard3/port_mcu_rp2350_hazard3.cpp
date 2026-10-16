@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file port_mcu_rp2350_hazard3.cpp
  * @brief The RP2350's Hazard3 cores: identity, bring-up, the IPI, and the SIO

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file startup_mps2_an386.c
  * @brief Reset path and vector table for the QEMU mps2-an386 and mps2-an385 benches.

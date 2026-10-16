@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file board.h
  * @brief The EK-TM4C123GXL as the tests see it: its clock and its console.

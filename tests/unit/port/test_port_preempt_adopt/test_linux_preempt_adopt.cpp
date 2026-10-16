@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_linux_preempt_adopt.cpp
  * @brief The port must ADOPT the calling thread's signal mask, not assume it.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_riscv_stack_guard.cpp
  * @brief The rv32 core layer's stack guard: PMP entry 0 over the bottom of the

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 #ifndef CYROS_BASE_MUTEX_ACCESS_HPP
 #define CYROS_BASE_MUTEX_ACCESS_HPP
 

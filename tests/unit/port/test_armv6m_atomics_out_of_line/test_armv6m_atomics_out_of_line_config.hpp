@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file test_armv6m_atomics_out_of_line_config.hpp
  * @brief Cyros configuration for test_armv6m_atomics_out_of_line.

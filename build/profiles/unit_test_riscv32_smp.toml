@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+#
 # Unit-test profile for the 32-bit RISC-V port on QEMU's virt with two harts.
 #
 # Tests run under QEMU via the toolchain's [runner], as unit_test_cortex_m33_smp

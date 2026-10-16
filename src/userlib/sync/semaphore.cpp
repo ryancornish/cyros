@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 #include <cyros/sync/semaphore.hpp>
 
 namespace cyros::sync

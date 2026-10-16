@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Copyright (C) 2026 Ryan Cornish */
+
 /**
  * @file death.hpp
  * @brief Death tests that prove WHICH check fired, not merely that one did.
