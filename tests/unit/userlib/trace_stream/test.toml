@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_trace_stream"
+layer = 8
+source = "test_trace_stream.cpp"
+config = "test_trace_stream_config.hpp"
+
+[components]
+features = ["sync", "trace_stream"]
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

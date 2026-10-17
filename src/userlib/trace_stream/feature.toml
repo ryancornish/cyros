@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+name = "trace_stream"
+description = "The kernel trace encoded as a byte stream, for a tool on the other end of a file or a wire"
+
+dependencies = [
+   "kernel",
+]
+
+public_headers = [
+   "public_headers/stream.hpp -> cyros/trace/stream.hpp",
+]

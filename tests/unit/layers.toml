@@ -65,6 +65,10 @@ prefix = "cyros/"
 # (L0), so it sits beside mutex rather than above chrono.
 "cyros/ch/channel.hpp" = 7
 
+# L8, the trace stream. Built on trace (L7), so it is only as proved as the
+# trace it encodes.
+"cyros/trace/stream.hpp" = 8
+
 # L8, condition_variable. Built on mutex (L7): it releases and re-acquires one.
 "cyros/sync/condition_variable.hpp" = 8
 
