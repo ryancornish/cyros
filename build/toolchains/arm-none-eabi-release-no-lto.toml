@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+name = "arm-none-eabi-release-no-lto"
+extends = "arm-none-eabi-release.toml"
+
+# The release build without link-time optimisation. The same -O2 and the same
+# merged archive with only the CYROS_PUBLIC ABI global, but each translation
+# unit optimised on its own, as FreeRTOS and Zephyr are built by default. It
+# is the like-for-like build for comparing with kernels built that way
+# (~/cyros-claude/benchmark-plan.md, call 9), and the release code for anyone
+# who wants it without inlining across the kernel's units. The strategy keeps
+# its name: with no LTO objects to merge, the merge is a plain relocatable
+# link, and localize_hidden works on it exactly as on the LTO one.
+[flags]
+c_remove = ["-flto"]
+cxx_remove = ["-flto"]

@@ -21,6 +21,13 @@ void semaphore::release(std::size_t n) noexcept
 
 void semaphore::acquire() noexcept
 {
+   // A free token is taken here, without arming a wait node. The general wait
+   // path would find the same token on its first poll, after an arm and a
+   // disarm that cost most of an uncontended acquire. It barges exactly as
+   // that poll does, and as try_acquire always has.
+   if (try_acquire()) {
+      return;
+   }
    this_thread::wait_on(*this);
 }
 

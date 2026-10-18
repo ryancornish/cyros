@@ -272,9 +272,11 @@ void cyros_port_start_cores(std::size_t cores_to_use, cyros_port_core_entry_t en
          }
          fifo_push(sequence[index]);
          std::uint32_t echo = 0;
-         CYROS_ASSERT(fifo_pop(echo));      /* core 1 is in the boot ROM and answers */
+         bool const answered = fifo_pop(echo);
+         CYROS_ASSERT(answered);            /* core 1 is in the boot ROM and answers */
          index = echo == sequence[index] ? index + 1u : 0u;
-         CYROS_ASSERT_OP(++words, <, 64u);  /* and the sequence converges */
+         ++words;
+         CYROS_ASSERT_OP(words, <, 64u);    /* and the sequence converges */
       }
 
       /* After the launch, whose echoes arrive in this FIFO. Interrupts are

@@ -560,7 +560,32 @@ void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char cons
  #define CYROS_PORT_CAPTURE_LINE 0
 #endif
 
-#define CYROS_ASSERT2(condition, aux1, aux2) __builtin_expect(!!(condition), 1) ? (void)0 : cyros_port_system_error((uintptr_t)(aux1), (uintptr_t)(aux2), CYROS_PORT_CAPTURE_FILE, CYROS_PORT_CAPTURE_LINE)
+/**
+ * @def CYROS_CHECK_ASSERTS
+ * @brief 0 removes every internal CYROS_ASSERT. A toolchain sets it, and it defaults to 1.
+ *
+ * With it off, a broken invariant the check would have caught runs on as
+ * undefined behaviour rather than stopping in cyros_port_system_error. It
+ * exists so a build can trade that diagnosis for speed, and so cyros can be
+ * measured both ways beside kernels whose asserts are off by default
+ * (~/cyros-claude/benchmark-plan.md). CYROS_CHECK_PRECONDITIONS in assert.hpp
+ * is the same switch for the checks on a caller.
+ *
+ * Off, a check evaluates nothing, so an assert's condition must have no side
+ * effects: work the code needs is done outside the assert and its result is
+ * checked. The operands stay in an unevaluated sizeof, so a value that exists
+ * only to be checked does not become an unused one. CYROS_PORT_UNREACHABLE is
+ * not affected.
+ */
+#ifndef CYROS_CHECK_ASSERTS
+ #define CYROS_CHECK_ASSERTS 1
+#endif
+
+#if CYROS_CHECK_ASSERTS
+ #define CYROS_ASSERT2(condition, aux1, aux2) (__builtin_expect(!!(condition), 1) ? (void)0 : cyros_port_system_error((uintptr_t)(aux1), (uintptr_t)(aux2), CYROS_PORT_CAPTURE_FILE, CYROS_PORT_CAPTURE_LINE))
+#else
+ #define CYROS_ASSERT2(condition, aux1, aux2) ((void)sizeof(!!(condition)), (void)sizeof(aux1), (void)sizeof(aux2))
+#endif
 #define CYROS_ASSERT1(condition, aux1)       CYROS_ASSERT2(condition, aux1, 0)
 #define CYROS_ASSERT(condition)              CYROS_ASSERT2(condition, 0, 0)
 #define CYROS_ASSERT_OP(lhs, op, rhs)        CYROS_ASSERT2((lhs) op (rhs), lhs, rhs)

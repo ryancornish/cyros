@@ -448,7 +448,8 @@ void init_this_core()
     * bootstrap core was. Off until cyros_port_start_first has a thread to
     * guard: the bring-up runs on the boot stack. */
    if constexpr (guard_built) {
-      CYROS_ASSERT_OP(stack_guard_setup(), ==, guard_cfg);
+      std::uint8_t const cfg = stack_guard_setup();
+      CYROS_ASSERT_OP(cfg, ==, guard_cfg);
       set_guard_enabled(0u);
    }
 }

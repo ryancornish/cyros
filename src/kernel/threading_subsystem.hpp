@@ -37,7 +37,8 @@ public:
    void terminate()
    {
       bool expected = false;
-      CYROS_ASSERT(terminated.compare_exchange_strong(expected, true, std::memory_order_release));
+      bool const first = terminated.compare_exchange_strong(expected, true, std::memory_order_release);
+      CYROS_ASSERT(first); // Terminated twice
 
       wake_all(reschedule_policy::never);
    }

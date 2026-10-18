@@ -221,7 +221,8 @@ void register_thread(thread_control_block& tcb)
 void unregister_thread(thread_control_block& tcb)
 {
    CYROS_ASSERT_OP(tcb.state, ==, thread_state::terminated); // Retire before you unregister
-   CYROS_ASSERT(k.active_threads.fetch_sub(1, std::memory_order_seq_cst) != 0);
+   std::uint32_t const registered = k.active_threads.fetch_sub(1, std::memory_order_seq_cst);
+   CYROS_ASSERT(registered != 0); // Unregistered more threads than were registered
 }
 
 } // namespace thread_registry
