@@ -260,8 +260,9 @@ bool registers_survived_a_yield()
 
 
 /* Called from the assembly above. Not static, and extern "C", so the `bl` finds
- * an unmangled symbol the linker can reach. */
-extern "C" void cyros_bench_yield()
+ * an unmangled symbol the linker can reach. Used, because no call the compiler
+ * can see reaches it, and an LTO build would otherwise drop it. */
+extern "C" [[gnu::used]] void cyros_bench_yield()
 {
    this_thread::yield();
 }

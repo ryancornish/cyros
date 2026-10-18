@@ -295,6 +295,6 @@ extern "C" void cyros_sparc_device_interrupt(std::uint32_t level);
  * wants to skip the trapping instruction moves them on itself. The default
  * reports and panics.
  */
-extern "C" void cyros_sparc_fault_handler(std::uint32_t tt, std::uint32_t* frame);
+extern "C" CYROS_PORT_LINKED_BY_NAME void cyros_sparc_fault_handler(std::uint32_t tt, std::uint32_t* frame);
 
 #endif /* CYROS_PORT_SPARCV8_HPP */

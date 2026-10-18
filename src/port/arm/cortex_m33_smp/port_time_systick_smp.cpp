@@ -240,7 +240,7 @@ void cyros_port_time_disarm(void)
  * the driver through the handler. Only the time core advances the counter, so
  * the counter writes stay single-writer.
  */
-extern "C" void SysTick_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME void SysTick_Handler(void)
 {
    if (cyros_port_get_core_id() == time_core) {
       std::uint32_t const next = tick_low + 1u;

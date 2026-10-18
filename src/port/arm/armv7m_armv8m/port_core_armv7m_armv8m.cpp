@@ -627,7 +627,7 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
  * and it belongs with the rest of the thread's context. Pushing it to MSP
  * instead only works while every thread's EXC_RETURN happens to be identical.
  */
-extern "C" [[gnu::naked]] void PendSV_Handler(void)
+extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
 {
    asm volatile(
       "mrs   r0, psp                    \n"  /* the interrupted thread's stack  */

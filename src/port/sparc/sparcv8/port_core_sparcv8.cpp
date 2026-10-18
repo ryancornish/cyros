@@ -824,7 +824,7 @@ extern "C" std::uint32_t* cyros_sparc_trap_dispatch(std::uint32_t* frame, std::u
 /**
  * @brief The default fault handler: report, and panic.
  */
-extern "C" [[gnu::weak]] void cyros_sparc_fault_handler(std::uint32_t tt, std::uint32_t* frame)
+extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_sparc_fault_handler(std::uint32_t tt, std::uint32_t* frame)
 {
    sparcv8::console_write("\n*** SPARC TRAP ***\n  tt   = ");
    write_hex(tt);

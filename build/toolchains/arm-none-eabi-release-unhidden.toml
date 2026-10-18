@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+name = "arm-none-eabi-release-unhidden"
+extends = "arm-none-eabi-release.toml"
+
+# The release build with its symbols left global: the same -O2 and LTO code,
+# for running the on-target suites against what the release ships. The tests
+# reach past the public API into the port (cyros_port_timestamp and friends),
+# which the shipped archive rightly refuses, so they cannot link against it.
+#
+# test_target_idle and test_target_idle_tickless FAIL here by construction:
+# they observe idle by wrapping cyros_port_idle at link time, and LTO inlines
+# it into the idle loop inside the merged archive, so no call is left to wrap.
+[archive]
+localize_hidden = false

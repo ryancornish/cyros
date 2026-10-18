@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_precondition_switch"
+layer = 1
+source = "test_precondition_switch.cpp"
+config = "test_precondition_switch_config.hpp"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

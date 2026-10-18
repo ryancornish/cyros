@@ -11,7 +11,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 command -v picocom >/dev/null || { echo "picocom not installed. See ~/starch-env toolchain role." >&2; exit 1; }
-tty="${U575_TTY:-$(ls /dev/serial/by-id/usb-STMicroelectronics_STLINK-V3_*-if02 2>/dev/null | head -n 1)}"
+tty="${U575_TTY:-$(ls /dev/serial/by-id/usb-STMicroelectronics_STLINK-V3_*-if02 2>/dev/null | head -n 1 || true)}"
 [ -n "$tty" ] && [ -e "$tty" ] || { echo "no ST-LINK virtual COM port found, set U575_TTY" >&2; exit 1; }
 baud="$(sed -n 's/^#define BOARD_CONSOLE_BAUD \([0-9]*\)u$/\1/p' "$here/board.h")"
 

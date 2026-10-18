@@ -130,6 +130,19 @@ extern "C" {
 # error "CYROS_PORT_DEBUG_MODE must be '0' (false) or '1' (true)"
 #endif
 
+/**
+ * @def CYROS_PORT_LINKED_BY_NAME
+ * @brief Marks a port symbol that code outside cyros links to by its name.
+ *
+ * A vector table entry the board's startup names (PendSV_Handler,
+ * SysTick_Handler, an inter-core doorbell), or a weak hook an application may
+ * replace. A release build compiles with -fvisibility=hidden and then makes
+ * every hidden symbol of the merged archive local, which would leave a vector
+ * table naming a handler that is not there and an application's hook ignored.
+ * This keeps such a symbol global. A build that hides nothing is unchanged.
+ */
+#define CYROS_PORT_LINKED_BY_NAME __attribute__((visibility("default")))
+
 
 /* ============================================================================
  * Port Type Definitions

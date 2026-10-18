@@ -21,8 +21,9 @@
  * Writing the right one now is what makes that migration a rename rather than a
  * re-reading of every site.
  *
- * NOTHING HERE IS COMPILED OUT TODAY. CYROS_REQUIRE is unconditional, exactly
- * as the checks it replaces were, so adopting it changes no behaviour.
+ * Only a toolchain can compile anything out, and only CYROS_REQUIRE: setting
+ * CYROS_CHECK_PRECONDITIONS to 0 (below) removes every precondition check,
+ * which is the per-toolchain level in miniature. By default nothing is removed.
  */
 
 #ifndef CYROS_ASSERT_HPP
@@ -79,6 +80,31 @@ CYROS_PUBLIC void panic(std::uintptr_t aux1 = 0,
                         CYROS_CHECK_FILE, CYROS_CHECK_LINE))
 
 /**
+ * @def CYROS_CHECK_PRECONDITIONS
+ * @brief 0 removes every CYROS_REQUIRE. A toolchain sets it, and it defaults to 1.
+ *
+ * With it off, a misuse a check would have caught is undefined behaviour rather
+ * than a panic. It exists so cyros can be measured the way other kernels are,
+ * without their argument checks (~/cyros-claude/benchmark-plan.md), and it is
+ * the shape roadmap A2's contracts will take: a level chosen per toolchain.
+ *
+ * Off, a check evaluates nothing, so a REQUIRE condition must have no side
+ * effects (every one in cyros is a pure check). Its operands still appear in
+ * an unevaluated sizeof, so a variable that exists only to be checked does not
+ * become an unused one. CYROS_FATAL is never affected.
+ */
+#ifndef CYROS_CHECK_PRECONDITIONS
+ #define CYROS_CHECK_PRECONDITIONS 1
+#endif
+
+#if CYROS_CHECK_PRECONDITIONS
+ #define CYROS_PRECONDITION2(condition, aux1, aux2) CYROS_CHECK2(condition, aux1, aux2)
+#else
+ #define CYROS_PRECONDITION2(condition, aux1, aux2)                            \
+    ((void)sizeof(!!(condition)), (void)sizeof(aux1), (void)sizeof(aux2))
+#endif
+
+/**
  * @def CYROS_REQUIRE
  * @brief A precondition of a public API. Failure means the CALLER has a bug.
  *
@@ -89,9 +115,9 @@ CYROS_PUBLIC void panic(std::uintptr_t aux1 = 0,
  * Do not use for a condition the caller cannot control. That is CYROS_FATAL if
  * the environment failed, and an internal CYROS_ASSERT if cyros is at fault.
  */
-#define CYROS_REQUIRE(condition)              CYROS_CHECK2(condition, 0, 0)
-#define CYROS_REQUIRE1(condition, aux1)       CYROS_CHECK2(condition, aux1, 0)
-#define CYROS_REQUIRE2(condition, aux1, aux2) CYROS_CHECK2(condition, aux1, aux2)
+#define CYROS_REQUIRE(condition)              CYROS_PRECONDITION2(condition, 0, 0)
+#define CYROS_REQUIRE1(condition, aux1)       CYROS_PRECONDITION2(condition, aux1, 0)
+#define CYROS_REQUIRE2(condition, aux1, aux2) CYROS_PRECONDITION2(condition, aux1, aux2)
 
 /**
  * @def CYROS_REQUIRE_OP
@@ -102,7 +128,7 @@ CYROS_PUBLIC void panic(std::uintptr_t aux1 = 0,
  * evaluated once each on the failing path and once in the condition, so the
  * operands must be free of side effects.
  */
-#define CYROS_REQUIRE_OP(lhs, op, rhs)       CYROS_CHECK2((lhs) op (rhs), lhs, rhs)
+#define CYROS_REQUIRE_OP(lhs, op, rhs)       CYROS_PRECONDITION2((lhs) op (rhs), lhs, rhs)
 
 /**
  * @def CYROS_FATAL

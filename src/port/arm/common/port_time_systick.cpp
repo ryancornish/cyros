@@ -575,7 +575,7 @@ void cyros_port_time_disarm(void)
  * threads and is never delayed by a preemption-disable, while any reschedule it
  * requests lands after it returns.
  */
-extern "C" void SysTick_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME void SysTick_Handler(void)
 {
    /* Already at interrupt priority: SysTick cannot preempt itself, and every
     * thread-context reader masks. */

@@ -130,7 +130,7 @@ arm-none-eabi-size "$elf" | tail -n 1
 # 4. Put it on the board, run, and read the console until the board reports its
 # exit.
 command -v openocd >/dev/null || { echo "openocd not installed" >&2; exit 1; }
-tty="${TM4C_TTY:-$(ls /dev/serial/by-id/usb-Texas_Instruments_In-Circuit_Debug_Interface_*-if00 2>/dev/null | head -n 1)}"
+tty="${TM4C_TTY:-$(ls /dev/serial/by-id/usb-Texas_Instruments_In-Circuit_Debug_Interface_*-if00 2>/dev/null | head -n 1 || true)}"
 [ -n "$tty" ] && [ -e "$tty" ] || { echo "no ICDI virtual COM port found, set TM4C_TTY" >&2; exit 1; }
 baud="$(sed -n 's/^#define BOARD_CONSOLE_BAUD \([0-9]*\)u$/\1/p' "$here/board.h")"
 [ -n "$baud" ] || { echo "cannot read BOARD_CONSOLE_BAUD from board.h" >&2; exit 1; }

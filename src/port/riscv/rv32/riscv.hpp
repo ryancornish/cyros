@@ -271,6 +271,6 @@ std::uint8_t stack_guard_setup() noexcept;
  * fault hit the trap entry itself saving a frame, which is a stack overflow
  * into the guard.
  */
-extern "C" void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame);
+extern "C" CYROS_PORT_LINKED_BY_NAME void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame);
 
 #endif /* CYROS_PORT_RISCV_HPP */

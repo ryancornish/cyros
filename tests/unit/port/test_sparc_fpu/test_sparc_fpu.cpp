@@ -115,8 +115,9 @@ volatile bool irq_done = false;
 } // namespace
 
 
-/* Called from the asm below. extern "C" so the `call` finds an unmangled name. */
-extern "C" void cyros_fpu_yield()
+/* Called from the asm below. extern "C" so the `call` finds an unmangled name,
+ * and used because no call the compiler can see reaches it, so LTO would drop it. */
+extern "C" [[gnu::used]] void cyros_fpu_yield()
 {
    this_thread::yield();
 }

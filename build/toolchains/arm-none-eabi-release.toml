@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+name = "arm-none-eabi-release"
+extends = "arm-none-eabi-base.toml"
+
+# The Cortex-M33 release build, the archive cyros ships for this core and the
+# one its published figures are measured on (~/cyros-claude/benchmark-plan.md).
+# It mirrors gcc-release.toml: -O2, LTO across the kernel's own translation
+# units, and only the CYROS_PUBLIC ABI left global in the merged archive.
+[flags]
+common_add = ["-O2"]
+c_add = ["-flto", "-fvisibility=hidden"]
+cxx_add = ["-flto", "-fvisibility=hidden", "-fvisibility-inlines-hidden"]
+
+[settings]
+debug = false
+optimization = "2"
+
+[archive]
+strategy = "lto_merged"
+localize_hidden = true
+
+# Must stay false while localize_hidden is true. gcc-release.toml says why.
+preserve_lto_sections = false

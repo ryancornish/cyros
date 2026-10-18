@@ -398,7 +398,7 @@ extern "C" void cyros_port_trap_exit(void);
  * interrupted sp, which with the guard on is a stack overflow: the frame was
  * headed into the guard, and the original faulting instruction is lost.
  */
-extern "C" [[gnu::weak]] void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
+extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
 {
    std::uint32_t const epc = frame[riscv::frame_mepc];
    auto const entry = reinterpret_cast<std::uint32_t>(&cyros_port_trap_entry);

@@ -425,7 +425,7 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
  * PSP is lowered to the block BEFORE the dispatch, so cyros_port_switch saves
  * a PSP that points at it. EXC_RETURN rides across the call on MSP.
  */
-extern "C" [[gnu::naked]] void PendSV_Handler(void)
+extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
 {
    /* GCC hands Thumb-1 inline assembly to gas in divided syntax, where
     * `subs r0, #32` is refused, so each block selects unified itself. GCC

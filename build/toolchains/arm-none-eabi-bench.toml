@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+name = "arm-none-eabi-bench"
+extends = "arm-none-eabi-release.toml"
+
+# The release build with every CYROS_REQUIRE compiled out, which is how the
+# kernels cyros is compared with are benchmarked: without their argument
+# checks. Internal CYROS_ASSERTs stay, as cyros ships them. Never a user's
+# release build, so a precondition cannot be lost by accident.
+# ~/cyros-claude/benchmark-plan.md, section 8.
+[flags]
+common_add = ["-DCYROS_CHECK_PRECONDITIONS=0"]

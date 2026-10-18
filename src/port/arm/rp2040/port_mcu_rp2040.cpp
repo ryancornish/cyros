@@ -344,7 +344,7 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
  * core 1. PendSV is lowest, so the switch happens once every active handler
  * has unwound.
  */
-extern "C" void SIO_FIFO_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME void SIO_FIFO_Handler(void)
 {
    fifo_drain();
    cortex_m::reg(sio_fifo_st) = 0u;
@@ -433,7 +433,7 @@ void interrupt_disable() noexcept
  * Masked for the call, so the time source sees what the RISC-V trap gives it
  * (mtime.hpp says why).
  */
-extern "C" void TIMER_ALARM_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME void TIMER_ALARM_Handler(void)
 {
    cyros_mask_token_t const token = cyros_port_irq_save();
    cyros::port::mtime::interrupt();

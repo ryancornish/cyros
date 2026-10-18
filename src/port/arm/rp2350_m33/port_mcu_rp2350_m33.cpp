@@ -290,7 +290,7 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
  * doorbell fires again the moment this returns. PendSV is lowest, so the
  * switch happens once every active handler has unwound.
  */
-extern "C" void SIO_BELL_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME void SIO_BELL_Handler(void)
 {
    cortex_m::reg(sio_doorbell_in_clr) = reschedule_doorbell;
    cortex_m::dsb();
@@ -347,7 +347,7 @@ void interrupt_disable() noexcept
  * Masked for the call, so the time source sees what the RISC-V trap gives it
  * (mtime.hpp says why).
  */
-extern "C" void SIO_MTIMECMP_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME void SIO_MTIMECMP_Handler(void)
 {
    cyros_mask_token_t const token = cyros_port_irq_save();
    cyros::port::mtime::interrupt();

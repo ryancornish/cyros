@@ -247,7 +247,7 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
  * other active handler have unwound, which is exactly the guarantee
  * cyros_port_send_reschedule_ipi documents.
  */
-extern "C" void MHU_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME void MHU_Handler(void)
 {
    cortex_m::reg(mhu_clear(cyros_port_get_core_id())) = 1u;
 

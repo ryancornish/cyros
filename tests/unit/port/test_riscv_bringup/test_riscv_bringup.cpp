@@ -81,8 +81,9 @@ void print_trace()
 } // namespace
 
 
-/* Called from the assembly below, so unmangled. */
-extern "C" void cyros_bench_yield()
+/* Called from the assembly below, so unmangled, and used because no call the
+ * compiler can see reaches it, so LTO would drop it. */
+extern "C" [[gnu::used]] void cyros_bench_yield()
 {
    this_thread::yield();
 }
