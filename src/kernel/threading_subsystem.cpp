@@ -122,24 +122,6 @@ stack_layout::stack_layout(std::span<std::byte> const buffer, std::size_t const 
 }
 
 
-void thread_ready_queue::push_back(thread_control_block& tcb) noexcept
-{
-   CYROS_ASSERT(!tcb.is_enqueued());
-   tcb.next = nullptr;
-   if (tail) tail->next = &tcb; else head = &tcb;
-   tail = &tcb;
-}
-
-thread_control_block* thread_ready_queue::pop_front() noexcept
-{
-   if (empty()) return nullptr;
-   auto* tcb = head;
-   head = tcb->next;
-   if (!head) tail = nullptr;
-   tcb->next = tcb; // restore the not-enqueued sentinel
-   return tcb;
-}
-
 bool thread_ready_queue::remove(thread_control_block& tcb) noexcept
 {
    thread_control_block* prev = nullptr;
@@ -153,28 +135,6 @@ bool thread_ready_queue::remove(thread_control_block& tcb) noexcept
    return false;
 }
 
-
-void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexcept
-{
-   auto const priority = tcb.base_priority;
-   CYROS_ASSERT_OP(priority, <, config::max_priorities);
-   CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
-
-   matrix[priority].push_back(tcb);
-   bitmap |= (1u << priority);
-}
-
-thread_control_block* thread_ready_matrix::pop_best_thread() noexcept
-{
-   if (bitmap == 0) return nullptr;
-
-   auto const priority = std::countr_zero(bitmap);
-   thread_control_block* tcb = matrix[priority].pop_front();
-   if (matrix[priority].empty()) {
-      bitmap &= ~(1u << priority);
-   }
-   return tcb;
-}
 
 void thread_ready_matrix::remove_thread(thread_control_block& tcb) noexcept
 {

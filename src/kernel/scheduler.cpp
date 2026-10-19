@@ -95,6 +95,18 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
       return schedule_hint::unwarranted;
    }
 
+   admit(tcb);
+
+   // The idle thread's urgency is the worst there is, so it never beats the
+   // running thread and needs no case of its own here.
+   if (urgency(tcb) < current_thread_urgency()) {
+      return schedule_hint::warranted;
+   }
+   return schedule_hint::unwarranted;
+}
+
+inline void scheduler::admit(thread_control_block& tcb)
+{
    tcb.state = thread_state::ready;
 
    trace::thread_ready(tcb);
@@ -102,7 +114,7 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
    // Idle thread does not belong in the ready_matrix,
    // but DOES follow state transition semantics
    if (&tcb == idle_thread) {
-      return schedule_hint::unwarranted;
+      return;
    }
 
    // A thread holding a base_mutex can be more urgent than its base priority,
@@ -114,14 +126,9 @@ schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
    } else {
       link_holder(tcb);
    }
-
-   if (urgency(tcb) < current_thread_urgency()) {
-      return schedule_hint::warranted;
-   }
-   return schedule_hint::unwarranted;
 }
 
-void scheduler::set_thread_running(thread_control_block& tcb)
+inline void scheduler::set_thread_running(thread_control_block& tcb)
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
    CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
@@ -132,7 +139,7 @@ void scheduler::set_thread_running(thread_control_block& tcb)
    trace::thread_running(tcb);
 }
 
-void scheduler::set_thread_blocked(thread_control_block& tcb)
+inline void scheduler::set_thread_blocked(thread_control_block& tcb)
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
    CYROS_ASSERT_OP(tcb.state, ==, thread_state::running);
@@ -175,7 +182,7 @@ std::uint8_t scheduler::current_thread_urgency() const
    return current_thread ? urgency(*current_thread) : 0;
 }
 
-thread_control_block* scheduler::pick_next()
+inline thread_control_block* scheduler::pick_next()
 {
    // The matrix is keyed on base_priority, which no boost can change, so its
    // head is the most urgent NON-holder by construction.
@@ -404,7 +411,13 @@ void scheduler::reschedule()
    CYROS_ASSERT(current_thread);
    CYROS_ASSERT(!current_thread->is_enqueued());
 
-   drain_intake();
+   // Look before taking. An empty intake is every reschedule on one core and
+   // nearly every one on several, and a load is far cheaper than the exclusive
+   // exchange that takes it. Missing a push in flight costs nothing: a push
+   // onto an empty intake sends this core a reschedule of its own.
+   if (intake_pending()) {
+      drain_intake();
+   }
 
    thread_control_block* previous_thread = current_thread;
    thread_control_block* next_thread     = nullptr;
@@ -417,16 +430,20 @@ void scheduler::reschedule()
       this_core::critical_guard guard;
 
       switch (previous_thread->state) {
-         case thread_state::running:
-            if (previous_thread->disposition == thread_disposition::terminating) {
+         case thread_state::running: {
+            // Read once. Only this core writes a disposition (the thread, an
+            // ISR here, or this scheduler), and the guard holds off the ISRs.
+            auto const wish = previous_thread->disposition.load();
+            if (wish == thread_disposition::terminating) {
                set_thread_terminated(*previous_thread);
                discard_prev = true;
-            } else if (previous_thread->disposition == thread_disposition::committed) {
+            } else if (wish == thread_disposition::committed) {
                set_thread_blocked(*previous_thread);
             } else {
-               (void)set_thread_ready(*previous_thread);
+               admit(*previous_thread); // rotate, to the back of its level
             }
             break;
+         }
 
          case thread_state::terminated:
          case thread_state::ready:

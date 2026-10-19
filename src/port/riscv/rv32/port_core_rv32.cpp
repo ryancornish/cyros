@@ -337,8 +337,11 @@ extern "C" [[gnu::naked, gnu::aligned(4)]] void cyros_port_trap_entry(void)
  * Interrupts are dispatched by cause: the soft IRQ is the reschedule, the
  * timer and external interrupts go to the target. An `ecall` is a yield. Any
  * other exception is a fault and ends in a panic.
+ *
+ * Used: only the assembly above calls it, which the compiler cannot see, so an
+ * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" std::uint32_t* cyros_port_trap_dispatch(std::uint32_t* frame)
+extern "C" [[gnu::used]] std::uint32_t* cyros_port_trap_dispatch(std::uint32_t* frame)
 {
    core_state& state = cores[this_core()];
    ++state.trap_depth;

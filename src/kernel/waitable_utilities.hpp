@@ -111,6 +111,10 @@ public:
       for (std::size_t i = 0; i < waitables.size(); ++i) {
          waitables[i].get().queue.arm(nodes[i]);
       }
+      // Armed before the first poll, with a full fence between, so a release
+      // that tests for waiters without the lock (waitable::may_have_waiters)
+      // either finds us here or is found by that poll.
+      wait_queue::peek_fence();
    }
 
    /**

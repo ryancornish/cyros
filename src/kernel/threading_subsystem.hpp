@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <array>
+#include <bit>
 #include <bitset>
 #include <cstdint>
 #include <limits>
@@ -368,6 +369,52 @@ public:
    void remove_thread(thread_control_block& tcb) noexcept;
 
 };
+
+/* Every switch runs the four below, so they are defined here, inline. Out of
+ * line, the asserts in them are enough to stop GCC at -O2 inlining them, and
+ * the call then costs more than the body. */
+
+inline void thread_ready_queue::push_back(thread_control_block& tcb) noexcept
+{
+   CYROS_ASSERT(!tcb.is_enqueued());
+   tcb.next = nullptr;
+   if (tail) tail->next = &tcb; else head = &tcb;
+   tail = &tcb;
+}
+
+inline thread_control_block* thread_ready_queue::pop_front() noexcept
+{
+   auto* const tcb = head;
+   if (tcb == nullptr) return nullptr;
+   auto* const after = tcb->next;
+   tcb->next = tcb; // restore the not-enqueued sentinel
+   head = after;
+   if (after == nullptr) tail = nullptr;
+   return tcb;
+}
+
+inline void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexcept
+{
+   auto const priority = tcb.base_priority;
+   CYROS_ASSERT_OP(priority, <, config::max_priorities);
+   CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
+
+   matrix[priority].push_back(tcb);
+   bitmap |= (1u << priority);
+}
+
+inline thread_control_block* thread_ready_matrix::pop_best_thread() noexcept
+{
+   if (bitmap == 0) return nullptr;
+
+   auto const priority = std::countr_zero(bitmap);
+   auto& level = matrix[priority];
+   thread_control_block* tcb = level.pop_front();
+   if (level.empty()) {
+      bitmap &= ~(1u << priority);
+   }
+   return tcb;
+}
 
 /**
  * @brief The kernel's global thread bookkeeping.

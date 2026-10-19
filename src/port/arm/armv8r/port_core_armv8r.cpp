@@ -389,8 +389,11 @@ extern "C" [[gnu::naked]] void cyros_port_svc_entry(void)
  *
  * An SVC is a yield. An IRQ is acknowledged and dispatched by INTID: SGI 0 is
  * the reschedule, PPI 30 the timer, anything else a device's.
+ *
+ * Used: only the assembly above calls it, which the compiler cannot see, so an
+ * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" std::uint32_t* cyros_port_exception_dispatch(std::uint32_t* frame, std::uint32_t entered_by)
+extern "C" [[gnu::used]] std::uint32_t* cyros_port_exception_dispatch(std::uint32_t* frame, std::uint32_t entered_by)
 {
    core_state& state = cores[this_core()];
    ++state.depth;

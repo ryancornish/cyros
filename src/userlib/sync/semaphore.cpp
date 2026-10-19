@@ -14,6 +14,11 @@ namespace cyros::sync
 void semaphore::release(std::size_t n) noexcept
 {
    counter.fetch_add(n, std::memory_order_release);
+   // The tokens are in before the test, which is the order may_have_waiters
+   // needs. Nobody waiting is the common case, and then no lock is taken.
+   if (!may_have_waiters()) {
+      return;
+   }
    for (std::size_t i = 0; i < n; ++i) {
       wake_one();
    }

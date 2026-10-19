@@ -196,11 +196,11 @@ public:
     */
    void send_blocking(T v) noexcept
    {
-      {
-         spinlock_guard guard(lock);
-         if (stopped) return;
-      }
-
+      // No look at `stopped` first. A stopped channel holds the space token
+      // stop() left behind, or will as soon as whoever holds it passes it on,
+      // so this does not stay blocked, and the check under the lock below
+      // refuses the send. A look first would cost every send a lock round trip
+      // to save a stopped one a semaphore call.
       space.acquire();  // a freed slot, or the token stop() left behind
 
       outcome result = outcome::stopped;
@@ -227,11 +227,9 @@ public:
     */
    [[nodiscard]] std::optional<T> receive() noexcept
    {
-      {
-         spinlock_guard guard(lock);
-         if (occupancy == 0 && stopped) return std::nullopt;
-      }
-
+      // No look first, as in send_blocking: a stopped, drained channel holds
+      // the items token stop() left behind, or soon will, and settle() passes
+      // it on.
       items.acquire();
 
       std::optional<T> out;

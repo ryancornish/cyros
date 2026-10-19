@@ -28,6 +28,7 @@
 
 #include <cyros/kernel/waitable.hpp>
 #include <cyros/kernel/assert.hpp>
+#include <cyros/kernel/core.hpp>
 #include <cyros/port/port.h>
 
 #include "base_mutex_access.hpp"
@@ -43,15 +44,6 @@ namespace cyros
 
 namespace
 {
-
-/* How far a transitive donation is followed before the answer is taken to be
- * maximally urgent.
- *
- * Real chains are short: the deepest the suite builds is 6, and the flagship PI
- * test is 2. The budget is not a performance knob, it is what stops a wait-for
- * cycle (a deadlocked application) from being walked forever. Exhausting it
- * yields 0, which over-boosts, which is the safe direction. */
-inline constexpr unsigned max_inheritance_depth = 8;
 
 /**
  * @brief min(base, best waiter of every base_mutex held).
@@ -106,12 +98,6 @@ void apply_reschedule_policy(reschedule_policy const policy, schedule_hint const
  * wait_queue
  * ========================================================================= */
 
-bool wait_queue::empty() const noexcept
-{
-   // Advisory: not under lock. Fine for "should I bother waking" hints.
-   return head == nullptr;
-}
-
 /**
  * @brief Priority-ordered insert (best at head), keyed on BASE priority.
  *
@@ -122,12 +108,21 @@ bool wait_queue::empty() const noexcept
  */
 void wait_queue::link(wait_node& node) noexcept
 {
-   wait_node** slot = &head;
-   while (*slot && (*slot)->owner->base_priority <= node.owner->base_priority) {
-      slot = &(*slot)->next;
+   // Behind every waiter as urgent or more, so FIFO within a priority. The
+   // head is atomic (see its declaration), so it is the one slot not reached
+   // through a node.
+   auto* const first = head.load(std::memory_order_relaxed);
+   if (first == nullptr || node.owner->base_priority < first->owner->base_priority) {
+      node.next = first;
+      head.store(&node, std::memory_order_relaxed);
+      return;
    }
-   node.next = *slot;
-   *slot  = &node;
+   wait_node* before = first;
+   while (before->next && before->next->owner->base_priority <= node.owner->base_priority) {
+      before = before->next;
+   }
+   node.next = before->next;
+   before->next = &node;
 }
 
 /**
@@ -136,16 +131,20 @@ void wait_queue::link(wait_node& node) noexcept
  */
 bool wait_queue::unlink(wait_node& node) noexcept
 {
-   wait_node** slot = &head;
-   while (*slot && *slot != &node) {
-      slot = &(*slot)->next;
+   auto* const first = head.load(std::memory_order_relaxed);
+   if (first == &node) {
+      head.store(node.next, std::memory_order_relaxed);
+      node.next = nullptr;
+      return true;
    }
-   if (*slot != &node) {
-      return false;
+   for (auto* before = first; before != nullptr; before = before->next) {
+      if (before->next == &node) {
+         before->next = node.next;
+         node.next = nullptr;
+         return true;
+      }
    }
-   *slot = node.next;
-   node.next = nullptr;
-   return true;
+   return false;
 }
 
 std::uint8_t wait_queue::top(std::atomic<thread_control_block*> const& resource_owner,
@@ -177,7 +176,7 @@ std::uint8_t wait_queue::top(std::atomic<thread_control_block*> const& resource_
       // lock at all.
       auto* const holder = resource_owner.load(std::memory_order_relaxed);
 
-      for (auto* n = head; n != nullptr; n = n->next) {
+      for (auto* n = head.load(std::memory_order_relaxed); n != nullptr; n = n->next) {
          // Re-derive from the current truth (stale answers are plausible and err toward over-boost.)
          if (n->owner->holds_nothing()) continue;
          // The owner itself, still armed in its own queue between the winning
@@ -237,18 +236,19 @@ bool wait_queue::disarm(wait_node& node, inheritance_cache* pi) noexcept
    return true;
 }
 
-void wait_queue::refresh_top(inheritance_cache* pi) noexcept
+inline void wait_queue::refresh_top(inheritance_cache* pi) noexcept
 {
    if (pi == nullptr) return; // Nothing reads it, so do not maintain it
 
    // Requires the queue lock held. Release pairs with the acquire in top() so
    // a fold prompted by a queue change (via a doorbell, or by reaching this
    // queue through a bridge) observes the value that change produced.
-   pi->top_priority.store(head != nullptr ? head->owner->base_priority : inheritance_cache::no_waiter,
+   auto* const first = head.load(std::memory_order_relaxed);
+   pi->top_priority.store(first != nullptr ? first->owner->base_priority : inheritance_cache::no_waiter,
                           std::memory_order_release);
 
    // No more waiters, so we can safely clear the sticky hint
-   if (head == nullptr) {
+   if (first == nullptr) {
       pi->may_have_bridges.store(false, std::memory_order_release); // "release" pairs with load's "acquire"
    }
 }
@@ -259,10 +259,10 @@ void wait_queue::wake_one(reschedule_policy policy, inheritance_cache* pi) noexc
    {
       spinlock_guard guard(lock);
 
-      if (head == nullptr) return;
-      wait_node* node = head;
+      wait_node* node = head.load(std::memory_order_relaxed);
+      if (node == nullptr) return;
       chosen = node->owner;
-      head = node->next;
+      head.store(node->next, std::memory_order_relaxed);
       node->next = nullptr;
       refresh_top(pi);
    }
@@ -285,10 +285,10 @@ void wait_queue::wake_all(reschedule_policy policy, inheritance_cache* pi) noexc
       {
          spinlock_guard guard(lock);
 
-         if (head == nullptr) break;
-         wait_node* node = head;
+         wait_node* node = head.load(std::memory_order_relaxed);
+         if (node == nullptr) break;
          chosen = node->owner;
-         head = node->next;
+         head.store(node->next, std::memory_order_relaxed);
          node->next = nullptr;
          refresh_top(pi);
       }
@@ -309,10 +309,9 @@ bool wait_queue::wake_one_and_commit(commit_fn commit, reschedule_policy policy,
    {
       spinlock_guard guard(lock);
 
-      if (head != nullptr) {
-         wait_node* node = head;
+      if (wait_node* node = head.load(std::memory_order_relaxed); node != nullptr) {
          chosen = node->owner;
-         head = node->next;
+         head.store(node->next, std::memory_order_relaxed);
          node->next = nullptr;
          refresh_top(pi);
       }
@@ -397,11 +396,6 @@ waiter_record::~waiter_record()
 
 
 
-std::uint8_t urgency(thread_control_block const& tcb) noexcept
-{
-   return donated_floor(tcb, max_inheritance_depth);
-}
-
 std::uint8_t urgency_at(thread_control_block const& tcb, unsigned const depth) noexcept
 {
    return donated_floor(tcb, depth);
@@ -409,17 +403,27 @@ std::uint8_t urgency_at(thread_control_block const& tcb, unsigned const depth) n
 
 void commit_to_block(thread_control_block& tcb)
 {
-   auto token = cyros_port_preempt_disable();
-
-   // Atomic CAS prevents a race between a blocking thread and an ISR.
-   // Hazard: Without RMW, the thread could read 'prepared', an ISR could
-   // clear the disposition, and the thread would blindly overwrite it to 'committed'.
-   auto expected = thread_disposition::prepared;
-   if (tcb.disposition.compare_exchange(expected, thread_disposition::committed)) {
-      cyros_port_pend_reschedule(); // Delayed until preempt_enable()
+   // Hazard: the thread could read 'prepared', an ISR could clear the
+   // disposition, and the thread would blindly overwrite it to 'committed'.
+   // Masking interrupts makes the test and the store one step with no
+   // read-modify-write, because every write to a disposition is made on its
+   // thread's own core: by the thread, by an ISR there, or by its scheduler. A
+   // remote wake goes through the intake and is applied here, in a reschedule.
+   bool committed = false;
+   {
+      this_core::critical_guard guard;
+      if (tcb.disposition == thread_disposition::prepared) {
+         tcb.disposition = thread_disposition::committed;
+         committed = true;
+      }
    }
 
-   cyros_port_preempt_enable(token);
+   // A wake that lands before the yield clears the disposition and finds us
+   // running, and the reschedule then rotates us instead of parking us, as it
+   // does for any wake that beats the park.
+   if (committed) {
+      cyros_port_thread_yield();
+   }
 }
 
 void request_repick(thread_control_block& tcb)
@@ -492,9 +496,20 @@ namespace this_thread
       return (record != nullptr && record->source == &w) ? record : nullptr;
    };
 
-   while (true) {
+   // Lowest index wins on ties.
+   auto const first_satisfied = [&]() noexcept -> std::optional<std::size_t> {
+      for (std::size_t i = 0; waitable& waitable : waitables) {
+         if (waitable.try_satisfy(record_for(waitable))) {
+            return i;
+         }
+         ++i;
+      }
+      return std::nullopt;
+   };
+
+   std::optional<std::size_t> chosen;
+   while (!chosen) {
       tcb.disposition = thread_disposition::prepared;
-      std::optional<std::size_t> chosen;
 
       {
          // All waitable wakes are serialised on the arm_guard.
@@ -504,54 +519,57 @@ namespace this_thread
          // If a wake fires AFTER the arm_guard:
          // - Thread is readied and we are no longer 'prepared' to block.
 
-         // Lowest-index wins on ties
-         for (std::size_t i = 0; waitable& waitable : waitables) {
-            if (waitable.try_satisfy(record_for(waitable))) {
-               tcb.disposition = thread_disposition::none;
-               chosen = i;
+         chosen = first_satisfied();
+         if (chosen) {
+            tcb.disposition = thread_disposition::none;
 
-               // Leave the queue we just acquired from IMMEDIATELY, rather than
-               // at the guard below. An owner still armed in its own resource's
-               // queue is a cycle in the wait-for graph: the fold reads that
-               // queue, finds the owner listed as a bridge, and recurses back
-               // into the owner until the depth budget runs out and answers 0.
-               // That is not the harmless over-boost it looks like. A thread
-               // folding to 0 can never be beaten by set_thread_ready's
-               // urgency < current comparison, so its core stops raising
-               // preemption hints entirely while the window is open.
-               //
-               // Safe to do early: we own it, so no release can transfer it to
-               // us in the meantime, which is the only thing the other nodes
-               // have to stay armed for.
-               arm_guard.leave(i);
-               break;
-            }
-            ++i;
-         }
-
-         if (!chosen) {
+            // Leave the queue we just acquired from IMMEDIATELY, rather than
+            // at the guard below. An owner still armed in its own resource's
+            // queue is a cycle in the wait-for graph: the fold reads that
+            // queue, finds the owner listed as a bridge, and recurses back
+            // into the owner until the depth budget runs out and answers 0.
+            // That is not the harmless over-boost it looks like. A thread
+            // folding to 0 can never be beaten by set_thread_ready's
+            // urgency < current comparison, so its core stops raising
+            // preemption hints entirely while the window is open.
+            //
+            // Safe to do early: we own it, so no release can transfer it to
+            // us in the meantime, which is the only thing the other nodes
+            // have to stay armed for.
+            arm_guard.leave(*chosen);
+         } else {
             // Nothing was satisfied. Park, unless a wake beat us to it.
             commit_to_block(tcb);
          }
       } // arm_guard: disarm every node not already left, noting which a wake took
 
-      if (chosen) {
-         // The sweep must run here, AFTER the disarm above: while any node of
-         // ours was still armed, a racing release could commit a transfer to
-         // us. With every node off every queue no further transfer can choose
-         // us, so the set of in-flight assignments is frozen and the ones we
-         // are not returning are handed back. The contract this enforces: on
-         // return the caller owns exactly waitables[chosen], plus whatever it
-         // already owned before the call.
-         for (std::size_t i = 0; waitable& waitable : waitables) {
-            if (i != chosen) {
-               waitable.renounce_if_assigned(tcb.id);
-            }
-            ++i;
-         }
-         return *chosen;
+      if (!chosen) {
+         // Readied, by a wake or by losing the commit to one. Poll before
+         // arming again: a wake usually leaves what it was for, and taking it
+         // here saves arming and disarming every queue a second time. An
+         // unarmed poll loses nothing, since if every poll fails the next pass
+         // arms and polls again before it may park. And it is safe for every
+         // waitable, because past a wait's first poll a poll may only take what
+         // satisfies it (try_satisfy's contract). The one poll that does more,
+         // the condition variable's release of its mutex, is a first poll, and
+         // the first pass always polls armed.
+         chosen = first_satisfied();
       }
    }
+
+   // The sweep must run here, AFTER the disarm above: while any node of ours
+   // was still armed, a racing release could commit a transfer to us. With
+   // every node off every queue no further transfer can choose us, so the set
+   // of in-flight assignments is frozen and the ones we are not returning are
+   // handed back. The contract this enforces: on return the caller owns
+   // exactly waitables[chosen], plus whatever it already owned before the call.
+   for (std::size_t i = 0; waitable& waitable : waitables) {
+      if (i != chosen) {
+         waitable.renounce_if_assigned(tcb.id);
+      }
+      ++i;
+   }
+   return *chosen;
 }
 
 } // namespace this_thread

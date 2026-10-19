@@ -88,6 +88,23 @@ private:
    static_assert(config::max_priorities <= std::numeric_limits<decltype(tie_rotor)>::digits,
                  "tie_rotor cannot represent that many priorities!");
 
+   /* File a thread that has just become ready: the matrix at its base
+    * priority, or the holder list if it holds something, because a holder's
+    * urgency can beat its base and the pick folds it there. The caller holds
+    * this core's critical section and the thread is in neither structure.
+    *
+    * The part of set_thread_ready every admission needs, and all reschedule
+    * needs to rotate the thread it is switching away from: that thread is
+    * running, so it cannot be terminated, enqueued or listed, and nothing
+    * reads a hint about it.
+    *
+    * Inline, like set_thread_running, set_thread_blocked and pick_next, and
+    * defined in scheduler.cpp, the only file that calls any of the four.
+    * Every switch runs them, and out of line the asserts in them are enough
+    * to stop GCC at -O2 inlining them, when the call costs more than the
+    * body. */
+   inline void admit(thread_control_block& tcb);
+
 public:
    static constexpr thread::id idle_thread_id = 0; // Reserved
 
@@ -136,9 +153,9 @@ public:
 
    schedule_hint set_thread_ready(thread_control_block& tcb);
 
-   void set_thread_running(thread_control_block& tcb);
+   inline void set_thread_running(thread_control_block& tcb);
 
-   void set_thread_blocked(thread_control_block& tcb);
+   inline void set_thread_blocked(thread_control_block& tcb);
 
    void set_thread_terminated(thread_control_block& tcb);
 
@@ -149,7 +166,7 @@ public:
     * most urgent holder, whose urgency is folded from truth rather than read
     * from a cache. Returns nullptr when nothing is runnable.
     */
-   thread_control_block* pick_next();
+   inline thread_control_block* pick_next();
 
    /**
     * @brief Push a TCB onto this core's intake stack. Any core may call.
@@ -269,32 +286,19 @@ schedule_hint global_ready_thread(thread_control_block& tcb);
 /* ---------------------------------------------------------------------------
  * A thread's relationship to scheduling: what it is worth, when it parks, and
  * when a core should think again. Free functions rather than scheduler methods
- * because none of them is about ONE core's state, and all four are DEFINED IN
- * waitable.cpp alongside the queue machinery that drives them.
+ * because none of them is about ONE core's state, and all are DEFINED IN
+ * waitable.cpp alongside the queue machinery that drives them, but for
+ * urgency's fast path, inline below.
  * ------------------------------------------------------------------------- */
 
-/**
- * @brief A thread's urgency, computed from truth: min(base, best waiter of
- *        every base_mutex it holds).
+/* How far a transitive donation is followed before the answer is taken to be
+ * maximally urgent.
  *
- * This is the DEFINITION of priority inheritance, evaluated rather than read.
- * There is no stored effective priority and no walk maintaining one: a cache
- * whose inputs live on other cores is what every priority-inheritance bug in
- * this project's history has been.
- *
- * Callable by ANY core with no lock held. That is not incidental: held_slots is
- * a bounded array of atomics rather than an intrusive list precisely so a
- * remote core can read what a thread holds without taking its pi_lock, and
- * queue tops are maintained atomics for the same reason. A racing release
- * yields a stale-but-plausible answer, which is the tolerance the value-free
- * doorbell already rests on.
- *
- * Cost: one relaxed load and a compare when the thread holds nothing, which is
- * 98.9 percent of picks in the only test that exercises mutexes at all and 100
- * percent everywhere else. Otherwise one iteration per resource actually held,
- * measured at 1.01 resources per holder.
- */
-[[nodiscard]] std::uint8_t urgency(thread_control_block const& tcb) noexcept;
+ * Real chains are short: the deepest the suite builds is 6, and the flagship PI
+ * test is 2. The budget is not a performance knob, it is what stops a wait-for
+ * cycle (a deadlocked application) from being walked forever. Exhausting it
+ * yields 0, which over-boosts, which is the safe direction. */
+inline constexpr unsigned max_inheritance_depth = 8;
 
 /**
  * @brief urgency() with an explicit recursion budget.
@@ -319,6 +323,36 @@ schedule_hint global_ready_thread(thread_control_block& tcb);
 [[nodiscard]] std::uint8_t urgency_at(thread_control_block const& tcb, unsigned depth) noexcept;
 
 /**
+ * @brief A thread's urgency, computed from truth: min(base, best waiter of
+ *        every base_mutex it holds).
+ *
+ * This is the DEFINITION of priority inheritance, evaluated rather than read.
+ * There is no stored effective priority and no walk maintaining one: a cache
+ * whose inputs live on other cores is what every priority-inheritance bug in
+ * this project's history has been.
+ *
+ * Callable by ANY core with no lock held. That is not incidental: held_slots is
+ * a bounded array of atomics rather than an intrusive list precisely so a
+ * remote core can read what a thread holds without taking its pi_lock, and
+ * queue tops are maintained atomics for the same reason. A racing release
+ * yields a stale-but-plausible answer, which is the tolerance the value-free
+ * doorbell already rests on.
+ *
+ * Cost: one load and a compare when the thread holds nothing, which is 98.9
+ * percent of picks in the only test that exercises mutexes at all and 100
+ * percent everywhere else, and inline for that reason: every wake asks twice.
+ * Otherwise one iteration per resource actually held, measured at 1.01
+ * resources per holder.
+ */
+[[nodiscard]] inline std::uint8_t urgency(thread_control_block const& tcb) noexcept
+{
+   if (tcb.held_mask.load(std::memory_order_acquire) == 0) {
+      return tcb.base_priority;
+   }
+   return urgency_at(tcb, max_inheritance_depth);
+}
+
+/**
  * @brief Commit to parking, unless a wake has already revoked the intent.
  *
  * The subtle half of the two-phase block, and the ONLY part of it that is worth
@@ -327,13 +361,16 @@ schedule_hint global_ready_thread(thread_control_block& tcb);
  * would cost more readability than it saves, but this test-and-commit must be
  * identical everywhere or the lost-wakeup window reopens.
  *
- * Preemption is disabled across the test and the store, so a wake cannot land
- * between deciding to block and recording it. A wake that arrived earlier has
- * already cleared the disposition, and that is what this re-reads: seeing
- * anything other than prepared means someone readied us after we armed, so we
- * must not park. The pend is deferred to preempt_enable by construction.
+ * The test and the store run with this core's interrupts masked, so a wake
+ * cannot land between deciding to block and recording it. A wake that arrived
+ * earlier has already cleared the disposition, and that is what this re-reads:
+ * seeing anything other than prepared means someone readied us after we armed,
+ * so we must not park. Committed, it yields, and returns once the thread runs
+ * again, never before the switch: the caller disarms next, and a thread that
+ * disarmed before it parked would park armed on nothing.
  *
- * Caller must be armed on every source it intends to wake from BEFORE calling.
+ * Caller must be armed on every source it intends to wake from BEFORE calling,
+ * and at baseline, as for any yield.
  */
 void commit_to_block(thread_control_block& tcb);
 

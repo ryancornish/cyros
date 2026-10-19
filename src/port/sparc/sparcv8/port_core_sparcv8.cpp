@@ -782,8 +782,11 @@ asm(
  * the target's, each run at its own level so that higher ones nest. `ta 9`
  * is a yield, run at the reschedule's. Anything else is a fault, run at 15.
  * Entered and left at PIL 15 ("Nested interrupts").
+ *
+ * Used: only the assembly above calls it, which the compiler cannot see, so an
+ * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" std::uint32_t* cyros_sparc_trap_dispatch(std::uint32_t* frame, std::uint32_t tt)
+extern "C" [[gnu::used]] std::uint32_t* cyros_sparc_trap_dispatch(std::uint32_t* frame, std::uint32_t tt)
 {
    cyros_sparc_core_state& state = cyros_sparc_cores[this_core()];
    /* The entry counted this trap, and recorded the outermost one's frame as

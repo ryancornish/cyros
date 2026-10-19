@@ -460,8 +460,11 @@ extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
 
 /**
  * @brief The C half of PendSV: deliver a reschedule, or owe it.
+ *
+ * Used: only the assembly above calls it, which the compiler cannot see, so an
+ * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" void cyros_port_pendsv_dispatch(void)
+extern "C" [[gnu::used]] void cyros_port_pendsv_dispatch(void)
 {
    CYROS_ASSERT(reschedule_handler != nullptr);
    std::uint32_t const core = this_core();

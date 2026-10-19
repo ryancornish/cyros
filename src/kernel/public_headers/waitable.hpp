@@ -4,10 +4,12 @@
 #ifndef CYROS_WAITABLE_HPP
 #define CYROS_WAITABLE_HPP
 
+#include <cyros/config/config.hpp>
 #include <cyros/kernel/thread.hpp>
 #include <cyros/kernel/spinlock.hpp>
 #include <cyros/kernel/visibility.hpp>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -182,7 +184,13 @@ class CYROS_PUBLIC wait_queue
    bool wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy, inheritance_cache* pi) noexcept;
    bool wake_one_and_commit(commit_fn commit, reschedule_policy policy, inheritance_cache* pi) noexcept;
 
-   [[nodiscard]] bool empty() const noexcept;
+   [[nodiscard]] bool empty() const noexcept
+   {
+      // Advisory: not under lock. Fine for "should I bother waking" hints, and
+      // see waitable::may_have_waiters for the one order in which acting on a
+      // false answer is safe.
+      return head.load(std::memory_order_relaxed) == nullptr;
+   }
 
    /**
     * @brief Best waiter urgency on this queue, which is what its holder inherits.
@@ -235,10 +243,38 @@ class CYROS_PUBLIC wait_queue
 
    void link  (wait_node&) noexcept;
    bool unlink(wait_node&) noexcept;
-   void refresh_top(inheritance_cache* pi) noexcept;
+   inline void refresh_top(inheritance_cache* pi) noexcept; // inline: every queue operation calls it, and only waitable.cpp does
 
-   spinlock   lock;
-   wait_node* head{nullptr}; // base-priority-ordered, best at head
+   /* The full fence each side of a lock-free emptiness test needs: between a
+    * waiter arming and its first poll, and between a releaser changing what
+    * the waiters poll and its test (waitable::may_have_waiters). On one core
+    * a thread and the interrupts that preempt it already see each other's
+    * accesses in program order, so only the compiler must be held back. */
+   static void peek_fence() noexcept
+   {
+      if constexpr (config::cores > 1) {
+#if defined(__SANITIZE_THREAD__)
+         // ThreadSanitizer refuses standalone fences. Read-modify-writes of one
+         // shared word order the two sides the same way, since whichever comes
+         // second in that word's order synchronises with the first.
+         peek_fence_word.fetch_add(0, std::memory_order_acq_rel);
+#else
+         std::atomic_thread_fence(std::memory_order_seq_cst);
+#endif
+      } else {
+         std::atomic_signal_fence(std::memory_order_seq_cst);
+      }
+   }
+#if defined(__SANITIZE_THREAD__)
+   static inline constinit std::atomic<unsigned> peek_fence_word{0};
+#endif
+
+   spinlock lock;
+
+   /* Base-priority-ordered, best at head. Atomic only so that empty() may read
+    * it without the lock. Every other access holds the lock and is relaxed,
+    * which compiles to the plain loads and stores it would be anyway. */
+   std::atomic<wait_node*> head{nullptr};
 
    // The only types that may drive a queue.
    friend class waitable;
@@ -376,6 +412,12 @@ protected:
     * this_thread::id()). Runs in the calling thread's context with no queue
     * lock held.
     *
+    * A wait's FIRST poll runs with the caller armed on this waitable, so it
+    * may do something a wake must not miss, as the condition variable's first
+    * poll releases its mutex. A later poll may run unarmed, after a wake and
+    * before the caller arms again, so past the first a poll may do nothing
+    * but take what satisfies it.
+    *
     * @param record The caller's waiter_record if it installed one naming this
     *        waitable, otherwise null. A waitable that needs none ignores it.
     * @return true when the caller is satisfied and will not block.
@@ -392,6 +434,23 @@ protected:
     * at the cost of waiter fairness.
     */
    void wake_one(reschedule_policy policy = reschedule_policy::automatic) noexcept;
+
+   /**
+    * @brief Whether anything may be waiting here. Lock-free.
+    *
+    * For a release that would otherwise take the queue's lock only to find it
+    * empty. False is safe to act on in ONE order: change the state the waiters
+    * poll FIRST, then ask. This fences before it looks, and a waiter fences
+    * between arming and its first poll (wait_on_any), so one side always sees
+    * the other: the release finds the waiter armed, or the waiter's poll finds
+    * the release. True may be stale, and a wake then finds nobody, as it
+    * always could.
+    */
+   [[nodiscard]] bool may_have_waiters() const noexcept
+   {
+      wait_queue::peek_fence();
+      return !queue.empty();
+   }
 
    /**
     * @brief Wake ALL waiting threads (if any).

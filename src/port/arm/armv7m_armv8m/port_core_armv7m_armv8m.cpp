@@ -665,8 +665,11 @@ extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
  *
  * Separate so the assembly above stays free of anything the compiler could
  * reorder, and so the scheduler is reached through an ordinary call.
+ *
+ * Used: only the assembly above calls it, which the compiler cannot see, so an
+ * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" void cyros_port_pendsv_dispatch(void)
+extern "C" [[gnu::used]] void cyros_port_pendsv_dispatch(void)
 {
    CYROS_ASSERT(reschedule_handler != nullptr);
    reschedule_handler();
