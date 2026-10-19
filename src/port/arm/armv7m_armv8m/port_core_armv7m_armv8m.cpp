@@ -468,14 +468,14 @@ bool cyros_port_interrupts_enabled(void)
    return cortex_m::get_primask() == 0u;
 }
 
-cyros_mask_token_t cyros_port_irq_save(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_irq_save(void)
 {
    cyros_mask_token_t const token = cortex_m::get_primask();
    cortex_m::disable_irq();
    return token;
 }
 
-void cyros_port_irq_restore(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_irq_restore(cyros_mask_token_t token)
 {
    /* Restores to MASKED when the token says the caller was already masked.
     * That asymmetry is the whole point of a token, and is what the Linux ports
@@ -488,7 +488,7 @@ void cyros_port_irq_restore(cyros_mask_token_t token)
  * Preemption Control
  * ========================================================================= */
 
-cyros_mask_token_t cyros_port_preempt_disable(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_preempt_disable(void)
 {
    cyros_mask_token_t const token = cortex_m::get_basepri();
    cortex_m::set_basepri(preempt_mask_value);
@@ -500,7 +500,7 @@ cyros_mask_token_t cyros_port_preempt_disable(void)
    return token;
 }
 
-void cyros_port_preempt_enable(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_preempt_enable(cyros_mask_token_t token)
 {
    cortex_m::set_basepri(token);
    cortex_m::dsb();
@@ -589,7 +589,7 @@ void cyros_port_context_destroy(cyros_port_context* context)
    context->tls         = nullptr;
 }
 
-void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
+CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
 {
    /* Reachable only from the PendSV handler. If this ever fires, something is
     * calling the scheduler's switch from thread context, where PSP does not
@@ -627,7 +627,7 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
  * and it belongs with the rest of the thread's context. Pushing it to MSP
  * instead only works while every thread's EXC_RETURN happens to be identical.
  */
-extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
+extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME CYROS_PORT_HOT void PendSV_Handler(void)
 {
    asm volatile(
       "mrs   r0, psp                    \n"  /* the interrupted thread's stack  */
@@ -669,7 +669,7 @@ extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" [[gnu::used]] void cyros_port_pendsv_dispatch(void)
+extern "C" [[gnu::used]] CYROS_PORT_HOT void cyros_port_pendsv_dispatch(void)
 {
    CYROS_ASSERT(reschedule_handler != nullptr);
    reschedule_handler();
@@ -741,7 +741,7 @@ void cyros_port_start_first(cyros_port_context* first)
  * Reschedule Requests
  * ========================================================================= */
 
-void cyros_port_thread_yield(void)
+CYROS_PORT_HOT void cyros_port_thread_yield(void)
 {
    /* port.h asks ports that can observe the execution priority to assert the
     * baseline precondition here. This one can, so it does. */
@@ -758,7 +758,7 @@ void cyros_port_thread_yield(void)
     * the strong guarantee, delivered by the hardware rather than asserted. */
 }
 
-void cyros_port_pend_reschedule(void)
+CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
    /* Callable from anywhere, including an ISR and inside a critical section.
     * Setting PENDSVSET is the whole implementation: the hardware holds the

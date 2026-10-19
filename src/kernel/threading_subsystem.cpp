@@ -182,7 +182,7 @@ namespace this_thread
    CYROS_PORT_UNREACHABLE(); // Bug: The arbiter declined to retire this thread!
 }
 
-void yield()
+CYROS_HOT void yield()
 {
    // Strong request: an explicit yield deliberately gives up the CPU and
    // relies on the reschedule round-trip having completed on return.

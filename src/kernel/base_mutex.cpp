@@ -169,7 +169,7 @@ void base_mutex::check_ceiling_contract(thread_control_block const& tcb) const n
  * owner, never null, so null means no waiter has been chosen. A waiter still
  * polling races this CAS exactly as it races a newcomer's first poll.
  */
-bool base_mutex::take_if_free(thread_control_block& tcb) noexcept
+CYROS_HOT bool base_mutex::take_if_free(thread_control_block& tcb) noexcept
 {
    thread_control_block* expected = nullptr;
    if (!owner.compare_exchange_strong(expected, &tcb, std::memory_order_acq_rel)) {
@@ -186,7 +186,7 @@ bool base_mutex::try_lock() noexcept
    return take_if_free(tcb);
 }
 
-void base_mutex::lock() noexcept
+CYROS_HOT void base_mutex::lock() noexcept
 {
    auto& tcb = scheduler_for_this_core().get_current_thread();
    // Relaxed is exact here: only this thread's own CAS, or a handover while it
@@ -252,7 +252,7 @@ void base_mutex::lock() noexcept
    }
 }
 
-void base_mutex::unlock(reschedule_policy policy) noexcept
+CYROS_HOT void base_mutex::unlock(reschedule_policy policy) noexcept
 {
    auto& tcb = scheduler_for_this_core().get_current_thread();
    CYROS_REQUIRE_OP(owner.load(std::memory_order_relaxed), ==, &tcb); // Release by non-owner

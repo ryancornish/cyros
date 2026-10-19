@@ -106,7 +106,7 @@ void apply_reschedule_policy(reschedule_policy const policy, schedule_hint const
  * machinery: the old key was effective priority, which moved under the queue and
  * had to be chased.
  */
-void wait_queue::link(wait_node& node) noexcept
+CYROS_HOT void wait_queue::link(wait_node& node) noexcept
 {
    // Behind every waiter as urgent or more, so FIFO within a priority. The
    // head is atomic (see its declaration), so it is the one slot not reached
@@ -129,7 +129,7 @@ void wait_queue::link(wait_node& node) noexcept
  * @brief Unlink node from wait_queue if present.
  * Idempotent if node not present.
  */
-bool wait_queue::unlink(wait_node& node) noexcept
+CYROS_HOT bool wait_queue::unlink(wait_node& node) noexcept
 {
    auto* const first = head.load(std::memory_order_relaxed);
    if (first == &node) {
@@ -198,7 +198,7 @@ std::uint8_t wait_queue::top(std::atomic<thread_control_block*> const& resource_
    return best;
 }
 
-void wait_queue::arm(wait_node& node, inheritance_cache* pi) noexcept
+CYROS_HOT void wait_queue::arm(wait_node& node, inheritance_cache* pi) noexcept
 {
    spinlock_guard guard(lock);
 
@@ -227,7 +227,7 @@ void wait_queue::arm(wait_node& node, inheritance_cache* pi) noexcept
  * prompt because urgency is folded at the point of use, so nothing here
  * reports whether the queue's top moved.
  */
-bool wait_queue::disarm(wait_node& node, inheritance_cache* pi) noexcept
+CYROS_HOT bool wait_queue::disarm(wait_node& node, inheritance_cache* pi) noexcept
 {
    spinlock_guard guard(lock);
 
@@ -253,7 +253,7 @@ inline void wait_queue::refresh_top(inheritance_cache* pi) noexcept
    }
 }
 
-void wait_queue::wake_one(reschedule_policy policy, inheritance_cache* pi) noexcept
+CYROS_HOT void wait_queue::wake_one(reschedule_policy policy, inheritance_cache* pi) noexcept
 {
    thread_control_block* chosen = nullptr;
    {
@@ -303,7 +303,7 @@ void wait_queue::wake_all(reschedule_policy policy, inheritance_cache* pi) noexc
    cyros_port_preempt_enable(token);
 }
 
-bool wait_queue::wake_one_and_commit(commit_fn commit, reschedule_policy policy, inheritance_cache* pi) noexcept
+CYROS_HOT bool wait_queue::wake_one_and_commit(commit_fn commit, reschedule_policy policy, inheritance_cache* pi) noexcept
 {
    thread_control_block* chosen = nullptr;
    {
@@ -356,7 +356,7 @@ waitable::~waitable()
    CYROS_REQUIRE(queue.empty()); // Destroyed with waiters parked on it
 }
 
-void waitable::wake_one(reschedule_policy policy) noexcept
+CYROS_HOT void waitable::wake_one(reschedule_policy policy) noexcept
 {
    queue.wake_one(policy);
 }
@@ -369,6 +369,11 @@ void waitable::wake_all(reschedule_policy policy) noexcept
 bool waitable::wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy) noexcept
 {
    return queue.wake_one_and_transfer(transfer, policy);
+}
+
+void waitable::renounce_if_assigned(thread::id) noexcept
+{
+   // Nothing to hand back: an ownerless waitable assigns nobody anything.
 }
 
 /* ============================================================================
@@ -401,7 +406,7 @@ std::uint8_t urgency_at(thread_control_block const& tcb, unsigned const depth) n
    return donated_floor(tcb, depth);
 }
 
-void commit_to_block(thread_control_block& tcb)
+CYROS_HOT void commit_to_block(thread_control_block& tcb)
 {
    // Hazard: the thread could read 'prepared', an ISR could clear the
    // disposition, and the thread would blindly overwrite it to 'committed'.
@@ -481,7 +486,7 @@ void request_repick(thread_control_block& tcb)
 namespace this_thread
 {
 
-[[nodiscard]] std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept
+[[nodiscard]] CYROS_HOT std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept
 {
    CYROS_REQUIRE(!waitables.empty()); // Nothing to wait on
    CYROS_REQUIRE_OP(waitables.size(), <=, config::max_wait_nodes); // More than config::max_wait_nodes

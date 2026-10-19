@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+# build/toolchains/gcc-release.toml, written out whole so the project stands
+# alone: -O2, LTO across cyros, hidden visibility, and the lto_merged archive
+# with every hidden symbol made local, which is what an application links.
+name = "gcc-release"
+
+[tools]
+cc = "gcc-16"
+cxx = "g++-16"
+ar = "gcc-ar-16"
+asm = "gcc-16"
+
+[flags]
+common = ["-O2"]
+c = ["-std=gnu23", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-ffunction-sections", "-fdata-sections", "-flto", "-fvisibility=hidden"]
+cxx = ["-std=gnu++26", "-Wall", "-Werror", "-Wextra", "-Wpedantic", "-fno-exceptions", "-ffunction-sections", "-fdata-sections", "-flto", "-fvisibility=hidden", "-fvisibility-inlines-hidden"]
+asm = []
+link = []
+
+[settings]
+family = "gcc"
+debug = false
+optimization = "2"
+warnings_as_errors = true
+
+[archive]
+strategy = "lto_merged"
+localize_hidden = true
+preserve_lto_sections = false

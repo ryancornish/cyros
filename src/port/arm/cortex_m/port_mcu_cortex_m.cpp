@@ -33,7 +33,7 @@
 #include <cstdint>
 
 
-std::uint32_t cyros_port_get_core_id(void)
+CYROS_PORT_HOT std::uint32_t cyros_port_get_core_id(void)
 {
    return 0u;
 }

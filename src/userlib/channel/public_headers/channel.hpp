@@ -49,7 +49,8 @@
 #include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/function.hpp>
 #include <cyros/kernel/spinlock.hpp>
-#include <cyros/sync/semaphore.hpp>
+#include <cyros/kernel/thread.hpp>
+#include <cyros/kernel/waitable.hpp>
 
 #include <array>
 #include <concepts>
@@ -153,38 +154,26 @@ public:
     * is worth less than a stall, a sensor sample being the usual case.
     * Surviving values stay in FIFO order, it is only the front that is lost.
     *
-    * Drops the NEW value instead when there is nothing to overwrite: an empty
-    * ring whose every slot is already reserved by a send in flight, or a
-    * channel that has been stopped.
+    * Drops the NEW value instead when the channel has been stopped.
     */
    void send_overwrite(T v) noexcept
    {
-      if (space.try_acquire()) {
-         if (place_owning_space(v) != outcome::queued) {
-            space.release();
+      bool grew = false;
+      {
+         spinlock_guard guard(lock);
+         if (stopped) return;
+         if (occupancy == Capacity) {
+            head = advance(head); // drop the oldest
+         } else {
+            ++occupancy;
+            grew = true;
          }
-         return;
-      }
-
-      /* Replacing the oldest touches NEITHER semaphore, and that is not an
-       * oversight. A token stands for one occupied slot, not for one particular
-       * value, and this leaves the occupancy exactly as it found it: one value
-       * out at the head, one in at the tail. So every token still has a slot
-       * behind it and no wake is owed to anyone.
-       *
-       * An earlier draft took the dropped value's `items` token and gave it
-       * straight back, on the theory that a token must not outlive the value it
-       * stood for. Mutation testing killed that: removing the whole round trip
-       * left every reachable state identical, because the invariant is
-       * tokens <= occupancy and occupancy never moves here. All it did was buy
-       * a semaphore call under the spinlock, which is now the one thing this
-       * class never does. */
-      spinlock_guard guard(lock);
-      if (!stopped && occupancy > 0) {
-         head = advance(head);        // drop the oldest
-         ring[tail] = std::move(v);   // append the newest
+         ring[tail] = std::move(v);
          tail = advance(tail);
       }
+      // Replacing the oldest leaves the occupancy where it was, and a full
+      // channel has no receiver waiting, so only a growth owes a wake.
+      if (grew) readable.wake_one_if_waiting();
    }
 
    /**
@@ -196,25 +185,18 @@ public:
     */
    void send_blocking(T v) noexcept
    {
-      // No look at `stopped` first. A stopped channel holds the space token
-      // stop() left behind, or will as soon as whoever holds it passes it on,
-      // so this does not stay blocked, and the check under the lock below
-      // refuses the send. A look first would cost every send a lock round trip
-      // to save a stopped one a semaphore call.
-      space.acquire();  // a freed slot, or the token stop() left behind
-
-      outcome result = outcome::stopped;
-      {
-         spinlock_guard guard(lock);
-         if (!stopped) {
-            ring[tail] = std::move(v);
-            tail = advance(tail);
-            ++occupancy;
-            result = outcome::queued;
+      while (true) {
+         {
+            spinlock_guard guard(lock);
+            if (stopped) return;
+            if (occupancy < Capacity) {
+               place_locked(v);
+               break;
+            }
          }
+         this_thread::wait_on(writable);
       }
-      if (result == outcome::queued) { items.release(); }
-      else                           { space.release(); }  // relay, see stop()
+      readable.wake_one_if_waiting();
    }
 
    /**
@@ -227,17 +209,24 @@ public:
     */
    [[nodiscard]] std::optional<T> receive() noexcept
    {
-      // No look first, as in send_blocking: a stopped, drained channel holds
-      // the items token stop() left behind, or soon will, and settle() passes
-      // it on.
-      items.acquire();
-
-      std::optional<T> out;
-      {
-         spinlock_guard guard(lock);
-         out = take_locked();
+      while (true) {
+         std::optional<T> out;
+         bool finished = false;
+         {
+            spinlock_guard guard(lock);
+            if (occupancy > 0) {
+               out = take_locked();
+            } else {
+               finished = stopped;
+            }
+         }
+         if (out) {
+            writable.wake_one_if_waiting();
+            return out;
+         }
+         if (finished) return std::nullopt;
+         this_thread::wait_on(readable);
       }
-      return settle(std::move(out));
    }
 
    /**
@@ -246,14 +235,15 @@ public:
     */
    [[nodiscard]] std::optional<T> try_receive() noexcept
    {
-      if (!items.try_acquire()) return std::nullopt;
-
       std::optional<T> out;
       {
          spinlock_guard guard(lock);
-         out = take_locked();
+         if (occupancy > 0) {
+            out = take_locked();
+         }
       }
-      return settle(std::move(out));
+      if (out) writable.wake_one_if_waiting();
+      return out;
    }
 
    /**
@@ -267,20 +257,9 @@ public:
     * happens to values sent during the dead window, and that question has no
     * good answer.
     *
-    * ONE TOKEN EACH IS ENOUGH, AND THAT IS THE WHOLE TRICK. stop() does not own
-    * the threads, so it cannot know how many are blocked, and an earlier draft
-    * of this class counted them under the lock in order to release one token
-    * per participant. It did not need to. Every path that consumes a token and
-    * finds the channel dead RELEASES IT AGAIN before returning, so a single
-    * token walks from one blocked participant to the next until none are left.
-    * That turns "this channel is finished" from a one-shot signal, which a
-    * try_receive could steal and strand a blocked receiver forever, into a
-    * durable state that anyone who asks will observe.
-    *
-    * The relay is therefore load-bearing, not a tidy-up. It has three homes:
-    * settle() on the receiving side, and the tails of send_blocking and
-    * try_place on the sending side. Removing any one of them strands whoever
-    * was next in line on that side.
+    * `stopped` is durable state that every wait reads in its poll, so waking
+    * everyone once is enough: each waiter released finds the flag, and a waiter
+    * arriving later finds it on its first poll and never parks.
     */
    void stop() noexcept
    {
@@ -289,8 +268,8 @@ public:
          if (stopped) return;
          stopped = true;
       }
-      items.release();
-      space.release();
+      readable.wake_all();
+      writable.wake_all();
    }
 
    /** @brief Queued values right now. Racy the instant it returns, for diagnostics only. */
@@ -315,6 +294,49 @@ private:
       stopped,
    };
 
+   /**
+    * @brief Where receivers wait for a value, or senders for room.
+    *
+    * A poll only LOOKS, under the channel's lock, and takes nothing, so it is
+    * the same poll armed or unarmed (waitable::try_satisfy). The loop around
+    * each wait takes under the lock, where another thread may have beaten it,
+    * and then waits again: barging, as the semaphores it replaces allowed.
+    *
+    * No lost wakeup: a waiter arms before its poll takes the lock, and a
+    * changer changes under the lock before it asks may_have_waiters. If the
+    * change's lock came first the poll sees it, and if the poll's came first
+    * the changer, acquiring after it, sees the waiter armed.
+    */
+   template<bool Receivers>
+   class gate final : public waitable
+   {
+   public:
+      constexpr explicit gate(channel& owner) noexcept : owner(owner) {}
+
+      void wake_one_if_waiting() noexcept
+      {
+         if (may_have_waiters()) {
+            wake_one();
+         }
+      }
+
+      using waitable::wake_all;
+
+   protected:
+      bool try_satisfy(waiter_record*) noexcept override
+      {
+         spinlock_guard guard(owner.lock);
+         if constexpr (Receivers) {
+            return owner.occupancy > 0 || owner.stopped;
+         } else {
+            return owner.occupancy < Capacity || owner.stopped;
+         }
+      }
+
+   private:
+      channel& owner;
+   };
+
    static constexpr std::size_t advance(std::size_t index) noexcept
    {
       /* A compare and select rather than a modulo, so any capacity costs the
@@ -322,85 +344,50 @@ private:
       return (index + 1u == Capacity) ? 0u : index + 1u;
    }
 
-   /* Place a value whose space token the caller already holds. */
-   outcome place_owning_space(T& v) noexcept
+   /* Assumes `lock` is held and there is room. */
+   void place_locked(T& v) noexcept
    {
-      {
-         spinlock_guard guard(lock);
-         if (stopped) { return outcome::stopped; }
-         ring[tail] = std::move(v);
-         tail = advance(tail);
-         ++occupancy;
-      }
-      items.release();
-      return outcome::queued;
+      ring[tail] = std::move(v);
+      tail = advance(tail);
+      ++occupancy;
    }
 
    outcome try_place(T& v) noexcept
    {
-      if (!space.try_acquire()) {
-         /* No token does NOT mean full. After stop() the space semaphore holds
-          * the relay token, and a second sender racing the first for it comes
-          * away empty-handed on a channel that is merely finished. Reporting
-          * that as `full` would make send() panic on an ordinary shutdown race,
-          * which is the opposite of what the strict send is for. */
+      {
          spinlock_guard guard(lock);
-         return stopped ? outcome::stopped : outcome::full;
+         if (stopped) return outcome::stopped;
+         if (occupancy == Capacity) return outcome::full;
+         place_locked(v);
       }
-      outcome const result = place_owning_space(v);
-      if (result != outcome::queued) { space.release(); }  // relay, see stop()
-      return result;
+      readable.wake_one_if_waiting();
+      return outcome::queued;
    }
 
-   /* Assumes `lock` is held. */
-   std::optional<T> take_locked() noexcept
+   /* Assumes `lock` is held and a value is queued. */
+   T take_locked() noexcept
    {
-      if (occupancy == 0) { return std::nullopt; }
-      std::optional<T> out{std::move(ring[head])};
+      T out{std::move(ring[head])};
       head = advance(head);
       --occupancy;
       return out;
    }
 
-   /* The tail shared by both receives, run with the lock RELEASED because both
-    * arms wake somebody.
-    *
-    * An empty result means the consumed `items` token had no value behind it,
-    * which only happens for the token stop() leaves behind. Passing it back on
-    * is the receiving half of the relay that stop() describes, and it is why
-    * stop() can release one token rather than counting blocked receivers. */
-   std::optional<T> settle(std::optional<T> out) noexcept
-   {
-      if (out) { space.release(); }
-      else     { items.release(); }
-      return out;
-   }
-
-   /* THE ONE RULE THIS CLASS CANNOT BREAK: no semaphore call of any kind while
-    * holding `lock`. acquire and release both reach the scheduler, and `lock`
-    * masks interrupts on this core. The rule has no exceptions, which is worth
-    * more than the one call it used to cost. */
+   /* THE ONE RULE THIS CLASS CANNOT BREAK: no wake of any kind while holding
+    * `lock`. A wake reaches the scheduler, and `lock` masks interrupts on this
+    * core. The gates' polls take it, so a wait never holds it either. */
    mutable spinlock lock;
 
    std::array<T, Capacity> ring{};
 
-   /* OCCUPANCY IS READ FROM HERE, NEVER INFERRED FROM items.peek(). A receiver
-    * that holds an items token but has not yet reached the lock leaves the
-    * semaphore reading zero while the ring is still full, so anything that
-    * trusted the semaphore would conclude the ring was empty and be wrong.
-    *
-    * It is `stop()` that makes this field necessary, not send_overwrite. The
-    * token stop() leaves behind has no value under it, so take_locked has to be
-    * able to tell a token that stands for a queued value from that one, and
-    * head == tail cannot: it means full and empty alike. */
    std::size_t head      = 0;
    std::size_t tail      = 0;
    std::size_t occupancy = 0;
 
    bool stopped = false;
 
-   sync::semaphore items{0};
-   sync::semaphore space{Capacity};
+   gate<true>  readable{*this};
+   gate<false> writable{*this};
 };
 
 /**

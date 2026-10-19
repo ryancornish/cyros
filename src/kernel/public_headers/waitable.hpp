@@ -501,11 +501,16 @@ protected:
     * sweeps the non-chosen waitables through this hook after the final
     * disarm, when no further transfer can choose the caller. Ownerless
     * waitables have nothing to hand back, hence the default no-op.
+    *
+    * Defined in waitable.cpp, not here, and that is load-bearing. As the one
+    * virtual with a body it is the class's key function, so its vtable and
+    * itself exist once, in libcyros. Inline, every application that derives
+    * a waitable emitted its own copies, and against a release archive (its
+    * merged object's hidden symbols made local) the linker kept the
+    * application's and discarded the archive's, leaving the archive pointing
+    * into a discarded section: no derived waitable linked at all.
     */
-   virtual void renounce_if_assigned(thread::id thread_id) noexcept
-   {
-      (void)thread_id;
-   }
+   virtual void renounce_if_assigned(thread::id thread_id) noexcept;
 
 private:
    /// Composed, not inherited. See wait_queue above for why the type is

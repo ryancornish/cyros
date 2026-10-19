@@ -143,6 +143,14 @@ extern "C" {
  */
 #define CYROS_PORT_LINKED_BY_NAME __attribute__((visibility("default")))
 
+/**
+ * @def CYROS_PORT_HOT
+ * @brief The port's twin of CYROS_HOT (cyros/kernel/visibility.hpp): a port
+ *        function every switch runs goes in `.text.cyros.hot`, beside the
+ *        kernel's half of that path, so the whole path is contiguous.
+ */
+#define CYROS_PORT_HOT __attribute__((section(".text.cyros.hot")))
+
 
 /* ============================================================================
  * Port Type Definitions
@@ -549,8 +557,12 @@ uint64_t cyros_port_timestamp(void);
 /**
  * @brief Internal Kernel asserts
  * The Kernel has been setup incorrectly, or has hit an internal system error
+ *
+ * Cold as well as noreturn, so GCC lays every assert's failure path out of
+ * the way of the code that runs: 1 to 2 percent on the switching benchmarks
+ * (~/cyros-claude/performance-investigation.md).
  */
-void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional) __attribute__((noreturn));
+void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char const* file_optional, int line_optional) __attribute__((noreturn, cold));
 
 #if CYROS_PORT_CAPTURE_LOCATION
  #define CYROS_PORT_CAPTURE_FILE (__FILE__)

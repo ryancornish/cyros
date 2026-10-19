@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_spinlock_single_core"
+layer = 1
+harness_debt = { layer = 2, reason = "spinlock's contract is interrupt masking on the holding core. That does not exist until the kernel has started the core, so it cannot be observed below the harness floor." }
+source = "test_spinlock_single_core.cpp"
+config = "test_spinlock_single_core_config.hpp"
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

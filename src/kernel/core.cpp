@@ -22,22 +22,22 @@ void cpu_relax() noexcept
    cyros_port_cpu_relax();
 }
 
-preemption_token disable_preemption() noexcept
+CYROS_HOT preemption_token disable_preemption() noexcept
 {
    return { .v = cyros_port_preempt_disable() };
 }
 
-void enable_preemption(preemption_token token) noexcept
+CYROS_HOT void enable_preemption(preemption_token token) noexcept
 {
    cyros_port_preempt_enable(token.v);
 }
 
-critical_token enter_critical() noexcept
+CYROS_HOT critical_token enter_critical() noexcept
 {
    return { .v = cyros_port_irq_save() };
 }
 
-void exit_critical(critical_token token) noexcept
+CYROS_HOT void exit_critical(critical_token token) noexcept
 {
    cyros_port_irq_restore(token.v);
 }

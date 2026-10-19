@@ -11,7 +11,7 @@ namespace cyros::sync
    return counter.load(std::memory_order::relaxed);
 }
 
-void semaphore::release(std::size_t n) noexcept
+CYROS_HOT void semaphore::release(std::size_t n) noexcept
 {
    counter.fetch_add(n, std::memory_order_release);
    // The tokens are in before the test, which is the order may_have_waiters
@@ -24,7 +24,7 @@ void semaphore::release(std::size_t n) noexcept
    }
 }
 
-void semaphore::acquire() noexcept
+CYROS_HOT void semaphore::acquire() noexcept
 {
    // A free token is taken here, without arming a wait node. The general wait
    // path would find the same token on its first poll, after an arm and a
@@ -36,7 +36,7 @@ void semaphore::acquire() noexcept
    this_thread::wait_on(*this);
 }
 
-[[nodiscard]] bool semaphore::try_acquire() noexcept
+[[nodiscard]] CYROS_HOT bool semaphore::try_acquire() noexcept
 {
    auto current = counter.load(std::memory_order_relaxed);
    // Another thread may change counter after we have loaded it.
@@ -51,7 +51,7 @@ void semaphore::acquire() noexcept
    return false;
 }
 
-bool semaphore::try_satisfy(waiter_record*) noexcept
+CYROS_HOT bool semaphore::try_satisfy(waiter_record*) noexcept
 {
    return try_acquire();
 }

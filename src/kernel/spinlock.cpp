@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 Ryan Cornish */
 
 #include <cyros/kernel/spinlock.hpp>
+#include <cyros/port/port.h>
 
 namespace cyros
 {
@@ -24,30 +25,15 @@ namespace cyros
  *    contender's. The linux ports ignore the token, so nothing here can observe
  *    that. On a port whose token IS the saved state (PRIMASK or BASEPRI on ARM)
  *    it would restore the wrong mask. */
-void spinlock::lock()
-{
-   auto const saved = this_core::enter_critical();
-   while (flag.test_and_set(std::memory_order_acquire)) {
-      this_core::cpu_relax();
-   }
-   token = saved;
-}
-
 bool spinlock::try_lock()
 {
    auto const saved = this_core::enter_critical();
-   if (flag.test_and_set(std::memory_order_acquire)) {
+   if (!take(flag)) {
       this_core::exit_critical(saved); // leave the caller exactly as it was
       return false;
    }
    token = saved;
    return true;
-}
-
-void spinlock::unlock()
-{
-   flag.clear(std::memory_order_release);
-   this_core::exit_critical(token);
 }
 
 } // namespace cyros

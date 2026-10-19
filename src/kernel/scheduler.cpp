@@ -53,7 +53,7 @@ void scheduler::start()
    cyros_port_start_first(current_thread->context());
 }
 
-schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
+CYROS_HOT schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
 {
    CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
 
@@ -406,17 +406,20 @@ void scheduler::drain_intake()
  * Entry contract: called only by the owning core, current_thread non-null
  * and not enqueued. A blocked or created thread is never the running thread.
  */
-void scheduler::reschedule()
+CYROS_HOT void scheduler::reschedule()
 {
    CYROS_ASSERT(current_thread);
    CYROS_ASSERT(!current_thread->is_enqueued());
 
-   // Look before taking. An empty intake is every reschedule on one core and
-   // nearly every one on several, and a load is far cheaper than the exclusive
-   // exchange that takes it. Missing a push in flight costs nothing: a push
-   // onto an empty intake sends this core a reschedule of its own.
-   if (intake_pending()) {
-      drain_intake();
+   // Look before taking. An empty intake is nearly every reschedule, and a
+   // load is far cheaper than the exclusive exchange that takes it. Missing a
+   // push in flight costs nothing: a push onto an empty intake sends this core
+   // a reschedule of its own. On one core nothing pushes at all, since only a
+   // wake from another core does, so there is nothing to look at.
+   if constexpr (config::cores > 1) {
+      if (intake_pending()) {
+         drain_intake();
+      }
    }
 
    thread_control_block* previous_thread = current_thread;

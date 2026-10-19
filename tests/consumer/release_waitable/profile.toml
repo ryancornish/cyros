@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[profile]
+name = "release_waitable"
+toolchain = "./gcc-release.toml"
+config_header = "./config.hpp"
+
+[layout]
+source_root = "../../../src"
+output_root = "./out"
+
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+
+[features]
+enable = []
+
+[output]
+archive = "libcyros.a"

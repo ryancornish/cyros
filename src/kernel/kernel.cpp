@@ -89,7 +89,7 @@ void pin_thread_to_core(thread_control_block& tcb) noexcept
  * Registered with the port layer as the ISR handler.
  * Routes to the scheduler of the current core to rotate threads.
  */
-void reschedule_this_core()
+CYROS_HOT void reschedule_this_core()
 {
    auto& scheduler = scheduler_for_this_core();
 
@@ -113,12 +113,12 @@ void core_entry()
 } // namespace
 
 
-scheduler& scheduler_for_this_core()
+CYROS_HOT scheduler& scheduler_for_this_core()
 {
    return k.schedulers[cyros_port_get_core_id()];
 }
 
-schedule_hint global_ready_thread(thread_control_block& tcb)
+CYROS_HOT schedule_hint global_ready_thread(thread_control_block& tcb)
 {
    // Fast path: if the thread is already terminated (or terminating). Can happen with stale remote-ready-requests
    // A thread that terminates AFTER this check is handled by the scheduler-level guard when the request is drained.

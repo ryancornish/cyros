@@ -4,9 +4,9 @@
 /* ============================================================================
  * channel contract
  *
- * Subject: `cyros::ch::channel` (L7). Trusts spinlock (L1), semaphore
- * (L6) and function (L0), all proved below, plus the harness floor to run
- * cores at all.
+ * Subject: `cyros::ch::channel` (L7). Trusts spinlock (L1), the waitable
+ * machinery and function (L0), all proved below, plus the harness floor to
+ * run cores at all.
  *
  * The suite is organised by what each send variant PROMISES, because the whole
  * design rests on overflow policy belonging to the producer. So there is one
@@ -55,9 +55,10 @@ using namespace cyros;
 static_assert(config::cores >= 4, "Test suite is designed for (at least) quad-core configuration");
 
 /* A channel must stay constant-initialisable, so a static one lands in .bss
- * with no startup code and no initialisation-order surface. Both members that
- * could have broken it are the reason: spinlock and semaphore are both
- * constexpr-constructible, and std::array<T, N> value-initialises. */
+ * with no startup code and no initialisation-order surface. The members that
+ * could have broken it are the reason: spinlock and the two gates (waitables
+ * holding a reference to their channel) are constexpr-constructible, and
+ * std::array<T, N> value-initialises. */
 constinit static ch::channel<std::uint32_t, 4> constant_initialised_channel;
 
 namespace
@@ -280,6 +281,55 @@ TEST_F(Channel_Test, GivenRoomToSpare_WhenSendOverwrite_ThenNothingIsDropped)
    EXPECT_EQ(s.size_after.load(), 2u) << "overwrite dropped something on a channel with room";
    EXPECT_EQ(s.count.load(), 2)       << "not both values survived";
    EXPECT_EQ(s.first.load(), 1u)      << "the older value was dropped despite there being room";
+
+   kernel::finalise();
+}
+
+/* A receiver parked on an EMPTY channel is woken by send_overwrite, as by any
+ * send. The overwrite is the one send that grows the channel without going
+ * through the place-and-wake the others share, so it owes a wake of its own,
+ * and losing it leaves the receiver asleep beside a queued value. On one core
+ * the receiver outranks the producer, so the producer runs only once the
+ * receiver has parked, and a woken receiver runs before the producer's yield
+ * returns (at the wake on the preempt port, at the yield on coop). The stop()
+ * frees the receiver either way, so a lost wake fails the assertion rather
+ * than hanging the binary. */
+TEST_F(Channel_Test, GivenAParkedReceiver_WhenSendOverwrite_ThenItIsWoken)
+{
+   kernel::initialise();
+
+   test::guarded_stack receiver_stack;
+   test::guarded_stack producer_stack;
+
+   struct state
+   {
+      ch::channel<std::uint32_t, 4> ch;
+      std::atomic<bool> received{false};
+      std::atomic<std::uint32_t> value{0};
+      std::atomic<bool> woken_in_time{false};
+   } s;
+
+   thread receiver(
+      [&s] {
+         auto const got = s.ch.receive();
+         s.value.store(got.value_or(0));
+         s.received.store(true);
+      },
+      receiver_stack, thread::priority(0), core0);
+
+   thread producer(
+      [&s] {
+         s.ch.send_overwrite(42);
+         this_thread::yield();
+         s.woken_in_time.store(s.received.load());
+         s.ch.stop();
+      },
+      producer_stack, thread::priority(1), core0);
+
+   kernel::start();
+
+   EXPECT_TRUE(s.woken_in_time.load()) << "send_overwrite left a parked receiver asleep beside its value";
+   EXPECT_EQ(s.value.load(), 42u);
 
    kernel::finalise();
 }
