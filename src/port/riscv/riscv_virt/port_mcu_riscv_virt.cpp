@@ -79,7 +79,7 @@ inline void fence_before_ipi() noexcept
  * SMP & Multi-Core Support
  * ========================================================================= */
 
-std::uint32_t cyros_port_get_core_id(void)
+CYROS_PORT_HOT std::uint32_t cyros_port_get_core_id(void)
 {
    return riscv::read_mhartid();
 }
@@ -118,7 +118,7 @@ extern "C" [[noreturn]] void cyros_port_secondary_core_entry(void)
    CYROS_PORT_UNREACHABLE();
 }
 
-void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
+CYROS_PORT_HOT void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 {
    /* On RISC-V the cross-core and the local request are ONE mechanism: raise
     * the target hart's software interrupt. The target reads scheduler state
@@ -136,14 +136,14 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 namespace cyros::port::riscv
 {
 
-void soft_irq_raise(std::uint32_t core) noexcept
+CYROS_PORT_HOT void soft_irq_raise(std::uint32_t core) noexcept
 {
    reg(clint_msip + 4u * core) = 1u;
    /* Read back, so the store has reached the CLINT before this returns. */
    (void)load(clint_msip + 4u * core);
 }
 
-void soft_irq_clear(std::uint32_t core) noexcept
+CYROS_PORT_HOT void soft_irq_clear(std::uint32_t core) noexcept
 {
    reg(clint_msip + 4u * core) = 0u;
    (void)load(clint_msip + 4u * core);

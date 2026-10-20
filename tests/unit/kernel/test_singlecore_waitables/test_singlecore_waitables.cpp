@@ -601,6 +601,19 @@ public:
    void wake_best() noexcept { wake_one(); }
    void wake_everyone() noexcept { wake_all(); }
 
+   /// wake_all_where with the poll's own answer, noting each record it is handed.
+   std::array<waiter_record const*, 4> handed{};
+   std::size_t                         handed_count{0};
+   void wake_where_ready() noexcept
+   {
+      handed_count = 0;
+      wake_all_where([this](waiter_record const* record) noexcept {
+         if (handed_count < handed.size()) handed[handed_count++] = record;
+         return record != nullptr
+             && static_cast<tagged_record const*>(record)->ready->load(std::memory_order_acquire);
+      });
+   }
+
    void release_everyone() noexcept
    {
       bail.store(true, std::memory_order_release);
@@ -724,6 +737,80 @@ TEST_F(SingleCoreWaitables_Test,
    kernel::start();
 
    EXPECT_TRUE(s.only_middle) << "a poll answered from a record other than its own waiter's";
+   EXPECT_EQ(s.returned, 3);
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenRecordsNamingThisAndAnotherWaitable_WhenWakeAllWhere_ThenEachWaiterIsAskedWithTheRecordItsPollGets)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s0{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s1{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> s2{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> sd{};
+
+   struct state
+   {
+      RecordWaitable    w;
+      RecordWaitable    other;
+      std::atomic<bool> ready{false};
+      std::atomic<bool> never{false};
+      waiter_record*    own{nullptr};
+      std::array<bool, 3> done{};
+      int  returned{0};
+      bool only_first{false};
+   } s;
+
+   // In queue order: a record naming w, a record naming the other waitable in
+   // a group wait that includes w, and no record at all. The filter must be
+   // handed the first, then null twice, exactly what each one's poll of w gets.
+   thread named(
+      [&s]{
+         {
+            tagged_record record(s.w, s.ready);
+            s.own = &record;
+            this_thread::wait_on(s.w);
+         }
+         s.done[0] = true;
+         ++s.returned;
+      },
+      s0, thread::priority(1), core0);
+   thread elsewhere(
+      [&s]{
+         {
+            tagged_record record(s.other, s.never);
+            (void)this_thread::wait_on_any(s.w, s.other);
+         }
+         s.done[1] = true;
+         ++s.returned;
+      },
+      s1, thread::priority(2), core0);
+   thread bare(
+      [&s]{
+         this_thread::wait_on(s.w);
+         s.done[2] = true;
+         ++s.returned;
+      },
+      s2, thread::priority(3), core0);
+
+   // Least urgent on the only core, so it runs once all three are parked.
+   thread driver(
+      [&s]{
+         s.ready = true;
+         s.w.wake_where_ready();
+         this_thread::yield();
+         s.only_first = s.returned == 1 && s.done[0] && !s.done[1] && !s.done[2];
+         s.w.release_everyone();
+         s.other.release_everyone();
+      },
+      sd, thread::priority(4), core0);
+
+   kernel::start();
+
+   ASSERT_EQ(s.w.handed_count, 3u) << "the filter was not asked once about each queued waiter";
+   EXPECT_EQ(s.w.handed[0], s.own)   << "the waiter whose record names w was not asked with it";
+   EXPECT_EQ(s.w.handed[1], nullptr) << "a record naming another waitable reached w's filter";
+   EXPECT_EQ(s.w.handed[2], nullptr);
+   EXPECT_TRUE(s.only_first) << "wake_all_where woke a waiter its filter refused, or not the one it accepted";
    EXPECT_EQ(s.returned, 3);
 }
 

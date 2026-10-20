@@ -219,7 +219,7 @@ inline std::uint32_t this_core() noexcept
 
 /* The reschedule, from inside the trap. The kernel's handler may call
  * cyros_port_switch, which replaces `frame`. */
-void run_reschedule(core_state& state)
+CYROS_PORT_HOT void run_reschedule(core_state& state)
 {
    CYROS_ASSERT_OP(state.trap_depth, ==, 1u);   /* never from inside a handler */
    CYROS_ASSERT(reschedule_handler != nullptr);
@@ -245,7 +245,7 @@ void run_reschedule(core_state& state)
  * `cyros_port_trap_exit` is the second half on its own, which is also how
  * cyros_port_start_first enters a thread for the first time.
  */
-extern "C" [[gnu::naked, gnu::aligned(4)]] void cyros_port_trap_entry(void)
+extern "C" [[gnu::naked, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_trap_entry(void)
 {
    asm volatile(
       "addi  sp, sp, -128           \n"
@@ -341,7 +341,7 @@ extern "C" [[gnu::naked, gnu::aligned(4)]] void cyros_port_trap_entry(void)
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" [[gnu::used]] std::uint32_t* cyros_port_trap_dispatch(std::uint32_t* frame)
+extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_trap_dispatch(std::uint32_t* frame)
 {
    core_state& state = cores[this_core()];
    ++state.trap_depth;
@@ -481,14 +481,14 @@ bool cyros_port_interrupts_enabled(void)
    return (riscv::read_mstatus() & riscv::mstatus_mie) != 0u;
 }
 
-cyros_mask_token_t cyros_port_irq_save(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_irq_save(void)
 {
    std::uint32_t previous;
    asm volatile("csrrci %0, mstatus, 8" : "=r"(previous) : : "memory");
    return previous & riscv::mstatus_mie;
 }
 
-void cyros_port_irq_restore(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_irq_restore(cyros_mask_token_t token)
 {
    /* Restores to MASKED when the token says the caller was already masked. */
    if ((token & riscv::mstatus_mie) != 0u) {
@@ -503,14 +503,14 @@ void cyros_port_irq_restore(cyros_mask_token_t token)
  * Preemption Control
  * ========================================================================= */
 
-cyros_mask_token_t cyros_port_preempt_disable(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_preempt_disable(void)
 {
    std::uint32_t previous;
    asm volatile("csrrci %0, mie, 8" : "=r"(previous) : : "memory");
    return previous & riscv::mie_msie;
 }
 
-void cyros_port_preempt_enable(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_preempt_enable(cyros_mask_token_t token)
 {
    /* Setting MSIE back with MIE set takes a pended reschedule at the next
     * instruction boundary. No software safe-point check, as on ARM. */
@@ -581,7 +581,7 @@ void cyros_port_context_destroy(cyros_port_context* context)
    context->guard = 0u;
 }
 
-void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
+CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
 {
    core_state& state = cores[this_core()];
 
@@ -643,7 +643,7 @@ void cyros_port_start_first(cyros_port_context* first)
  * Reschedule Requests
  * ========================================================================= */
 
-void cyros_port_thread_yield(void)
+CYROS_PORT_HOT void cyros_port_thread_yield(void)
 {
    /* port.h asks ports that can observe the execution priority to assert the
     * baseline precondition. This one can. */
@@ -656,7 +656,7 @@ void cyros_port_thread_yield(void)
    asm volatile("ecall" ::: "memory");
 }
 
-void cyros_port_pend_reschedule(void)
+CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
    /* Callable from anywhere. Raising the soft IRQ is the whole implementation:
     * it is taken when MIE and MSIE are both set, which is port.h's next safe

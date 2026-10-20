@@ -80,6 +80,7 @@ private:
    thread_control_block* installed_on{nullptr};
    bool                  chosen_by_wake{false};
 
+   friend class waitable;
    friend class waitable_arm_guard;
    friend std::size_t this_thread::wait_on_any(std::span<waitable_ref>) noexcept;
 };
@@ -149,6 +150,7 @@ class CYROS_PUBLIC wait_queue
 
    using transfer_fn = std::function_ref<void(thread::id)>;
    using commit_fn   = std::function_ref<void(thread_control_block*)>;
+   using pick_fn     = std::function_ref<bool(thread_control_block const&)>;
    constexpr wait_queue() noexcept = default;
 
    wait_queue(wait_queue&&)                 = delete;
@@ -183,6 +185,10 @@ class CYROS_PUBLIC wait_queue
    void wake_all(reschedule_policy policy, inheritance_cache* pi) noexcept;
    bool wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy, inheritance_cache* pi) noexcept;
    bool wake_one_and_commit(commit_fn commit, reschedule_policy policy, inheritance_cache* pi) noexcept;
+
+   /// wake_all, but only the waiters @p pick accepts, asked under the lock
+   /// about each queued waiter's thread. Waitable queues only, so no cache.
+   void wake_all_where(pick_fn pick, reschedule_policy policy) noexcept;
 
    [[nodiscard]] bool empty() const noexcept
    {
@@ -338,6 +344,7 @@ class CYROS_PUBLIC pi_wait_queue
  *                           thread's context, with the caller's waiter_record
  *                           for this waitable, or null.
  *   wake_one / wake_all     signal waiters. ISR-safe.
+ *   wake_all_where          wake only the waiters a filter accepts. ISR-safe.
  *   wake_one_and_transfer   barge-free handoff, see the protocol note below.
  *
  * Threads wait via this_thread::wait_on(w) or wait_on_any(w0, w1, ...), never
@@ -462,6 +469,33 @@ protected:
     * before releasing all at once.
     */
    void wake_all(reschedule_policy policy = reschedule_policy::automatic) noexcept;
+
+   /**
+    * @brief Wake only the waiting threads @p wants accepts.
+    *
+    * @param wants Asked about each waiter, with the record its poll would get:
+    *        its installed waiter_record if that names this waitable, else null.
+    * @param policy After waking, apply this reschedule policy.
+    *
+    * For a waitable whose waiters want different things, such as event flags
+    * waited on by mask: a change wakes only the waiters it can satisfy, and the
+    * rest stay parked and never run, where wake_all would run each of them
+    * only to park it again.
+    *
+    * @p wants must answer exactly as the waiter's own poll would. A false for
+    * a waiter the poll would satisfy is a lost wakeup. A true for one it would
+    * not is only a spurious wake, which the wait loop absorbs. Change the state
+    * the waiters poll BEFORE the call: a waiter that arms after it polls the
+    * change itself.
+    *
+    * @p wants runs under the queue lock, with interrupts masked, on each
+    * queued waiter, so it must be tiny and read only: no lock, no wake, no
+    * blocking. A waiter's record is alive and unchanging while it is asked,
+    * since the waiter installs it before arming and removes it after its last
+    * disarm. Safe from ISR context.
+    */
+   void wake_all_where(std::function_ref<bool(waiter_record const*)> wants,
+                       reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
    /**
     * @brief Wake-and-handover to the single highest-priority waiting thread (if any).

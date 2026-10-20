@@ -150,7 +150,7 @@ extern "C" void const* cyros_port_cpu1_vector_table(void);
  * SMP & Multi-Core Support
  * ========================================================================= */
 
-std::uint32_t cyros_port_get_core_id(void)
+CYROS_PORT_HOT std::uint32_t cyros_port_get_core_id(void)
 {
    return cortex_m::reg(cpuid_block);
 }
@@ -214,7 +214,7 @@ void cyros_port_start_cores(std::size_t cores_to_use, cyros_port_core_entry_t en
    CYROS_PORT_UNREACHABLE();
 }
 
-void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
+CYROS_PORT_HOT void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 {
    CYROS_ASSERT_OP(core_id, <, static_cast<std::uint32_t>(CYROS_PORT_CORE_COUNT));
 
@@ -247,7 +247,7 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
  * other active handler have unwound, which is exactly the guarantee
  * cyros_port_send_reschedule_ipi documents.
  */
-extern "C" CYROS_PORT_LINKED_BY_NAME void MHU_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME CYROS_PORT_HOT void MHU_Handler(void)
 {
    cortex_m::reg(mhu_clear(cyros_port_get_core_id())) = 1u;
 

@@ -167,7 +167,7 @@ extern "C" cyros_irq_handler const* cyros_port_irq_table(void);
  * SMP & Multi-Core Support
  * ========================================================================= */
 
-std::uint32_t cyros_port_get_core_id(void)
+CYROS_PORT_HOT std::uint32_t cyros_port_get_core_id(void)
 {
    return riscv::read_mhartid();
 }
@@ -235,7 +235,7 @@ extern "C" [[noreturn]] void cyros_port_secondary_core_entry(void)
    CYROS_PORT_UNREACHABLE();
 }
 
-void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
+CYROS_PORT_HOT void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 {
    /* As on riscv_virt: the cross-core and the local request are one
     * mechanism. The target reads scheduler state as soon as it takes the
@@ -253,14 +253,14 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 namespace cyros::port::riscv
 {
 
-void soft_irq_raise(std::uint32_t core) noexcept
+CYROS_PORT_HOT void soft_irq_raise(std::uint32_t core) noexcept
 {
    reg(sio_riscv_softirq) = 1u << core;
    /* Read back, so the store has reached the SIO before this returns. */
    (void)load(sio_riscv_softirq);
 }
 
-void soft_irq_clear(std::uint32_t core) noexcept
+CYROS_PORT_HOT void soft_irq_clear(std::uint32_t core) noexcept
 {
    reg(sio_riscv_softirq) = 1u << (8u + core);
    (void)load(sio_riscv_softirq);

@@ -37,6 +37,7 @@
 #include "threading_subsystem.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 
 namespace cyros
@@ -303,6 +304,56 @@ void wait_queue::wake_all(reschedule_policy policy, inheritance_cache* pi) noexc
    cyros_port_preempt_enable(token);
 }
 
+void wait_queue::wake_all_where(pick_fn pick, reschedule_policy policy) noexcept
+{
+   // wake_all's batch, preemption held off throughout, except that a waiter
+   // pick refuses stays queued. One walk under the lock unlinks every waiter
+   // pick accepts, and they are readied after it, since readying reaches the
+   // scheduler, which no queue lock may be held across. What is kept for
+   // that is each one's TCB, never its node: a node lives on its waiter's
+   // stack and is touched only under the lock. A walk that fills the batch
+   // walks again from the head, where the waiters it took are gone.
+   schedule_hint aggregate_hint = schedule_hint::unwarranted;
+
+   auto token = cyros_port_preempt_disable();
+
+   std::array<thread_control_block*, 8> chosen [[indeterminate]];
+   std::size_t count = 0;
+   do {
+      count = 0;
+      {
+         spinlock_guard guard(lock);
+
+         wait_node* before = nullptr;
+         wait_node* node = head.load(std::memory_order_relaxed);
+         while (node != nullptr && count < chosen.size()) {
+            wait_node* const next = node->next;
+            if (pick(*node->owner)) {
+               chosen[count++] = node->owner;
+               if (before == nullptr) {
+                  head.store(next, std::memory_order_relaxed);
+               } else {
+                  before->next = next;
+               }
+               node->next = nullptr;
+            } else {
+               before = node;
+            }
+            node = next;
+         }
+      }
+      for (std::size_t i = 0; i < count; ++i) {
+         if (global_ready_thread(*chosen[i]) == schedule_hint::warranted) {
+            aggregate_hint = schedule_hint::warranted;
+         }
+      }
+   } while (count == chosen.size());
+
+   apply_reschedule_policy(policy, aggregate_hint);
+
+   cyros_port_preempt_enable(token);
+}
+
 CYROS_HOT bool wait_queue::wake_one_and_commit(commit_fn commit, reschedule_policy policy, inheritance_cache* pi) noexcept
 {
    thread_control_block* chosen = nullptr;
@@ -364,6 +415,20 @@ CYROS_HOT void waitable::wake_one(reschedule_policy policy) noexcept
 void waitable::wake_all(reschedule_policy policy) noexcept
 {
    queue.wake_all(policy);
+}
+
+void waitable::wake_all_where(std::function_ref<bool(waiter_record const*)> wants, reschedule_policy policy) noexcept
+{
+   // The record each waiter's poll gets, bound by identity as wait_on_any
+   // binds it. A queued waiter is inside its wait, so the record it installed
+   // before arming is still there: it comes off only after the last disarm,
+   // and a disarm takes the lock this walk holds.
+   queue.wake_all_where(
+      [this, &wants](thread_control_block const& owner) noexcept {
+         waiter_record const* const record = owner.wait_record;
+         return wants((record != nullptr && record->source == this) ? record : nullptr);
+      },
+      policy);
 }
 
 bool waitable::wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy) noexcept
@@ -492,7 +557,12 @@ namespace this_thread
    CYROS_REQUIRE_OP(waitables.size(), <=, config::max_wait_nodes); // More than config::max_wait_nodes
 
    auto& tcb = scheduler_for_this_core().get_current_thread();
-   wait_node_vector nodes(waitables.size(), tcb);
+
+   // Indeterminate, so GCC does not zero it first. Every wait would otherwise
+   // pay a memset of all config::max_wait_nodes slots (68 bytes at 8) to
+   // protect bytes nothing reads: the vector only ever touches the nodes it
+   // constructs, which are exactly the ones in use.
+   wait_node_vector nodes [[indeterminate]] (waitables.size(), tcb);
 
    // The caller's record, if it installed one, goes to the one waitable it
    // names and to no other source. Bound by identity, not by position.

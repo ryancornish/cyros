@@ -11,15 +11,17 @@
  * Trusts:  layers 0 to 5, and the semaphore used to enlist waiters (L6).
  * Proves:  that a set releases exactly the waiter whose bit it set when the
  *          switch is a real PendSV, and MEASURES what the others cost: set()
- *          wakes every waiter, and each one whose bit is clear re-tests its
- *          mask and parks again.
+ *          asks each queued waiter's mask under the queue lock and wakes only
+ *          the waiter it satisfies, so an idle waiter costs a set that look.
+ *          A tree from before 2026-10-20 woke every waiter to re-test and
+ *          park again, and this test builds there too, for an A/B.
  *
  * N waiters wait on N different bits, one each, at priorities 2 upwards. The
- * driver (priority 20) sets the bit of the LEAST urgent waiter, so every other
- * waiter wakes, runs, re-tests and parks before the target runs: the worst
- * case. The figure runs from the set to the driver's return, by which time the
- * target has consumed its bit and parked again. The difference between N and
- * N=1, divided by N-1, is what one idle waiter costs a set.
+ * driver (priority 20) sets the bit of the LEAST urgent waiter, the last the
+ * walk reaches, past every other: the worst case. The figure runs from the
+ * set to the driver's return, by which time the target has consumed its bit
+ * and parked again. The difference between N and N=1, divided by N-1, is
+ * what one idle waiter costs a set.
  *
  * Cycles come from cyros_port_timestamp: the DWT counter on most Arm boards,
  * MTIME at the core clock on the RP2350 on either ISA. QEMU models neither, so

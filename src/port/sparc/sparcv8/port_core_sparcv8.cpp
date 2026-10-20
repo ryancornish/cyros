@@ -228,7 +228,7 @@ inline std::uint32_t this_core() noexcept
 
 /* The reschedule, from inside the trap. The kernel's handler may call
  * cyros_port_switch, which replaces `frame`. */
-void run_reschedule(cyros_sparc_core_state& state)
+CYROS_PORT_HOT void run_reschedule(cyros_sparc_core_state& state)
 {
    CYROS_ASSERT_OP(state.depth, ==, 1u);   /* never from inside a handler */
    CYROS_ASSERT(reschedule_handler != nullptr);
@@ -786,7 +786,7 @@ asm(
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" [[gnu::used]] std::uint32_t* cyros_sparc_trap_dispatch(std::uint32_t* frame, std::uint32_t tt)
+extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_sparc_trap_dispatch(std::uint32_t* frame, std::uint32_t tt)
 {
    cyros_sparc_core_state& state = cyros_sparc_cores[this_core()];
    /* The entry counted this trap, and recorded the outermost one's frame as
@@ -901,12 +901,12 @@ bool cyros_port_interrupts_enabled(void)
    return (sparcv8::read_psr() & pil_irq_bits) == 0u;
 }
 
-cyros_mask_token_t cyros_port_irq_save(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_irq_save(void)
 {
    return psr_set(pil_irq_bits) & pil_irq_bits;
 }
 
-void cyros_port_irq_restore(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_irq_restore(cyros_mask_token_t token)
 {
    /* Restores to MASKED when the token says the caller was already masked,
     * and leaves the preemption field as it is now. */
@@ -918,12 +918,12 @@ void cyros_port_irq_restore(cyros_mask_token_t token)
  * Preemption Control
  * ========================================================================= */
 
-cyros_mask_token_t cyros_port_preempt_disable(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_preempt_disable(void)
 {
    return psr_set(pil_preempt_bits) & pil_preempt_bits;
 }
 
-void cyros_port_preempt_enable(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_preempt_enable(cyros_mask_token_t token)
 {
    /* Clearing the bit with the other field clear takes a pended reschedule
     * within the write's three nops, so before this returns. */
@@ -987,7 +987,7 @@ void cyros_port_context_destroy(cyros_port_context* context)
    context->frame = nullptr;
 }
 
-void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
+CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
 {
    cyros_sparc_core_state& state = cyros_sparc_cores[this_core()];
 
@@ -1046,7 +1046,7 @@ void cyros_port_start_first(cyros_port_context* first)
  * Reschedule Requests
  * ========================================================================= */
 
-void cyros_port_thread_yield(void)
+CYROS_PORT_HOT void cyros_port_thread_yield(void)
 {
    /* port.h asks ports that can observe the execution priority to assert the
     * baseline precondition. This one can. */
@@ -1059,7 +1059,7 @@ void cyros_port_thread_yield(void)
    asm volatile("ta " CYROS_SPARC_STR(CYROS_SPARC_TA_YIELD) ::: "memory");
 }
 
-void cyros_port_pend_reschedule(void)
+CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
    /* Callable from anywhere. Raising level 1 is the whole implementation: it
     * is taken when PIL is 0, which is port.h's next safe point. */

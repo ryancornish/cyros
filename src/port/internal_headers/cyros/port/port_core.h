@@ -574,7 +574,8 @@ void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char cons
 
 /**
  * @def CYROS_CHECK_ASSERTS
- * @brief 0 removes every internal CYROS_ASSERT. A toolchain sets it, and it defaults to 1.
+ * @brief 0 removes every internal CYROS_ASSERT, 2 keeps them as traps that
+ *        report nothing (below). A toolchain sets it, and it defaults to 1.
  *
  * With it off, a broken invariant the check would have caught runs on as
  * undefined behaviour rather than stopping in cyros_port_system_error. It
@@ -593,7 +594,14 @@ void cyros_port_system_error(uintptr_t auxilary1, uintptr_t auxilary2, char cons
  #define CYROS_CHECK_ASSERTS 1
 #endif
 
-#if CYROS_CHECK_ASSERTS
+#if CYROS_CHECK_ASSERTS == 2
+ /* Checked, but a failure traps where it stands, with no report: no aux
+  * values, no file and line, only the fault's address, which addr2line turns
+  * back into the line. In exchange no assert makes a call, so the functions
+  * holding them need no frame for it and inline as if they had none, worth 4
+  * to 8 percent on the switching benchmarks (performance-investigation.md). */
+ #define CYROS_ASSERT2(condition, aux1, aux2) ((void)sizeof(aux1), (void)sizeof(aux2), __builtin_expect(!!(condition), 1) ? (void)0 : __builtin_trap())
+#elif CYROS_CHECK_ASSERTS
  #define CYROS_ASSERT2(condition, aux1, aux2) (__builtin_expect(!!(condition), 1) ? (void)0 : cyros_port_system_error((uintptr_t)(aux1), (uintptr_t)(aux2), CYROS_PORT_CAPTURE_FILE, CYROS_PORT_CAPTURE_LINE))
 #else
  #define CYROS_ASSERT2(condition, aux1, aux2) ((void)sizeof(!!(condition)), (void)sizeof(aux1), (void)sizeof(aux2))

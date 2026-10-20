@@ -37,10 +37,11 @@ enum class flags_exit : bool
  * conditions". The bits are a level, so a set that lands before a waiter
  * parks is seen by its poll, and nothing is lost.
  *
- * set() wakes EVERY waiter to re-test its own mask, since different waiters
- * want different bits, and those still unsatisfied park again. So a set costs
- * a wakeup per waiter, not per waiter it satisfies. That is the price of
- * testing each waiter's mask in its own poll rather than in the wake.
+ * set() wakes only the waiters the flags then satisfy. It asks each queued
+ * waiter's mask under the queue lock, the same test the waiter's own poll
+ * makes, and a waiter on other bits stays parked and never runs. So a set
+ * costs a wakeup per waiter it satisfies, plus a short look at each of the
+ * others.
  *
  * Consuming waiters barge, as a semaphore's do: a set that satisfies two
  * consumers of the same bit goes to whichever polls first, which is normally
@@ -57,7 +58,7 @@ public:
    constexpr explicit event_flags(std::uint32_t initial = 0) noexcept : bits(initial) {}
 
    /**
-    * @brief Set @p mask's bits and wake every waiter to re-test.
+    * @brief Set @p mask's bits and wake the waiters they satisfy.
     * @return the flags before the set.
     */
    std::uint32_t set(std::uint32_t mask) noexcept;
@@ -128,6 +129,15 @@ private:
    /// poll and try_wait, so a blocking and a non-blocking wait can never
    /// disagree about what satisfies them.
    bool attempt(request& r) noexcept;
+
+   /// attempt's test alone, consuming nothing: whether @p flags satisfy @p r.
+   /// Also what set() asks of each parked waiter, so the wake and the poll
+   /// can never disagree about whom a set satisfies.
+   static bool satisfied_by(request const& r, std::uint32_t flags) noexcept
+   {
+      auto const hit = flags & r.mask;
+      return r.match == flags_match::any ? hit != 0 : hit == r.mask;
+   }
 
    bool try_satisfy(waiter_record* record) noexcept override;
 

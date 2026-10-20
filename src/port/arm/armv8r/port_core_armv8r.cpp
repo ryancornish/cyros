@@ -316,7 +316,7 @@ inline std::uint32_t this_core() noexcept
 
 /* The reschedule, from inside the exception path. The kernel's handler may
  * call cyros_port_switch, which replaces `frame`. */
-void run_reschedule(core_state& state)
+CYROS_PORT_HOT void run_reschedule(core_state& state)
 {
    CYROS_ASSERT_OP(state.depth, ==, 1u);   /* never from inside a handler */
    CYROS_ASSERT(reschedule_handler != nullptr);
@@ -342,7 +342,7 @@ constexpr std::uint32_t entered_by_svc = 1u;
  * Supervisor stack, and restores whatever frame it hands back, which is a
  * DIFFERENT thread's after a switch.
  */
-extern "C" [[gnu::naked]] void cyros_port_irq_entry(void)
+extern "C" [[gnu::naked]] CYROS_PORT_HOT void cyros_port_irq_entry(void)
 {
    asm volatile(
       "sub    lr, lr, #4                    \n"   /* the interrupted instruction */
@@ -362,7 +362,7 @@ extern "C" [[gnu::naked]] void cyros_port_irq_entry(void)
  *        `cyros_port_exception_exit`, is every entry's exit, and how
  *        cyros_port_start_first enters a thread for the first time.
  */
-extern "C" [[gnu::naked]] void cyros_port_svc_entry(void)
+extern "C" [[gnu::naked]] CYROS_PORT_HOT void cyros_port_svc_entry(void)
 {
    asm volatile(
       "srsdb  sp!, #0x1f                    \n"   /* lr already follows the svc */
@@ -393,7 +393,7 @@ extern "C" [[gnu::naked]] void cyros_port_svc_entry(void)
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" [[gnu::used]] std::uint32_t* cyros_port_exception_dispatch(std::uint32_t* frame, std::uint32_t entered_by)
+extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_exception_dispatch(std::uint32_t* frame, std::uint32_t entered_by)
 {
    core_state& state = cores[this_core()];
    ++state.depth;
@@ -508,7 +508,7 @@ void init_this_core()
    isb();
 }
 
-void raise_reschedule(std::uint32_t core) noexcept
+CYROS_PORT_HOT void raise_reschedule(std::uint32_t core) noexcept
 {
    /* ICC_SGI1R: the target list is a bitmap of Aff0 within the sender's own
     * Aff1, which is the R52's cluster. The DSB makes everything this core
@@ -575,14 +575,14 @@ bool cyros_port_interrupts_enabled(void)
    return (armv8r::read_cpsr() & armv8r::cpsr_i) == 0u;
 }
 
-cyros_mask_token_t cyros_port_irq_save(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_irq_save(void)
 {
    std::uint32_t const cpsr = armv8r::read_cpsr();
    asm volatile("cpsid i" ::: "memory");
    return cpsr & armv8r::cpsr_i;
 }
 
-void cyros_port_irq_restore(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_irq_restore(cyros_mask_token_t token)
 {
    /* Restores to MASKED when the token says the caller was already masked.
     * Unmasking takes a pending reschedule at once, the ISB making sure it is
@@ -599,7 +599,7 @@ void cyros_port_irq_restore(cyros_mask_token_t token)
  * Preemption Control
  * ========================================================================= */
 
-cyros_mask_token_t cyros_port_preempt_disable(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_preempt_disable(void)
 {
    /* Lowering PMR is self-synchronising: no interrupt it masks is taken once
     * the write has executed. */
@@ -608,7 +608,7 @@ cyros_mask_token_t cyros_port_preempt_disable(void)
    return previous;
 }
 
-void cyros_port_preempt_enable(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_preempt_enable(cyros_mask_token_t token)
 {
    /* Raising PMR back takes a pended reschedule at once when I is clear, the
     * ISB making sure it is taken before this returns. */
@@ -674,7 +674,7 @@ void cyros_port_context_destroy(cyros_port_context* context)
    context->guard = 0u;
 }
 
-void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
+CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
 {
    core_state& state = cores[this_core()];
 
@@ -740,7 +740,7 @@ void cyros_port_start_first(cyros_port_context* first)
  * Reschedule Requests
  * ========================================================================= */
 
-void cyros_port_thread_yield(void)
+CYROS_PORT_HOT void cyros_port_thread_yield(void)
 {
    /* port.h asks ports that can observe the execution priority to assert the
     * baseline precondition. This one can. */
@@ -753,7 +753,7 @@ void cyros_port_thread_yield(void)
    asm volatile("svc 0" ::: "memory");
 }
 
-void cyros_port_pend_reschedule(void)
+CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
    /* Callable from anywhere. Raising the SGI is the whole implementation: it is
     * taken when I is clear and PMR lets it through, which is port.h's next

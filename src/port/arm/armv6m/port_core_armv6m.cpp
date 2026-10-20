@@ -293,14 +293,14 @@ bool cyros_port_interrupts_enabled(void)
    return cortex_m::get_primask() == 0u;
 }
 
-cyros_mask_token_t cyros_port_irq_save(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_irq_save(void)
 {
    cyros_mask_token_t const token = cortex_m::get_primask();
    cortex_m::disable_irq();
    return token;
 }
 
-void cyros_port_irq_restore(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_irq_restore(cyros_mask_token_t token)
 {
    /* Restores to MASKED when the token says the caller was already masked. */
    cortex_m::set_primask(token);
@@ -311,7 +311,7 @@ void cyros_port_irq_restore(cyros_mask_token_t token)
  * Preemption Control: the software deferral (see the header)
  * ========================================================================= */
 
-cyros_mask_token_t cyros_port_preempt_disable(void)
+CYROS_PORT_HOT cyros_mask_token_t cyros_port_preempt_disable(void)
 {
    std::uint32_t const core = this_core();
    cyros_mask_token_t const token = preempt_depth[core];
@@ -323,7 +323,7 @@ cyros_mask_token_t cyros_port_preempt_disable(void)
    return token;
 }
 
-void cyros_port_preempt_enable(cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_preempt_enable(cyros_mask_token_t token)
 {
    std::uint32_t const core = this_core();
    compiler_barrier();
@@ -396,7 +396,7 @@ void cyros_port_context_destroy(cyros_port_context* context)
    context->stack_limit = 0u;
 }
 
-void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
+CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
 {
    /* From PendSV only, where PSP holds the outgoing thread's complete frame. */
    CYROS_ASSERT(cortex_m::in_handler_mode());
@@ -425,7 +425,7 @@ void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
  * PSP is lowered to the block BEFORE the dispatch, so cyros_port_switch saves
  * a PSP that points at it. EXC_RETURN rides across the call on MSP.
  */
-extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
+extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME CYROS_PORT_HOT void PendSV_Handler(void)
 {
    /* GCC hands Thumb-1 inline assembly to gas in divided syntax, where
     * `subs r0, #32` is refused, so each block selects unified itself. GCC
@@ -464,7 +464,7 @@ extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME void PendSV_Handler(void)
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
  */
-extern "C" [[gnu::used]] void cyros_port_pendsv_dispatch(void)
+extern "C" [[gnu::used]] CYROS_PORT_HOT void cyros_port_pendsv_dispatch(void)
 {
    CYROS_ASSERT(reschedule_handler != nullptr);
    std::uint32_t const core = this_core();
@@ -525,7 +525,7 @@ void cyros_port_start_first(cyros_port_context* first)
  * Reschedule Requests
  * ========================================================================= */
 
-void cyros_port_thread_yield(void)
+CYROS_PORT_HOT void cyros_port_thread_yield(void)
 {
    CYROS_ASSERT(!cortex_m::in_handler_mode());
    CYROS_ASSERT_OP(cortex_m::get_primask(), ==, 0u);
@@ -537,7 +537,7 @@ void cyros_port_thread_yield(void)
    /* Taken at the ISB: a full reschedule has run by the time this returns. */
 }
 
-void cyros_port_pend_reschedule(void)
+CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
    /* From anywhere. Inside a preempt-disabled region PendSV runs at once and
     * defers, and the region's enable delivers it. */

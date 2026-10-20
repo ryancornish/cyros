@@ -385,7 +385,7 @@ cyros_port_core_entry_t core_entry = nullptr;
  * SMP & Multi-Core Support
  * ========================================================================= */
 
-std::uint32_t cyros_port_get_core_id(void)
+CYROS_PORT_HOT std::uint32_t cyros_port_get_core_id(void)
 {
    return sparcv8::core_number();
 }
@@ -426,7 +426,7 @@ extern "C" [[noreturn]] void cyros_port_secondary_core_entry(void)
    CYROS_PORT_UNREACHABLE();
 }
 
-void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
+CYROS_PORT_HOT void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 {
    /* The cross-core and the local request are ONE mechanism, as on RISC-V
     * and the R52. */

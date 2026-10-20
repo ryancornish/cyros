@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_sync_event_flags_selective"
+layer = 7
+source = "test_sync_event_flags_selective.cpp"
+config = "test_sync_event_flags_selective_config.hpp"
+
+# Layer 7 for the trace, which is how a waiter left parked is told apart from
+# one woken only to park again: from outside, both just stay in their wait.
+[components]
+time_driver = "tickless"
+features = ["sync"]
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

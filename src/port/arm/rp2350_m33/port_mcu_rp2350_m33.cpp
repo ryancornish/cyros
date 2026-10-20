@@ -191,7 +191,7 @@ extern "C" void* cyros_port_core1_stack_top(void);
  * SMP & Multi-Core Support
  * ========================================================================= */
 
-std::uint32_t cyros_port_get_core_id(void)
+CYROS_PORT_HOT std::uint32_t cyros_port_get_core_id(void)
 {
    return cortex_m::reg(sio_cpuid);
 }
@@ -268,7 +268,7 @@ extern "C" [[noreturn]] void cyros_port_secondary_core_entry(void)
    CYROS_PORT_UNREACHABLE();
 }
 
-void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
+CYROS_PORT_HOT void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 {
    CYROS_ASSERT_OP(core_id, <, static_cast<std::uint32_t>(CYROS_PORT_CORE_COUNT));
 
@@ -292,7 +292,7 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
  * doorbell fires again the moment this returns. PendSV is lowest, so the
  * switch happens once every active handler has unwound.
  */
-extern "C" CYROS_PORT_LINKED_BY_NAME void SIO_BELL_Handler(void)
+extern "C" CYROS_PORT_LINKED_BY_NAME CYROS_PORT_HOT void SIO_BELL_Handler(void)
 {
    cortex_m::reg(sio_doorbell_in_clr) = reschedule_doorbell;
    cortex_m::dsb();

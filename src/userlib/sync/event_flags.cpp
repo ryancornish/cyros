@@ -13,7 +13,17 @@ std::uint32_t event_flags::set(std::uint32_t mask) noexcept
    // Release pairs with the acquire in attempt(), so a waiter satisfied by
    // these bits sees whatever the setter wrote before setting them.
    auto const before = bits.fetch_or(mask, std::memory_order_release);
-   wake_all();
+
+   // Wake only the waiters the flags now satisfy, each asked exactly as its
+   // poll asks, so the rest stay parked and never run. The flags are read
+   // afresh for each waiter: a set racing this one can only add bits, and a
+   // clear or a consume only takes away bits whose waiters' polls would now
+   // fail as well.
+   wake_all_where([this](waiter_record const* record) noexcept {
+      // Never null, as in try_satisfy: every wait here installs a record.
+      return satisfied_by(static_cast<waiter const*>(record)->req,
+                          bits.load(std::memory_order_acquire));
+   });
    return before;
 }
 
@@ -48,11 +58,10 @@ bool event_flags::attempt(request& self) noexcept
 {
    auto current = bits.load(std::memory_order_acquire);
    while (true) {
-      auto const hit = current & self.mask;
-      bool const satisfied = self.match == flags_match::any ? hit != 0 : hit == self.mask;
-      if (!satisfied) {
+      if (!satisfied_by(self, current)) {
          return false;
       }
+      auto const hit = current & self.mask;
       if (self.exit == flags_exit::keep) {
          self.matched = hit;
          return true;
