@@ -208,12 +208,12 @@ template<typename... Waitables>
    return wait_on_any(std::span<waitable_ref>{inline_array});
 }
 
-inline void wait_on(waitable& w)
-{
-   std::array wrap{ std::ref(w) };
-   // Discard result: single-source call always returns 0.
-   (void)wait_on_any({wrap});
-}
+/**
+ * @brief Block until @p w is satisfied: wait_on_any of one waitable, by a path
+ *        of its own that pays nothing for the group (no node vector, no loops
+ *        over sources, no renounce sweep).
+ */
+CYROS_PUBLIC void wait_on(waitable& w) noexcept;
 
 
 }  // namespace this_thread

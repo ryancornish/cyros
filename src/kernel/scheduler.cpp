@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ryan Cornish */
 
+#include "port_critical.hpp"
 #include "scheduler.hpp"
 #include "trace_points.hpp"
 
@@ -61,7 +62,7 @@ CYROS_HOT schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
    // through, including ISR wakes: the matrix splice below must be atomic
    // against both a cross-core reschedule IPI landing mid-splice (a latent
    // race even in thread context) and an ISR wake re-entering it.
-   this_core::critical_guard guard;
+   port_critical_guard guard;
 
    // Idempotent: a remote core might have sent us a late request to ready
    // this thread, and we have already terminated it since (or are terminating). No-op.
@@ -105,7 +106,7 @@ CYROS_HOT schedule_hint scheduler::set_thread_ready(thread_control_block& tcb)
    return schedule_hint::unwarranted;
 }
 
-inline void scheduler::admit(thread_control_block& tcb)
+inline void scheduler::admit(thread_control_block& tcb, bool at_front)
 {
    tcb.state = thread_state::ready;
 
@@ -122,7 +123,11 @@ inline void scheduler::admit(thread_control_block& tcb)
    // the pick folds urgency over. Everyone else is filed at base_priority, which
    // never changes, so nothing ever re-keys the matrix.
    if (tcb.holds_nothing()) {
-      ready_matrix.enqueue_thread(tcb);
+      if (at_front) {
+         ready_matrix.enqueue_thread_front(tcb);
+      } else {
+         ready_matrix.enqueue_thread(tcb);
+      }
    } else {
       link_holder(tcb);
    }
@@ -184,14 +189,23 @@ std::uint8_t scheduler::current_thread_urgency() const
 
 inline thread_control_block* scheduler::pick_next()
 {
+   // Holders are the only threads whose urgency can beat their base priority,
+   // and they are rare: measured at about 1 percent of picks in the one test
+   // that exercises mutexes, and zero everywhere else. With none, the matrix's
+   // head is the pick. The fold over them is out of line, so the switch path
+   // does not carry its registers (performance-investigation.md 10).
+   if (holders_head == nullptr) [[likely]] {
+      return ready_matrix.pop_best_thread();
+   }
+   return pick_with_holders();
+}
+
+[[gnu::noinline, gnu::cold]] thread_control_block* scheduler::pick_with_holders()
+{
    // The matrix is keyed on base_priority, which no boost can change, so its
    // head is the most urgent NON-holder by construction.
    auto const best_base = ready_matrix.best_priority();
 
-   // Holders are the only threads whose urgency can beat their base priority,
-   // and they are rare: measured at about 1 percent of picks in the one test
-   // that exercises mutexes, and zero everywhere else. So this loop almost
-   // always runs zero times and the pick is exactly what it always was.
    thread_control_block* best_holder = nullptr;
    std::uint8_t best_holder_urgency = 0xFF;
    for (auto* h = holders_head; h != nullptr; h = h->holder_next) {
@@ -319,7 +333,7 @@ bool scheduler::push_intake(thread_control_block& tcb)
    //
    // enter_critical is depth-based, so calling this from an ISR that already
    // masked (a future chrono alarm doing wake_one) simply nests.
-   this_core::critical_guard guard;
+   port_critical_guard guard;
 
    auto* prev = intake_head.exchange(&tcb, std::memory_order_acq_rel);
 
@@ -397,7 +411,8 @@ void scheduler::drain_intake()
  * Dispatch on the running thread, by its disposition:
  *      terminating        -> retired, joiners woken, context handed to the port
  *      committed          -> park, not re-enqueued
- *      none / prepared    -> rotate, prepared preserved
+ *      none / prepared    -> rotate to the back of its level, or keep the
+ *                            front when preempted, prepared preserved
  * and by its state:
  *      ready              -> already readied by drain, not re-enqueued
  *      terminated         -> retired by an earlier pass, not re-enqueued
@@ -406,6 +421,20 @@ void scheduler::drain_intake()
  * Entry contract: called only by the owning core, current_thread non-null
  * and not enqueued. A blocked or created thread is never the running thread.
  */
+/**
+ * @brief Whether the running thread is being preempted: a strictly more urgent
+ *        thread is ready in the matrix.
+ *
+ * Read before the thread is filed. Only the plain case is answered: with a
+ * holder anywhere, urgency is a fold, and the thread keeps the rotation it
+ * always had. Called inside reschedule's critical section.
+ */
+inline bool scheduler::preempted(thread_control_block const& tcb) const
+{
+   // The bitmap first: on a yield among equals it is all that runs.
+   return ready_matrix.has_more_urgent_than(tcb.base_priority) && holders_head == nullptr && tcb.holds_nothing();
+}
+
 CYROS_HOT void scheduler::reschedule()
 {
    CYROS_ASSERT(current_thread);
@@ -424,13 +453,15 @@ CYROS_HOT void scheduler::reschedule()
 
    thread_control_block* previous_thread = current_thread;
    thread_control_block* next_thread     = nullptr;
-   bool                  discard_prev    = false;
+   // What the switch saves the outgoing thread into: nothing once it has
+   // terminated, which is how the port knows to retire it.
+   cyros_port_context*   save_into       = previous_thread->context();
 
    {
       // The retire-and-pick must observe and mutate the matrix atomically.
       // A pick made stale by an ISR-triggered wake_x is repaired by the
       // ISR's own pend tail-chaining a corrective reschedule.
-      this_core::critical_guard guard;
+      port_critical_guard guard;
 
       switch (previous_thread->state) {
          case thread_state::running: {
@@ -439,11 +470,17 @@ CYROS_HOT void scheduler::reschedule()
             auto const wish = previous_thread->disposition.load();
             if (wish == thread_disposition::terminating) {
                set_thread_terminated(*previous_thread);
-               discard_prev = true;
+               save_into = nullptr;
             } else if (wish == thread_disposition::committed) {
                set_thread_blocked(*previous_thread);
             } else {
-               admit(*previous_thread); // rotate, to the back of its level
+               // To the back of its level, unless it is being PREEMPTED: a
+               // strictly more urgent thread is ready. Then it has given
+               // nothing up and keeps its turn at the front, as POSIX's
+               // SCHED_FIFO, ThreadX and Zephyr have it. A yield, or a
+               // reschedule with nothing more urgent ready, which is how a
+               // time slice rotates equals, still sends it to the back.
+               admit(*previous_thread, preempted(*previous_thread));
             }
             break;
          }
@@ -465,7 +502,7 @@ CYROS_HOT void scheduler::reschedule()
       set_thread_running(*next_thread);
    }
 
-   cyros_port_switch(discard_prev ? nullptr : previous_thread->context(), next_thread->context());
+   cyros_port_switch(save_into, next_thread->context());
 }
 
 void scheduler::reset()

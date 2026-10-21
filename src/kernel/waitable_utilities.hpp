@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <inplace_vector>
+#include <span>
 
 namespace cyros
 {
@@ -69,6 +70,11 @@ public:
 
       return store[index];
    }
+
+   [[nodiscard]] std::span<wait_node> nodes() noexcept
+   {
+      return { store.data(), store.size() };
+   }
 };
 
 /**
@@ -94,18 +100,25 @@ public:
  *
  * Only the node of the waitable the record names is recorded. A wake of any
  * other source in the same wait must not mark the record.
+ *
+ * Extent is the spans' static extent: 1 for a wait on one waitable, whose
+ * loops the compiler then unrolls away, dynamic for a group wait.
  */
+template<std::size_t Extent>
 class waitable_arm_guard
 {
-   std::span<waitable_ref> waitables;
-   wait_node_vector& nodes;
+   using wait_node = wait_queue::wait_node;
+
+   std::span<waitable_ref, Extent> waitables;
+   std::span<wait_node, Extent> nodes;
    waiter_record* record;
    std::uint32_t left{0}; // bit i: node i already disarmed this pass
 
    static_assert(config::max_wait_nodes <= 32, "left is a 32-bit mask");
 
 public:
-   waitable_arm_guard(std::span<waitable_ref> waitables, wait_node_vector& nodes, waiter_record* record)
+   waitable_arm_guard(std::span<waitable_ref, Extent> waitables, std::span<wait_node, Extent> nodes,
+                      waiter_record* record)
       : waitables(waitables), nodes(nodes), record(record)
    {
       for (std::size_t i = 0; i < waitables.size(); ++i) {

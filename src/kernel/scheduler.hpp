@@ -98,12 +98,18 @@ private:
     * running, so it cannot be terminated, enqueued or listed, and nothing
     * reads a hint about it.
     *
+    * AT_FRONT files a matrix thread ahead of its equals: reschedule's
+    * preempted thread. A holder goes on the holder list either way, where
+    * equal urgency is settled by tie_rotor.
+    *
     * Inline, like set_thread_running, set_thread_blocked and pick_next, and
     * defined in scheduler.cpp, the only file that calls any of the four.
     * Every switch runs them, and out of line the asserts in them are enough
     * to stop GCC at -O2 inlining them, when the call costs more than the
     * body. */
-   inline void admit(thread_control_block& tcb);
+   inline void admit(thread_control_block& tcb, bool at_front = false);
+
+   inline bool preempted(thread_control_block const& tcb) const;
 
 public:
    static constexpr thread::id idle_thread_id = 0; // Reserved
@@ -167,6 +173,7 @@ public:
     * from a cache. Returns nullptr when nothing is runnable.
     */
    inline thread_control_block* pick_next();
+   thread_control_block* pick_with_holders();
 
    /**
     * @brief Push a TCB onto this core's intake stack. Any core may call.

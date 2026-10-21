@@ -266,18 +266,13 @@ constexpr std::uint32_t guard_rasr =
 static_assert((1u << (((guard_rasr >> 1) & 0x1Fu) + 1u)) == guard_bytes);
 #endif
 
-/* Before moving PSP. On ARMv8-M an MSR to PSP is checked against the OUTGOING
- * thread's PSPLIM, so setting the new stack first would fault whenever the
- * incoming stack sits below the outgoing one. Nothing to do on ARMv7-M, where
- * the MPU polices addresses, not the stack pointer. */
-inline void release_stack_guard() noexcept
-{
-#if CYROS_CORTEX_M_HAS_STACK_LIMIT
-   cortex_m::set_psplim(0u);
-#endif
-}
-
-/* After moving PSP: guard the stack that is about to run. */
+/* Guard the stack that is about to run. On ARMv8-M this comes BEFORE PSP
+ * moves: an MSR to PSP is checked against the PSPLIM in force, so the
+ * incoming thread's limit must already be there, or a switch to a stack below
+ * the outgoing one faults. Writing PSPLIM checks nothing against PSP, so
+ * ordering it first needs no release in between (FreeRTOS's CM33 port orders
+ * it the same way). On ARMv7-M the MPU polices addresses, not the stack
+ * pointer, so the order does not matter there. */
 inline void load_stack_guard(std::uint32_t limit) noexcept
 {
 #if CYROS_CORTEX_M_HAS_STACK_LIMIT
@@ -607,9 +602,8 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
       from->tls = current_tls[core];
    }
 
-   release_stack_guard();
-   cortex_m::set_psp(to->sp);
    load_stack_guard(to->stack_limit);
+   cortex_m::set_psp(to->sp);
 
    current_tls[core] = to->tls;
 }
@@ -686,9 +680,8 @@ void cyros_port_start_first(cyros_port_context* first)
 
    current_tls[this_core()] = first->tls;
 
-   release_stack_guard();
-   cortex_m::set_psp(first->sp);
    load_stack_guard(first->stack_limit);
+   cortex_m::set_psp(first->sp);
 #if !CYROS_CORTEX_M_HAS_STACK_LIMIT
    if (guard_region_plus_one != 0u) {
       /* The region was configured disabled in init_this_core. load_stack_guard

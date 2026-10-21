@@ -349,6 +349,55 @@ TEST(SingleCoreMultiThread_Test,
 }
 
 TEST(SingleCoreMultiThread_Test,
+     GivenEqualPriorityThreadsTakingTurns_WhenOneIsPreemptedByAHigherPriorityThread_ThenItKeepsItsTurn)
+{
+   // A thread preempted by a more urgent one has given nothing up, so when
+   // that one is done it resumes ahead of its equals, as POSIX's SCHED_FIFO,
+   // ThreadX and Zephyr have it. Filed behind them, it would lose its turn to
+   // whatever happened to preempt it, and Thread-Metric's cooperative test
+   // sees exactly that as uneven counts. A reschedule with nothing more
+   // urgent ready still rotates it: that is a time slice
+   // (test_singlecore_preemption).
+   cyros::test::guarded_stack s_a;
+   cyros::test::guarded_stack s_b;
+   cyros::test::guarded_stack s_urgent;
+
+   thread urgent_thread;
+
+   std::vector<char> order;
+
+   kernel::initialise();
+
+   thread a(
+      [&]{
+         order.push_back('a');
+         // Created more urgent, so it preempts a here, runs and ends.
+         urgent_thread = thread([&]{ order.push_back('u'); }, s_urgent, thread::priority(9), core0);
+         order.push_back('a');   // a's turn continues, before b's
+         this_thread::yield();
+         order.push_back('a');
+      },
+      s_a, thread::priority(10), core0
+   );
+   thread b(
+      [&]{
+         order.push_back('b');
+         this_thread::yield();
+         order.push_back('b');
+      },
+      s_b, thread::priority(10), core0
+   );
+
+   kernel::start();
+
+   const std::vector<char> expected{'a', 'u', 'a', 'b', 'a', 'b'};
+   EXPECT_EQ(order, expected)
+      << "a preempted thread lost its turn among its equals";
+
+   kernel::finalise();
+}
+
+TEST(SingleCoreMultiThread_Test,
      GivenSingleThread_WhenThreadCreatesAnotherThreadOfLowerPriority_ThenCreatedThreadDoesNotRunUntilFirstThreadFinishes)
 {
    cyros::test::guarded_stack s_creator;

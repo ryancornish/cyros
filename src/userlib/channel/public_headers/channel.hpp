@@ -209,13 +209,15 @@ public:
     */
    [[nodiscard]] std::optional<T> receive() noexcept
    {
+      // One object, returned on every path, so it is built in the caller's
+      // return slot and the value is copied once, out of the ring.
+      std::optional<T> out;
       while (true) {
-         std::optional<T> out;
          bool finished = false;
          {
             spinlock_guard guard(lock);
             if (occupancy > 0) {
-               out = take_locked();
+               take_locked(out);
             } else {
                finished = stopped;
             }
@@ -224,7 +226,7 @@ public:
             writable.wake_one_if_waiting();
             return out;
          }
-         if (finished) return std::nullopt;
+         if (finished) return out;
          this_thread::wait_on(readable);
       }
    }
@@ -239,7 +241,7 @@ public:
       {
          spinlock_guard guard(lock);
          if (occupancy > 0) {
-            out = take_locked();
+            take_locked(out);
          }
       }
       if (out) writable.wake_one_if_waiting();
@@ -364,13 +366,13 @@ private:
       return outcome::queued;
    }
 
-   /* Assumes `lock` is held and a value is queued. */
-   T take_locked() noexcept
+   /* Assumes `lock` is held and a value is queued. Into @p out directly,
+    * so the value is copied once on its way to the receiver. */
+   void take_locked(std::optional<T>& out) noexcept
    {
-      T out{std::move(ring[head])};
+      out.emplace(std::move(ring[head]));
       head = advance(head);
       --occupancy;
-      return out;
    }
 
    /* THE ONE RULE THIS CLASS CANNOT BREAK: no wake of any kind while holding

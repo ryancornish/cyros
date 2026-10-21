@@ -97,7 +97,7 @@ struct thread_control_block
    relaxed_atomic<thread_disposition> disposition{thread_disposition::none};
 
    /* Intrusive link for a thread_ready_queue. Self-pointer is the not-enqueued
-    * sentinel. Singly linked: the queue needs only push_back and pop_front now
+    * sentinel. Singly linked: the queue needs only its two pushes and pop_front now
     * that nothing re-keys a thread's position, so a back pointer would cost 8
     * bytes to serve no caller. */
    thread_control_block* next{this};
@@ -334,6 +334,8 @@ public:
 
    void push_back(thread_control_block& tcb) noexcept;
 
+   void push_front(thread_control_block& tcb) noexcept;
+
    thread_control_block* pop_front() noexcept;
 
    bool remove(thread_control_block& tcb) noexcept;
@@ -350,6 +352,12 @@ private:
 public:
    constexpr thread_ready_matrix() = default;
 
+   /** @brief Whether any thread is filed at a level more urgent than PRIORITY. */
+   [[nodiscard]] constexpr bool has_more_urgent_than(std::uint8_t priority) const noexcept
+   {
+      return (bitmap & ((1u << priority) - 1u)) != 0u;
+   }
+
    [[nodiscard]] constexpr int best_priority() const noexcept
    {
       return bitmap ? std::countr_zero(bitmap) : -1;
@@ -362,6 +370,10 @@ public:
 
    /** @brief Enqueue at the thread's BASE priority, which never changes. */
    void enqueue_thread(thread_control_block& tcb) noexcept;
+
+   /** @brief File a thread at the FRONT of its level: one preempted, which
+    *  keeps its turn among its equals. */
+   void enqueue_thread_front(thread_control_block& tcb) noexcept;
 
    thread_control_block* pop_best_thread() noexcept;
 
@@ -382,6 +394,14 @@ inline void thread_ready_queue::push_back(thread_control_block& tcb) noexcept
    tail = &tcb;
 }
 
+inline void thread_ready_queue::push_front(thread_control_block& tcb) noexcept
+{
+   CYROS_ASSERT(!tcb.is_enqueued());
+   tcb.next = head;
+   head = &tcb;
+   if (tail == nullptr) tail = &tcb;
+}
+
 inline thread_control_block* thread_ready_queue::pop_front() noexcept
 {
    auto* const tcb = head;
@@ -400,6 +420,16 @@ inline void thread_ready_matrix::enqueue_thread(thread_control_block& tcb) noexc
    CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
 
    matrix[priority].push_back(tcb);
+   bitmap |= (1u << priority);
+}
+
+inline void thread_ready_matrix::enqueue_thread_front(thread_control_block& tcb) noexcept
+{
+   auto const priority = tcb.base_priority;
+   CYROS_ASSERT_OP(priority, <, config::max_priorities);
+   CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
+
+   matrix[priority].push_front(tcb);
    bitmap |= (1u << priority);
 }
 

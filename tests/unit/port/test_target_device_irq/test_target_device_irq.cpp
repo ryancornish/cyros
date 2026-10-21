@@ -15,8 +15,17 @@
  * Trusts:  layers 0 to 5, and the semaphore's counting (test_sync_semaphore).
  * Proves:  that a timer's alarm interrupt reaches `isr_irq0`, that it runs
  *          inside a preempt-disable and waits out an interrupt mask, which is
- *          port.h's line between the two grades, and that a release from it
- *          wakes a blocked thread, with what that costs.
+ *          port.h's line between the two grades, that a wake it makes inside
+ *          a preempt-disable waits for the enable, that a release from it
+ *          wakes a blocked thread, with what that costs, and that interrupts
+ *          still arrive in the thread such a wake switched to.
+ *
+ * The last two exist for the RISC-V port, which runs a reschedule a handler
+ * pended inside that handler's trap: it must not when the interrupted thread
+ * had preemption disabled, and it must leave the trap through mret, since
+ * Xh3irq raises its preemption priority on an external interrupt and only
+ * mret lowers it again. A thread entered any other way runs with the device's
+ * own priority and every lower one held off.
  *
  * The interrupt is a timer's alarm 0 on IRQ 0, which needs no wiring: the
  * RP2350's TIMER0, or the RP2040's TIMER, whose alarms 2 and 3 are cyros's
@@ -161,6 +170,11 @@ constexpr int rounds = 16;
 volatile int woken = 0;
 volatile std::uint64_t woke_at = 0u;
 
+/* Set by the driver: the waiter's next wake checks an alarm it arms itself is
+ * delivered, then clears it. */
+volatile bool probe_after_wake = false;
+volatile bool probe_delivered = false;
+
 /* More urgent than the driver, so the wake preempts it the moment the
  * interrupt returns. */
 void waiter()
@@ -169,6 +183,15 @@ void waiter()
       wake.acquire();
       woke_at = cyros_port_timestamp();
       woken = woken + 1;
+      if (probe_after_wake) {
+         release_from_isr = false;
+         std::uint32_t const before = fired;
+         alarm_in(50u);
+         std::uint32_t const start = micros();
+         while (fired == before && micros() - start < 2000u) {}
+         probe_delivered = fired != before;
+         probe_after_wake = false;
+      }
    }
 }
 
@@ -204,8 +227,23 @@ void driver()
       CYROS_CHECK_EQ(fired, 3u);
    }
 
+   cyros::bench::start("a wake it makes inside a preempt-disable waits for the enable");
+   {
+      release_from_isr = true;
+      int const before = woken;
+      cyros_mask_token_t const token = cyros_port_preempt_disable();
+      alarm_in(100u);
+      spin_for(2000u);
+      int const during = woken;
+      cyros_port_preempt_enable(token);
+      int const after = woken;
+      CYROS_CHECK_EQ(fired, 4u);
+      CYROS_CHECK_EQ(during, before);
+      CYROS_CHECK_EQ(after, before + 1);
+   }
+
    cyros::bench::start("a release from it wakes a blocked thread");
-   release_from_isr = true;
+   int const woken_before = woken;
    std::uint64_t best = ~std::uint64_t{0};
    std::uint64_t worst = 0u;
    for (int r = 0; r < rounds; ++r) {
@@ -219,13 +257,23 @@ void driver()
          worst = cost > worst ? cost : worst;
       }
    }
-   CYROS_CHECK_EQ(woken, rounds);
+   CYROS_CHECK_EQ(woken - woken_before, rounds);
    CYROS_CHECK_EQ(wake.peek(), 0);
    cyros::bench::print("  timestamp counts from the handler's stamp to the woken thread's, best and worst of 16: ");
    cyros::bench::print_dec(best);
    cyros::bench::print(" to ");
    cyros::bench::print_dec(worst);
    cyros::bench::print("\n");
+
+   cyros::bench::start("interrupts still arrive in the thread a wake switched to");
+   {
+      probe_after_wake = true;
+      alarm_in(200u);
+      std::uint32_t const start = micros();
+      while (probe_after_wake && micros() - start < 10000u) {}
+      CYROS_CHECK(!probe_after_wake);
+      CYROS_CHECK(probe_delivered);
+   }
 
    cyros::bench::finish();
 }

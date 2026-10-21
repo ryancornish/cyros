@@ -20,10 +20,18 @@
  * interrupt is taken when that interrupt returns, never during it. That is the
  * same property PendSV's lowest priority gives ARM.
  *
- * `cyros_port_thread_yield` is an `ecall`, which enters the same path
- * synchronously. A soft IRQ write is a store to a peripheral and lands a few
- * cycles after the instruction, so a yield built on it could return before the
- * switch, which would break its strong guarantee. An ecall cannot.
+ * `cyros_port_thread_yield` enters the same dispatch synchronously, as a CALL
+ * that masks and saves only what a call must keep (below). A soft IRQ write is
+ * a store to a peripheral and lands a few cycles after the instruction, so a
+ * yield built on it could return before the switch, which would break its
+ * strong guarantee. A call cannot. A reschedule pended at baseline is the same
+ * call, since the soft IRQ would be taken there anyway, a few cycles later and
+ * with a whole frame.
+ *
+ * A reschedule an interrupt handler pends is run before that trap returns,
+ * rather than by a second trap the moment its mret unmasks, which would
+ * restore the whole frame only to save it again: what ARM's tail-chaining into
+ * PendSV does in hardware.
  *
  *
  * What a trap saves, and where
@@ -40,6 +48,16 @@
  * `mscratch` reads ZERO while a trap is being handled. A trap taken inside a
  * handler, which can only be a fault, then stays on the stack it is on rather
  * than restarting the interrupt stack from the top over its own caller.
+ *
+ * A YIELD stores a CALL FRAME instead: the same 32 words, of which only the
+ * return address (in mepc's slot, its bit 0 set to mark the kind), tp and
+ * s0 to s11 are written. Everything else is dead across a call by the psABI,
+ * so the caller already keeps nothing there. The exit tells the two apart by
+ * that bit, which a real mepc never has, and resumes a call frame by
+ * restoring tp and s0 to s11 and returning through mret: 14 stores and 14
+ * loads where a trap frame costs 32 of each and an exception's entry.
+ * A thread's frame is whichever kind it was suspended with, so any exit
+ * resumes either.
  *
  *
  * Masking: two bits, not two counters
@@ -226,6 +244,20 @@ CYROS_PORT_HOT void run_reschedule(core_state& state)
    reschedule_handler();
 }
 
+/* A reschedule an interrupt handler pended, run now, inside its trap, rather
+ * than by the second trap its mret would take (file comment). Only where that
+ * trap would be taken: the soft IRQ raised and enabled, mie.MSIE being the
+ * interrupted thread's preempt grade, and this the outermost trap, which an
+ * interrupt always is. A raise not yet visible in mip is left to that trap,
+ * as before. */
+CYROS_PORT_HOT inline void run_pended_reschedule(core_state& state)
+{
+   if ((riscv::read_mip() & riscv::mip_msip) != 0u && (riscv::read_mie() & riscv::mie_msie) != 0u) {
+      riscv::soft_irq_clear(this_core());
+      run_reschedule(state);
+   }
+}
+
 } // namespace
 
 
@@ -243,7 +275,8 @@ CYROS_PORT_HOT void run_reschedule(core_state& state)
  * is a DIFFERENT thread's after a switch.
  *
  * `cyros_port_trap_exit` is the second half on its own, which is also how
- * cyros_port_start_first enters a thread for the first time.
+ * cyros_port_start_first enters a thread for the first time and how a yield
+ * leaves. It resumes either kind of frame (file comment).
  */
 extern "C" [[gnu::naked, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_trap_entry(void)
 {
@@ -294,6 +327,8 @@ extern "C" [[gnu::naked, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_trap_e
       "cyros_port_trap_exit:        \n"
       "mv    sp, a0                 \n"
       "lw    t0,    0(sp)           \n"
+      "andi  t1, t0, 1              \n"   /* a yield's call frame */
+      "bnez  t1, 2f                 \n"
       "csrw  mepc, t0               \n"
       "lw    t0,    8(sp)           \n"
       "csrw  mstatus, t0            \n"
@@ -328,15 +363,84 @@ extern "C" [[gnu::naked, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_trap_e
       "lw    x30, 120(sp)           \n"
       "lw    x31, 124(sp)           \n"
       "addi  sp, sp, 128            \n"
+      "mret                         \n"
+      "2:                           \n"   /* the registers a call keeps */
+      "lw    x4,   16(sp)           \n"
+      "lw    x8,   32(sp)           \n"
+      "lw    x9,   36(sp)           \n"
+      "lw    x18,  72(sp)           \n"
+      "lw    x19,  76(sp)           \n"
+      "lw    x20,  80(sp)           \n"
+      "lw    x21,  84(sp)           \n"
+      "lw    x22,  88(sp)           \n"
+      "lw    x23,  92(sp)           \n"
+      "lw    x24,  96(sp)           \n"
+      "lw    x25, 100(sp)           \n"
+      "lw    x26, 104(sp)           \n"
+      "lw    x27, 108(sp)           \n"
+      "addi  sp, sp, 128            \n"
+      /* Through mret like any frame, never a jump: the yield was made at
+       * baseline, so it returns there with MIE from MPIE, and mret is what
+       * undoes whatever the trap being left did to the interrupt controller
+       * (Hazard3 pushes MEICONTEXT's priority stack on an external interrupt
+       * and only mret pops it). mepc's bit 0 is always zero, which drops the
+       * mark. MPP is machine already, set again for a frame resumed from a
+       * yield, which took no trap. */
+      "li    t1, 0x1880             \n"   /* MPP machine, MPIE */
+      "csrs  mstatus, t1            \n"
+      "csrw  mepc, t0               \n"
       "mret                         \n");
+}
+
+/**
+ * @brief The yield's half of the trap path: a CALL that does what a trap
+ *        would, saving a call frame (file comment).
+ *
+ * Masks, stores the return address (marked) and the registers a call keeps on
+ * the yielding thread's stack, moves to the interrupt stack as the trap entry
+ * does, runs the reschedule, and leaves through cyros_port_trap_exit with
+ * whichever frame it hands back. `cyros_port_yield_saved` is the label after
+ * its last store, for the fault handler's overflow check.
+ */
+extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_yield_entry(void)
+{
+   asm volatile(
+      "csrci mstatus, 8             \n"   /* masked, as a trap would leave it */
+      "addi  sp, sp, -128           \n"
+      "ori   t0, ra, 1              \n"   /* mepc's slot, marked: a call frame */
+      "sw    t0,    0(sp)           \n"
+      "sw    x4,   16(sp)           \n"
+      "sw    x8,   32(sp)           \n"
+      "sw    x9,   36(sp)           \n"
+      "sw    x18,  72(sp)           \n"
+      "sw    x19,  76(sp)           \n"
+      "sw    x20,  80(sp)           \n"
+      "sw    x21,  84(sp)           \n"
+      "sw    x22,  88(sp)           \n"
+      "sw    x23,  92(sp)           \n"
+      "sw    x24,  96(sp)           \n"
+      "sw    x25, 100(sp)           \n"
+      "sw    x26, 104(sp)           \n"
+      "sw    x27, 108(sp)           \n"
+      ".global cyros_port_yield_saved \n"
+      "cyros_port_yield_saved:      \n"
+      "mv    a0, sp                 \n"   /* the frame   */
+      "csrrw t0, mscratch, zero     \n"   /* interrupt stack top, or 0 before the first thread */
+      "bnez  t0, 1f                 \n"
+      "mv    t0, sp                 \n"
+      "1:                           \n"
+      "mv    sp, t0                 \n"
+      "call  cyros_port_yield_dispatch \n"
+      "j     cyros_port_trap_exit   \n");
 }
 
 /**
  * @brief The C half of every trap. Returns the frame to resume.
  *
  * Interrupts are dispatched by cause: the soft IRQ is the reschedule, the
- * timer and external interrupts go to the target. An `ecall` is a yield. Any
- * other exception is a fault and ends in a panic.
+ * timer and external interrupts go to the target, and a reschedule either
+ * pends runs before the trap returns. Every exception is a fault, an `ecall`
+ * included: a yield is a call (cyros_port_yield_entry).
  *
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
@@ -359,19 +463,15 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_trap_dispatch(
          break;
       case riscv::cause_timer_interrupt:
          riscv::timer_interrupt();
+         run_pended_reschedule(state);
          break;
       case riscv::cause_ext_interrupt:
          riscv::external_interrupt();
+         run_pended_reschedule(state);
          break;
       default:
          unexpected_trap(cause, frame[riscv::frame_mepc]);
       }
-   }
-   else if (cause == riscv::cause_ecall_machine && state.trap_depth == 1u) {
-      /* A yield. Resume after the ecall, which is never compressed. Done on
-       * THIS thread's frame, before the switch replaces it. */
-      frame[riscv::frame_mepc] += 4u;
-      run_reschedule(state);
    }
    else {
       /* A fault. The handler is the application's if it supplied one, and
@@ -388,26 +488,50 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_trap_dispatch(
    return state.frame;
 }
 
+/**
+ * @brief The C half of a yield, on the interrupt stack with a call frame.
+ *        Returns the frame to resume.
+ *
+ * A yield is made at baseline (cyros_port_thread_yield checks), so no trap is
+ * in progress: this one is the outermost, and the interrupt stack is re-armed
+ * after it, as the trap dispatch does when its depth returns to zero.
+ */
+extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_yield_dispatch(std::uint32_t* frame)
+{
+   core_state& state = cores[this_core()];
+   state.trap_depth = 1u;
+   state.frame = frame;
+   run_reschedule(state);
+   state.trap_depth = 0u;
+   riscv::write_mscratch(state.interrupt_stack_top);
+   return state.frame;
+}
 
-/* The trap entry's own extent, to recognise a fault taken while it saved a
- * frame. cyros_port_trap_exit is the label after its last store. */
+
+/* The trap entry's and the yield's own extents, to recognise a fault taken
+ * while either saved a frame. Each label follows its last store. */
 extern "C" void cyros_port_trap_exit(void);
+extern "C" void cyros_port_yield_saved(void);
 
 /**
  * @brief The default fault handler: report, and panic.
  *
  * Weak, so an application can take faults itself (riscv.hpp). An access fault
- * inside the trap entry means the entry could not save a frame below the
- * interrupted sp, which with the guard on is a stack overflow: the frame was
- * headed into the guard, and the original faulting instruction is lost.
+ * inside the trap entry, or the yield's while it saves, means it could not
+ * save a frame below the interrupted sp, which with the guard on is a stack
+ * overflow: the frame was headed into the guard, and in the trap entry's case
+ * the original faulting instruction is lost.
  */
 extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
 {
    std::uint32_t const epc = frame[riscv::frame_mepc];
-   auto const entry = reinterpret_cast<std::uint32_t>(&cyros_port_trap_entry);
-   auto const exit  = reinterpret_cast<std::uint32_t>(&cyros_port_trap_exit);
+   auto const entry       = reinterpret_cast<std::uint32_t>(&cyros_port_trap_entry);
+   auto const exit        = reinterpret_cast<std::uint32_t>(&cyros_port_trap_exit);
+   auto const yield       = reinterpret_cast<std::uint32_t>(&cyros_port_yield_entry);
+   auto const yield_saved = reinterpret_cast<std::uint32_t>(&cyros_port_yield_saved);
    bool const access = mcause == riscv::cause_load_access || mcause == riscv::cause_store_access;
-   if (guarded() && access && epc >= entry && epc < exit) {
+   bool const saving = (epc >= entry && epc < exit) || (epc >= yield && epc < yield_saved);
+   if (guarded() && access && saving) {
       riscv::write0("\n*** stack overflow: the trap entry could not save a frame (the guard) ***");
    }
    unexpected_trap(mcause, epc);
@@ -646,21 +770,29 @@ void cyros_port_start_first(cyros_port_context* first)
 CYROS_PORT_HOT void cyros_port_thread_yield(void)
 {
    /* port.h asks ports that can observe the execution priority to assert the
-    * baseline precondition. This one can. */
+    * baseline precondition. This one can, and the call frame relies on it:
+    * its exit unmasks unconditionally. */
    CYROS_ASSERT_OP(cores[this_core()].trap_depth, ==, 0u);
    CYROS_ASSERT((riscv::read_mstatus() & riscv::mstatus_mie) != 0u);
    CYROS_ASSERT((riscv::read_mie() & riscv::mie_msie) != 0u);
 
-   /* Synchronous: the trap path runs the reschedule before the next
-    * instruction, and resumes here when this thread is next switched in. */
-   asm volatile("ecall" ::: "memory");
+   /* Synchronous: the reschedule runs inside the call, which returns when this
+    * thread is next switched in. A tail call with the checks built out. */
+   cyros_port_yield_entry();
 }
 
 CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
-   /* Callable from anywhere. Raising the soft IRQ is the whole implementation:
-    * it is taken when MIE and MSIE are both set, which is port.h's next safe
-    * point. */
+   /* Callable from anywhere. At baseline, MIE and MSIE both set, the next safe
+    * point is now (port_core.h): the soft IRQ would be taken a few cycles
+    * after its store, with a trap frame, so the switch is made here instead,
+    * as a yield makes it, with a call frame. MIE set means no trap is in
+    * progress, since handlers run with it clear. Anywhere else, raise the soft
+    * IRQ, which is taken when both bits are next set. */
+   if ((riscv::read_mstatus() & riscv::mstatus_mie) != 0u && (riscv::read_mie() & riscv::mie_msie) != 0u) {
+      cyros_port_yield_entry();
+      return;
+   }
    riscv::soft_irq_raise(this_core());
 }
 

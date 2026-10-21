@@ -100,6 +100,7 @@ inline constexpr std::uint32_t mstatus_mpp_machine = 3u << 11;
 inline constexpr std::uint32_t mie_msie = 1u << 3;   /* software: the reschedule */
 inline constexpr std::uint32_t mie_mtie = 1u << 7;   /* timer                    */
 inline constexpr std::uint32_t mie_meie = 1u << 11;  /* external                 */
+inline constexpr std::uint32_t mip_msip = 1u << 3;   /* the reschedule, raised   */
 
 /* A PMP configuration byte: address matching NAPOT, and the lock bit, which
  * on a standard core is what binds machine mode. R, W and X are bits 0 to 2,
@@ -111,7 +112,6 @@ inline constexpr std::uint32_t mcause_interrupt      = 1u << 31;
 inline constexpr std::uint32_t cause_soft_interrupt  = 3u;
 inline constexpr std::uint32_t cause_timer_interrupt = 7u;
 inline constexpr std::uint32_t cause_ext_interrupt   = 11u;
-inline constexpr std::uint32_t cause_ecall_machine   = 11u;
 inline constexpr std::uint32_t cause_load_access     = 5u;
 inline constexpr std::uint32_t cause_store_access    = 7u;
 
@@ -124,6 +124,11 @@ inline constexpr std::uint32_t cause_store_access    = 7u;
  * size, so their slots carry mepc and mstatus instead. A suspended thread is
  * therefore nothing but a pointer to one of these, which is what lets a context
  * switch be a single store, as it is on ARM.
+ *
+ * A yield stores a CALL FRAME in the same layout: its return address in mepc's
+ * slot with bit 0 set, which no real mepc has, and tp and s0 to s11 in their
+ * own slots. Every other slot is stale, since a call keeps nothing there.
+ * Only a trap frame reaches a fault handler.
  * ========================================================================= */
 
 inline constexpr std::uint32_t frame_words   = 32u;

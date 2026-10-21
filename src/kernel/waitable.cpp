@@ -31,6 +31,7 @@
 #include <cyros/kernel/core.hpp>
 #include <cyros/port/port.h>
 
+#include "port_critical.hpp"
 #include "base_mutex_access.hpp"
 #include "scheduler.hpp"
 #include "waitable_utilities.hpp"
@@ -481,7 +482,7 @@ CYROS_HOT void commit_to_block(thread_control_block& tcb)
    // remote wake goes through the intake and is applied here, in a reschedule.
    bool committed = false;
    {
-      this_core::critical_guard guard;
+      port_critical_guard guard;
       if (tcb.disposition == thread_disposition::prepared) {
          tcb.disposition = thread_disposition::committed;
          committed = true;
@@ -545,25 +546,51 @@ void request_repick(thread_control_block& tcb)
    }
 }
 
-/* The caller side of the two-phase block this file opens by describing. Lives
- * here for its access: it is friended by both waitable and wait_queue, and it
- * drives wait_node_vector and waitable_arm_guard. */
-namespace this_thread
+/* The caller side of the two-phase block this file opens by describing. One
+ * loop for every wait, a template over its spans' extent: a wait on one
+ * waitable instantiates it with extent 1, which unrolls every loop below and
+ * leaves no renounce sweep, and a group wait with a dynamic extent. Friended
+ * by waitable, wait_queue and waiter_record, and it drives wait_node_vector
+ * and waitable_arm_guard. */
+class wait_engine
 {
+   using wait_node = wait_queue::wait_node;
 
-[[nodiscard]] CYROS_HOT std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept
+public:
+   template<std::size_t Extent>
+   static std::size_t run(std::span<waitable_ref, Extent> waitables,
+                          std::span<wait_node, Extent> nodes,
+                          thread_control_block& tcb) noexcept;
+
+   static std::size_t run_any(std::span<waitable_ref> waitables) noexcept
+   {
+      CYROS_REQUIRE(!waitables.empty()); // Nothing to wait on
+      CYROS_REQUIRE_OP(waitables.size(), <=, config::max_wait_nodes); // More than config::max_wait_nodes
+
+      auto& tcb = scheduler_for_this_core().get_current_thread();
+
+      // Indeterminate, so GCC does not zero it first. Every wait would otherwise
+      // pay a memset of all config::max_wait_nodes slots (68 bytes at 8) to
+      // protect bytes nothing reads: the vector only ever touches the nodes it
+      // constructs, which are exactly the ones in use.
+      wait_node_vector nodes [[indeterminate]] (waitables.size(), tcb);
+      return run(waitables, nodes.nodes(), tcb);
+   }
+
+   static void run_one(waitable& w) noexcept
+   {
+      auto& tcb = scheduler_for_this_core().get_current_thread();
+      std::array<waitable_ref, 1> one{ std::ref(w) };
+      wait_node node{ .owner = &tcb, .next = nullptr };
+      (void)run(std::span<waitable_ref, 1>{one}, std::span<wait_node, 1>{&node, 1}, tcb);
+   }
+};
+
+template<std::size_t Extent>
+std::size_t wait_engine::run(std::span<waitable_ref, Extent> waitables,
+                             std::span<wait_node, Extent> nodes,
+                             thread_control_block& tcb) noexcept
 {
-   CYROS_REQUIRE(!waitables.empty()); // Nothing to wait on
-   CYROS_REQUIRE_OP(waitables.size(), <=, config::max_wait_nodes); // More than config::max_wait_nodes
-
-   auto& tcb = scheduler_for_this_core().get_current_thread();
-
-   // Indeterminate, so GCC does not zero it first. Every wait would otherwise
-   // pay a memset of all config::max_wait_nodes slots (68 bytes at 8) to
-   // protect bytes nothing reads: the vector only ever touches the nodes it
-   // constructs, which are exactly the ones in use.
-   wait_node_vector nodes [[indeterminate]] (waitables.size(), tcb);
-
    // The caller's record, if it installed one, goes to the one waitable it
    // names and to no other source. Bound by identity, not by position.
    waiter_record* const record = tcb.wait_record;
@@ -590,7 +617,7 @@ namespace this_thread
          // All waitable wakes are serialised on the arm_guard.
          // If a wake fires BEFORE the arm_guard:
          // - Thread is not readied because we are not registered.
-         waitable_arm_guard arm_guard(waitables, nodes, record);
+         waitable_arm_guard<Extent> arm_guard(waitables, nodes, record);
          // If a wake fires AFTER the arm_guard:
          // - Thread is readied and we are no longer 'prepared' to block.
 
@@ -645,6 +672,19 @@ namespace this_thread
       ++i;
    }
    return *chosen;
+}
+
+namespace this_thread
+{
+
+[[nodiscard]] CYROS_HOT std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept
+{
+   return wait_engine::run_any(waitables);
+}
+
+CYROS_HOT void wait_on(waitable& w) noexcept
+{
+   wait_engine::run_one(w);
 }
 
 } // namespace this_thread

@@ -16,9 +16,9 @@
  *          own TLS pointer and its stack intact.
  *
  * The RISC-V sibling of test_cortex_m_bringup. What differs is the register
- * check: here the switch is a trap whose frame holds every register, and the
- * check holds a pattern in each callee-saved one, and in tp, across a yield
- * that runs another thread in between.
+ * check: here a yield saves a call frame of the callee-saved registers and
+ * tp, and the check holds a pattern in each across a yield that runs another
+ * thread in between, holding its own.
  *
  * kernel::start() does not return on this port, so the last thread to run
  * reports and exits the image.
@@ -93,13 +93,18 @@ extern "C" [[gnu::used]] void cyros_bench_yield()
  *
  * s0 to s11 are what a callee must preserve, and tp is the thread's own
  * pointer, which the port promises follows the thread. A pattern goes into
- * each, the thread yields (and the other thread runs and uses the same
- * registers for its own work), and the routine counts what came back wrong.
+ * each, the thread yields, and the routine counts what came back wrong. Both
+ * threads run it, each with its own pattern (the base in a0), and each is
+ * inside it while the other switches, so a register a switch fails to restore
+ * comes back holding the OTHER thread's pattern. With one thread doing
+ * ordinary work instead, a register it never touched kept the first thread's
+ * value with no restore at all, and a call frame that skipped one passed.
  * Naked and self-contained, so the compiler holds nothing of its own in them.
- * The count is built in a0, which the yield is free to clobber, only after it.
+ * The base is kept on the stack across the yield, which may clobber a0, and
+ * the count is built in a0 after it.
  * ------------------------------------------------------------------------ */
 
-extern "C" [[gnu::naked]] std::uint32_t callee_saved_wrong_after_a_yield()
+extern "C" [[gnu::naked]] std::uint32_t callee_saved_wrong_after_a_yield(std::uint32_t /*base*/)
 {
    asm volatile(
       "addi  sp, sp, -64            \n"
@@ -117,13 +122,15 @@ extern "C" [[gnu::naked]] std::uint32_t callee_saved_wrong_after_a_yield()
       "sw    s9, 44(sp)             \n"
       "sw    s10, 48(sp)            \n"
       "sw    s11, 52(sp)            \n"
+      "sw    a0, 56(sp)             \n"
       ".irp n, 4,8,9,18,19,20,21,22,23,24,25,26,27 \n"
-      "li    x\\n, 0x5A000000 + \\n  \n"
+      "addi  x\\n, a0, \\n           \n"
       ".endr                        \n"
       "call  cyros_bench_yield      \n"
+      "lw    a2, 56(sp)             \n"
       "li    a0, 0                  \n"
       ".irp n, 4,8,9,18,19,20,21,22,23,24,25,26,27 \n"
-      "li    a1, 0x5A000000 + \\n    \n"
+      "addi  a1, a2, \\n             \n"
       "beq   x\\n, a1, 1f            \n"
       "addi  a0, a0, 1              \n"
       "1:                           \n"
@@ -150,6 +157,7 @@ namespace
 {
 
 std::uint32_t registers_wrong = 0xFFFFFFFFu;
+std::uint32_t b_registers_wrong = 0xFFFFFFFFu;
 bool b_reached_register_window = false;
 
 /* Each thread's TLS pointer as its launcher set it, and how many times it was
@@ -171,8 +179,9 @@ void thread_a()
    this_thread::yield();
    check_tls(tls_a);
    mark(3);
-   /* Held across a yield to B, which runs and yields back. */
-   registers_wrong = callee_saved_wrong_after_a_yield();
+   /* Held across a yield to B, which holds its own pattern across its yield
+    * back. */
+   registers_wrong = callee_saved_wrong_after_a_yield(0x5A000000u);
    check_tls(tls_a);
    mark(5);
    this_thread::yield();
@@ -185,12 +194,10 @@ void thread_b()
    this_thread::yield();
    check_tls(tls_b);
    mark(4);
-   /* A is parked inside its register window now. Disturb every register it
-    * holds by doing ordinary work, then hand back. */
+   /* A is parked inside its register window now. Fill every register it
+    * holds with B's own pattern, and hand back from inside B's window. */
    b_reached_register_window = true;
-   volatile std::uint32_t sink = 0;
-   for (std::uint32_t i = 0; i < 64; ++i) { sink = sink + i * 0x01010101u; }
-   this_thread::yield();
+   b_registers_wrong = callee_saved_wrong_after_a_yield(0xB5000000u);
    check_tls(tls_b);
    mark(6);
 
@@ -201,6 +208,7 @@ void thread_b()
    cyros::bench::start("callee-saved registers and tp survive a context switch");
    CYROS_CHECK(b_reached_register_window);
    CYROS_CHECK_EQ(registers_wrong, 0u);
+   CYROS_CHECK_EQ(b_registers_wrong, 0u);
 
    cyros::bench::start("each thread's TLS pointer follows it across switches");
    CYROS_CHECK(tls_a != nullptr);

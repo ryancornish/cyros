@@ -52,7 +52,11 @@ scheduler& scheduler_for_core(std::uint32_t core_id)
 {
    CYROS_ASSERT_OP(core_id, <, config::cores);
 
-   return k.schedulers[core_id];
+   if constexpr (config::cores == 1) {
+      return k.schedulers[0];
+   } else {
+      return k.schedulers[core_id];
+   }
 }
 
 /**
@@ -115,7 +119,13 @@ void core_entry()
 
 CYROS_HOT scheduler& scheduler_for_this_core()
 {
-   return k.schedulers[cyros_port_get_core_id()];
+   // One core has one scheduler, so it needs no core id, which on some targets
+   // is a device register read (the RP2350's SIO) on every switch.
+   if constexpr (config::cores == 1) {
+      return k.schedulers[0];
+   } else {
+      return k.schedulers[cyros_port_get_core_id()];
+   }
 }
 
 CYROS_HOT schedule_hint global_ready_thread(thread_control_block& tcb)
@@ -128,11 +138,14 @@ CYROS_HOT schedule_hint global_ready_thread(thread_control_block& tcb)
 
    auto& scheduler = scheduler_for_core(tcb.pinned_core);
 
-   auto const this_core = cyros_port_get_core_id();
-   if (this_core != tcb.pinned_core) {
-      trace::remote_wake(tcb);
-      scheduler.post_intake(tcb, thread_request::make_ready);
-      return schedule_hint::unwarranted;
+   // On one core every wake is local, so there is no core to compare.
+   if constexpr (config::cores > 1) {
+      auto const this_core = cyros_port_get_core_id();
+      if (this_core != tcb.pinned_core) {
+         trace::remote_wake(tcb);
+         scheduler.post_intake(tcb, thread_request::make_ready);
+         return schedule_hint::unwarranted;
+      }
    }
 
    // Reset local current thread's disposition in case we were committed to block

@@ -81,8 +81,8 @@ private:
    bool                  chosen_by_wake{false};
 
    friend class waitable;
-   friend class waitable_arm_guard;
-   friend std::size_t this_thread::wait_on_any(std::span<waitable_ref>) noexcept;
+   template<std::size_t> friend class waitable_arm_guard;
+   friend class wait_engine;
 };
 
 /**
@@ -286,9 +286,9 @@ class CYROS_PUBLIC wait_queue
    friend class waitable;
    friend class base_mutex;
    friend class pi_wait_queue;
-   friend class waitable_arm_guard;
+   template<std::size_t> friend class waitable_arm_guard;
    friend class wait_node_vector;
-   friend std::size_t this_thread::wait_on_any(std::span<waitable_ref>) noexcept;
+   friend class wait_engine;
 };
 
 /**
@@ -552,8 +552,8 @@ private:
    wait_queue queue;
 
    friend class wait_node_vector;
-   friend class waitable_arm_guard;
-   friend std::size_t this_thread::wait_on_any(std::span<waitable_ref>) noexcept;
+   template<std::size_t> friend class waitable_arm_guard;
+   friend class wait_engine;
 };
 
 

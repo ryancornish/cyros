@@ -426,8 +426,8 @@ void cyros_port_start_first(cyros_port_context_t* first);
  * Port implementation notes:
  *  - Cortex-M: pend PendSV, then DSB/ISB. From baseline priority PendSV is
  *    taken before the next instruction, making the call synchronous.
- *  - RISC-V: trigger the software interrupt (or switch directly); from
- *    baseline priority it is serviced immediately.
+ *  - RISC-V: switch directly, saving what a call keeps (the rv32 layer), or
+ *    trigger the software interrupt, serviced at once from baseline.
  *  - Linux/boost.context: resume the scheduler fiber.
  */
 void cyros_port_thread_yield(void);
@@ -464,7 +464,8 @@ void cyros_port_thread_yield(void);
  *  - Cortex-M: set the PendSV pending bit (ICSR.PENDSVSET). The hardware
  *    defers delivery until execution priority drops to the PendSV level.
  *  - RISC-V: set the machine software interrupt pending bit (CLINT MSIP). The
- *    hardware defers delivery until software interrupts are unmasked.
+ *    hardware defers delivery until software interrupts are unmasked. At
+ *    baseline the rv32 layer switches directly instead, as its yield does.
  *  - Linux/boost.context: if at baseline priority, resume the scheduler fiber
  *    now; otherwise set a per-core "reschedule pending" flag that the
  *    irq_restore / preempt_enable safe points (and simulated-ISR return)
