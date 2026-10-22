@@ -9,7 +9,7 @@
 #define CYROS_ROUND_ROBIN_HPP
 
 #include <cyros/time/time.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 namespace cyros::rr
 {

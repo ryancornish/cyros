@@ -4,7 +4,7 @@
 #ifndef CYROS_CORE_HPP
 #define CYROS_CORE_HPP
 
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 #include <cstdint>
 

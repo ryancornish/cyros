@@ -6,7 +6,7 @@
 
 #include <cstdint>
 #include <limits>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 namespace cyros::time
 {

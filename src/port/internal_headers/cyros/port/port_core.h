@@ -145,7 +145,7 @@ extern "C" {
 
 /**
  * @def CYROS_PORT_HOT
- * @brief The port's twin of CYROS_HOT (cyros/kernel/visibility.hpp): a port
+ * @brief The port's twin of CYROS_HOT (cyros/kernel/attribute.hpp): a port
  *        function every switch runs goes in `.text.cyros.hot`, beside the
  *        kernel's half of that path, so the whole path is contiguous.
  */

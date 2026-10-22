@@ -5,7 +5,7 @@
 #define CYROS_BASE_MUTEX_HPP
 
 #include <cyros/kernel/waitable.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 #include <atomic>
 #include <cstdint>

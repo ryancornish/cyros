@@ -5,7 +5,7 @@
 #define CYROS_MUTEX_HPP
 
 #include <cyros/kernel/base_mutex.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 namespace cyros::sync
 {

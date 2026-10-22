@@ -29,7 +29,7 @@
 #ifndef CYROS_ASSERT_HPP
 #define CYROS_ASSERT_HPP
 
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 #include <cyros/port/port_traits.h>
 
 #include <cstdint>

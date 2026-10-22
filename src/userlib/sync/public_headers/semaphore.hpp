@@ -6,7 +6,7 @@
 
 #include <cyros/kernel/waitable.hpp>
 #include <cyros/kernel/thread.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 #include <atomic>
 #include <cstddef>

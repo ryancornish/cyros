@@ -6,7 +6,7 @@
 
 #include <cyros/kernel/base_mutex.hpp>
 #include <cyros/kernel/thread.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 namespace cyros::sync
 {

@@ -5,7 +5,7 @@
 #define CYROS_CHRONO_ALARM_HPP
 
 #include <cyros/kernel/waitable.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 #include <cyros/time/time.hpp>
 
 #include <atomic>

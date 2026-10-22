@@ -5,7 +5,7 @@
 #define CYROS_TRACE_HPP
 
 #include <cyros/kernel/thread.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 #include <cstddef>
 #include <cstdint>

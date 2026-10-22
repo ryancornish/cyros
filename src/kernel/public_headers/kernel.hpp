@@ -9,7 +9,7 @@
 #ifndef CYROS_KERNEL_HPP
 #define CYROS_KERNEL_HPP
 
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 #include <cstdint>
 

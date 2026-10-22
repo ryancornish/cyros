@@ -9,7 +9,7 @@
 
 #include <atomic>
 #include <type_traits>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 namespace cyros
 {
@@ -26,22 +26,26 @@ namespace cyros
  * sections, use a mutex.
  *
  * Usage:
+ * @code
  *   spinlock lock;
  *   lock.lock();
  *   // ... critical section ...
  *   lock.unlock();
+ * @endcode
  *
  * Or with RAII:
+ * @code
  *   spinlock lock;
  *   {
  *       spinlock_guard guard(lock);
  *       // ... critical section ...
  *   } // Automatically unlocked
+ * @endcode
  */
 class CYROS_PUBLIC spinlock
 {
 public:
-   constexpr spinlock() : flag{} {}
+   constexpr spinlock() = default;
 
    ~spinlock() = default;
 
@@ -99,29 +103,31 @@ public:
    }
 
 private:
-   /* On one core, masking its interrupts already excludes everyone who could
-    * take the lock, so the flag only records that it is held and is set by a
-    * plain store. On several it is the test-and-set the cores contend on. The
-    * overloads below pick by the flag's type, so each build compiles only its
-    * own. */
+   // It is more optimal is single-core configurations to just use an atomic bool
+   // as the flag. (It is either held, or it is not). On multi-core configurations.
+   // a proper atomic flag must be used as test-and-set semantics are necessary.
    using flag_type = std::conditional_t<config::cores == 1, std::atomic<bool>, std::atomic_flag>;
 
-   static bool held(std::atomic<bool> const& f) noexcept { return f.load(std::memory_order_relaxed); }
-   static bool held(std::atomic_flag const& f) noexcept { return f.test(std::memory_order_relaxed); }
+   static bool held(std::atomic<bool> const& flag) noexcept { return flag.load(std::memory_order_relaxed); }
+   static bool held(std::atomic_flag  const& flag) noexcept { return flag.test(std::memory_order_relaxed); }
 
-   /* One core: interrupts are already masked, so a plain store takes it, and
-    * finding it held means this core is taking a lock it holds. Several: the
-    * test-and-set the cores contend on. */
-   static bool take(std::atomic<bool>& f) noexcept
+   static void drop(std::atomic<bool>& flag) noexcept { flag.store(false, std::memory_order_relaxed); }
+   static void drop(std::atomic_flag&  flag) noexcept { flag.clear(std::memory_order_release); }
+
+   // Single-core: interrupts are already masked,so a plain store takes it.
+   static bool take(std::atomic<bool>& flag) noexcept
    {
-      if (f.load(std::memory_order_relaxed)) return false;
-      f.store(true, std::memory_order_relaxed);
+      if (flag.load(std::memory_order_relaxed)) return false;
+
+      flag.store(true, std::memory_order_relaxed);
       return true;
    }
-   static bool take(std::atomic_flag& f) noexcept { return !f.test_and_set(std::memory_order_acquire); }
 
-   static void drop(std::atomic<bool>& f) noexcept { f.store(false, std::memory_order_relaxed); }
-   static void drop(std::atomic_flag& f) noexcept { f.clear(std::memory_order_release); }
+   // Multi-core: test-and-set is necessary for handling contention
+   static bool take(std::atomic_flag& flag) noexcept
+   {
+      return !flag.test_and_set(std::memory_order_acquire);
+   }
 
    flag_type flag;
    this_core::critical_token token{};

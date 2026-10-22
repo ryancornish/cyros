@@ -119,8 +119,6 @@ void core_entry()
 
 CYROS_HOT scheduler& scheduler_for_this_core()
 {
-   // One core has one scheduler, so it needs no core id, which on some targets
-   // is a device register read (the RP2350's SIO) on every switch.
    if constexpr (config::cores == 1) {
       return k.schedulers[0];
    } else {
@@ -234,7 +232,9 @@ void register_thread(thread_control_block& tcb)
 void unregister_thread(thread_control_block& tcb)
 {
    CYROS_ASSERT_OP(tcb.state, ==, thread_state::terminated); // Retire before you unregister
+
    std::uint32_t const registered = k.active_threads.fetch_sub(1, std::memory_order_seq_cst);
+
    CYROS_ASSERT(registered != 0); // Unregistered more threads than were registered
 }
 

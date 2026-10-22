@@ -83,5 +83,5 @@ prefix = "cyros/"
 headers = [
    "cyros/config/config.hpp",
    "cyros/port/port_traits.h",
-   "cyros/kernel/visibility.hpp",
+   "cyros/kernel/attribute.hpp",
 ]

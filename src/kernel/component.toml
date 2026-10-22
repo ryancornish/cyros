@@ -28,6 +28,6 @@ public_headers = [
    "public_headers/spinlock.hpp -> cyros/kernel/spinlock.hpp",
    "public_headers/thread.hpp -> cyros/kernel/thread.hpp",
    "public_headers/trace.hpp -> cyros/kernel/trace.hpp",
-   "public_headers/visibility.hpp -> cyros/kernel/visibility.hpp",
+   "public_headers/attribute.hpp -> cyros/kernel/attribute.hpp",
    "public_headers/waitable.hpp -> cyros/kernel/waitable.hpp",
 ]

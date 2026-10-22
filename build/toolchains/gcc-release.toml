@@ -7,7 +7,7 @@ extends = "gcc-base.toml"
 common_add = ["-O2"]
 
 # -fvisibility=hidden hides every symbol unless its declaration carries
-# CYROS_PUBLIC (see cyros/kernel/visibility.hpp). That is what gives
+# CYROS_PUBLIC (see cyros/kernel/attribute.hpp). That is what gives
 # archive.localize_hidden something to act on: the merged object keeps only the
 # declared public ABI global and localizes the rest.
 c_add = ["-ffunction-sections", "-fdata-sections", "-flto", "-fvisibility=hidden"]

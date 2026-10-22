@@ -5,7 +5,7 @@
 #define CYROS_DIAGNOSTICS_HPP
 
 #include <cyros/kernel/thread.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 #include <array>
 #include <cstddef>

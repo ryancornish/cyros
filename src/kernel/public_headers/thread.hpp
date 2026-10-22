@@ -8,7 +8,7 @@
 #include <cyros/config/config.hpp>
 #include <cyros/kernel/assert.hpp>
 #include <cyros/kernel/function.hpp>
-#include <cyros/kernel/visibility.hpp>
+#include <cyros/kernel/attribute.hpp>
 
 #include <cstdint>
 #include <functional>
