@@ -116,17 +116,17 @@ TEST_F(ChronoAlarmPreempt_Test, GivenSleepFor_WhenRealTimeElapses_ThenAtLeastThe
    EXPECT_GE(after - before, time::from_milliseconds(20).value);
 }
 
-TEST_F(ChronoAlarmPreempt_Test, GivenTimedWait_WhenAnotherThreadReleasesFirst_ThenTheSemaphoreIndexWins)
+TEST_F(ChronoAlarmPreempt_Test, GivenTimedWait_WhenAnotherThreadReleasesFirst_ThenTheSemaphoreWins)
 {
    sync::semaphore sem(0);
-   std::size_t index = 999;
+   int acquired = -1;
 
    thread waiter(
       [&]{
          time::start();
          chrono::alarm deadline;
          deadline.arm_in(time::from_milliseconds(500));
-         index = this_thread::wait_on_any(sem, deadline);
+         acquired = this_thread::wait_on(sem, deadline) ? 1 : 0;
          deadline.disarm();
       },
       s_a, thread::priority(1)
@@ -142,27 +142,27 @@ TEST_F(ChronoAlarmPreempt_Test, GivenTimedWait_WhenAnotherThreadReleasesFirst_Th
 
    kernel::start();
 
-   EXPECT_EQ(index, 0u); // the semaphore, well inside the deadline
+   EXPECT_EQ(acquired, 1); // the semaphore, well inside the deadline
 }
 
-TEST_F(ChronoAlarmPreempt_Test, GivenTimedWait_WhenNothingReleases_ThenTheAlarmIndexWins)
+TEST_F(ChronoAlarmPreempt_Test, GivenTimedWait_WhenNothingReleases_ThenTheDeadlineEndsIt)
 {
    sync::semaphore sem(0);
-   std::size_t index = 999;
+   int acquired = -1;
 
    thread waiter(
       [&]{
          time::start();
          chrono::alarm deadline;
          deadline.arm_in(time::from_milliseconds(10));
-         index = this_thread::wait_on_any(sem, deadline);
+         acquired = this_thread::wait_on(sem, deadline) ? 1 : 0;
       },
       s_a, thread::priority(1)
    );
 
    kernel::start();
 
-   EXPECT_EQ(index, 1u); // the deadline
+   EXPECT_EQ(acquired, 0); // the deadline
 }
 
 TEST_F(ChronoAlarmPreempt_Test, GivenABusySpinner_WhenTheAlarmFires_ThenTheWokenSleeperPreemptsIt)

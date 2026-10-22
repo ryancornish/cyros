@@ -22,8 +22,8 @@ namespace cyros::sync
  * is visible where the lock is declared rather than in a config flag. See
  * mutex-first-class-plan.md D6.
  *
- * Not a waitable, so it cannot enter a wait_on_any group. That ban is structural
- * and deliberate, see base_mutex.
+ * Not a waitable, so this_thread::wait_on cannot take it, with a cancel signal
+ * or without. That ban is structural and deliberate, see base_mutex.
  */
 class CYROS_PUBLIC mutex : public base_mutex
 {

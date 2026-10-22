@@ -285,20 +285,20 @@ TEST_F(ChronoAlarmSim_Test, GivenPendingAlarm_WhenDisarmed_ThenTheCallbackNeverF
    EXPECT_FALSE(fired_late);
 }
 
-/* The composition the feature exists for: wait_on_any(thing, alarm) is a timed
+/* The composition the feature exists for: wait_on(thing, alarm) is a timed
  * wait on the thing. Both outcomes, and the disarm-after-win path that the
- * timed semaphore in stage 2 will rely on. */
+ * timed semaphore relies on. */
 
-TEST_F(ChronoAlarmSim_Test, GivenTimedWait_WhenTheSemaphoreIsReleasedFirst_ThenTheSemaphoreIndexWinsAndDisarmIsClean)
+TEST_F(ChronoAlarmSim_Test, GivenTimedWait_WhenTheSemaphoreIsReleasedFirst_ThenTheSemaphoreWinsAndDisarmIsClean)
 {
    sync::semaphore sem(0);
-   std::size_t index = 999;
+   int acquired = -1;
 
    thread waiter(
       [&]{
          chrono::alarm deadline;
          deadline.arm_at(time::time_point{80});
-         index = this_thread::wait_on_any(sem, deadline);
+         acquired = this_thread::wait_on(sem, deadline) ? 1 : 0;
          deadline.disarm();
       },
       s_a, thread::priority(1)
@@ -316,20 +316,20 @@ TEST_F(ChronoAlarmSim_Test, GivenTimedWait_WhenTheSemaphoreIsReleasedFirst_ThenT
 
    kernel::start();
 
-   EXPECT_EQ(index, 0u); // the semaphore, not the deadline
+   EXPECT_EQ(acquired, 1); // the semaphore, not the deadline
 }
 
-TEST_F(ChronoAlarmSim_Test, GivenTimedWait_WhenNothingReleases_ThenTheAlarmIndexWinsAndTheCountIsUntouched)
+TEST_F(ChronoAlarmSim_Test, GivenTimedWait_WhenNothingReleases_ThenTheDeadlineEndsItAndTheCountIsUntouched)
 {
    sync::semaphore sem(0);
-   std::size_t index = 999;
+   int acquired = -1;
    std::size_t count_after = 999;
 
    thread waiter(
       [&]{
          chrono::alarm deadline;
          deadline.arm_at(time::time_point{40});
-         index = this_thread::wait_on_any(sem, deadline);
+         acquired = this_thread::wait_on(sem, deadline) ? 1 : 0;
          count_after = sem.peek();
       },
       s_a, thread::priority(1)
@@ -339,7 +339,7 @@ TEST_F(ChronoAlarmSim_Test, GivenTimedWait_WhenNothingReleases_ThenTheAlarmIndex
 
    kernel::start();
 
-   EXPECT_EQ(index, 1u); // the deadline
+   EXPECT_EQ(acquired, 0); // the deadline
    EXPECT_EQ(count_after, 0u);
 }
 

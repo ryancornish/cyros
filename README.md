@@ -115,13 +115,16 @@ priority-ordered queue of parked threads and a single derived-class hook that
 answers whether the calling thread can proceed without blocking. Wakes come in
 barge-permitting flavours (`wake_one`, `wake_all`) and a committed-handoff
 flavour (`wake_one_and_transfer`) for primitives that must not let a late
-arrival barge past a woken waiter. A thread can block on several waitables at
-once with `wait_on_any`.
+arrival barge past a woken waiter. A wait takes one waitable, and optionally a
+**cancel signal** that ends it early: a timed wait is a wait with an alarm,
+which is a cancel signal raised by a timer. To wait for any of several events,
+the sources set bits in one `event_flags` the waiter owns.
 
 Mutual exclusion is not built on the waitable. The kernel carries a separate
 **mutex core** (`base_mutex`) with ownership, barge-free handoff, and priority
-inheritance built in. Mutexes are deliberately excluded from group waits, and
-the type system enforces that rather than a runtime check. The split keeps the
+inheritance built in. A mutex cannot be waited on beside a cancel signal, so
+it has no timed lock, and the type system enforces that rather than a runtime
+check. The split keeps the
 general waitable cheap: primitives that never own anything never pay for
 inheritance machinery.
 
@@ -201,7 +204,7 @@ int main()
 Threads take a caller-owned stack, a priority (lower number is more urgent),
 and optionally a core-affinity mask. `this_thread::` provides `id()`,
 `priority()`, `yield()`, `thread_exit()`, and the blocking entry points
-`wait_on` / `wait_on_any`. Critical sections and preemption control are RAII
+`wait_on(w)` / `wait_on(w, cancel)`. Critical sections and preemption control are RAII
 guards under `this_core::`. Building a new blocking primitive means deriving
 from `waitable` and implementing one hook.
 
@@ -237,7 +240,7 @@ Implemented and under test:
   priority ordering.
 - Threads: creation onto caller-owned stacks, termination through the
   scheduler, join built on an ordinary waitable.
-- The waitable model, group waits, and the committed-handoff wake.
+- The waitable model, waits with a cancel signal, and the committed-handoff wake.
 - The kernel mutex core with priority inheritance (transitive, bounded) and
   immediate-ceiling protocols, surfaced as `sync::mutex` and `sync::cemutex`.
 - A lock-free blocking-chain query with advisory deadlock detection, reading

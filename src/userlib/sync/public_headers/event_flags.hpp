@@ -32,10 +32,11 @@ enum class flags_exit : bool
 /**
  * @brief 32 flag bits that threads wait on by mask.
  *
- * "Any of these bits" or "all of these bits", which a group wait cannot
- * express: wait_on_any gives "any of several objects", not "all of several
- * conditions". The bits are a level, so a set that lands before a waiter
- * parks is seen by its poll, and nothing is lost.
+ * "Any of these bits" or "all of these bits". Also the way to wait for any of
+ * several events: each source sets its own bit in one event_flags the waiter
+ * owns, since a wait takes one waitable (and a cancel signal). The bits are a
+ * level, so a set that lands before a waiter parks is seen by its poll, and
+ * nothing is lost.
  *
  * set() wakes only the waiters the flags then satisfy. It asks each queued
  * waiter's mask under the queue lock, the same test the waiter's own poll

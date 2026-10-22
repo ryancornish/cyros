@@ -28,7 +28,7 @@ static constexpr auto STACK_SIZE = thread::min_stack_size + (16 * 1024);
  * Priority inheritance, black-box
  *
  * Everything here observes PI through the public surface only: lock, unlock,
- * try_lock, wait_on_any, and thread::get_priority, which reads effective
+ * try_lock, and thread::get_priority, which reads effective
  * priority and is therefore the direct observation port for donation and
  * restore. No kernel internals are touched, so these tests survive internal
  * refactors (kernel_state consolidation included).
@@ -69,15 +69,6 @@ constexpr int grace_spins = 200'000;
 // full kernel lifecycle, so kept modest, the properties are deterministic and
 // the reps only add cold-start variety.
 constexpr int pi_reps = 20;
-
-// The renounce hunt runs many rounds INSIDE one lifecycle (cheap) times a few
-// lifecycles (cold starts). Each round is one genuine dual-transfer race.
-constexpr int renounce_lifecycles = 3;
-constexpr int renounce_rounds     = 400;
-
-// Bounded try_lock probe proving a renounced mutex is acquirable again. Only
-// a renounce failure burns the whole budget.
-constexpr int probe_budget = 10'000'000;
 
 // Spin until predicate or budget exhaustion. Returns false on exhaustion so
 // callers can record a failure and take their bail path.

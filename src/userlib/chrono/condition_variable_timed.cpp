@@ -39,15 +39,12 @@ cv_status condition_variable::wait_until(base_mutex& m, time::time_point tp) noe
    {
       waiter self(*this, m);
 
-      // This variable is polled before the alarm on every pass. It has to be:
-      // the group wait stops at the first satisfied source, so only the first
-      // is certain to be polled, and that poll is what releases m.
-      (void)this_thread::wait_on_any(static_cast<waitable&>(*this), deadline);
-
-      // Read the record rather than the index. A notify can choose us after
-      // the alarm's poll won but before the final disarm, which records it.
-      // Reporting timeout then would swallow a notify_one no other waiter sees.
-      notified = self.chosen();
+      // This variable is polled first on every pass, so its first poll, which
+      // releases m, always runs. Its poll answers chosen(), and the wait
+      // polls it after its last disarm before the deadline may end the wait,
+      // so true here is exactly "a notify chose us". A notify that lands as
+      // the deadline passes is never swallowed.
+      notified = this_thread::wait_on(static_cast<waitable&>(*this), deadline);
    }
    deadline.disarm();
 

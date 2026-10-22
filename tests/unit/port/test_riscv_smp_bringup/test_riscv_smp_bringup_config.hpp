@@ -17,9 +17,6 @@ namespace cyros::config
 /** Two harts, as CYROS_PORT_CORE_COUNT says. */
 inline constexpr std::size_t cores = 2;
 
-/** Maximum wait nodes per thread. */
-inline constexpr std::size_t max_wait_nodes = 8;
-
 /** Number of scheduling priorities. */
 inline constexpr std::size_t max_priorities = 31;
 

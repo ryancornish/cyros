@@ -31,14 +31,10 @@ bool semaphore::try_acquire_until(time::time_point tp) noexcept
    chrono::alarm deadline;
    deadline.arm_at(tp);
 
-   // The group wait polls in index order, so an available token wins over a
-   // fired deadline. Index 0 means try_satisfy consumed a token already.
-   auto const index = this_thread::wait_on_any(*this, deadline);
-   if (index == 0) {
-      deadline.disarm();
-      return true;
-   }
-   return false;
+   // The semaphore is polled before the deadline on every pass, so a token
+   // wins over a deadline that passed in the same pass. True means the poll
+   // took it already. The alarm disarms itself on the way out.
+   return this_thread::wait_on(*this, deadline);
 }
 
 bool semaphore::try_acquire_for(time::duration d) noexcept

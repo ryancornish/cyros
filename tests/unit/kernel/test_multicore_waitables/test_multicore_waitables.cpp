@@ -77,6 +77,49 @@ protected:
    }
 };
 
+/**
+ * @brief A counting waitable, one wake per token as a semaphore's release,
+ *        whose poll can hold one named thread just after it takes a token.
+ *
+ * The hold stands for a preemption or an interrupt landing between a
+ * waiter's satisfied poll and its disarm, the window a wake can still take
+ * the waiter's node in.
+ */
+class HeldCountingWaitable final : public waitable
+{
+public:
+   std::atomic<int>        tokens{0};
+   std::atomic<thread::id> hold_for{0};
+   std::atomic<bool>       took{false};
+   std::atomic<bool>       may_continue{false};
+
+   void release() noexcept
+   {
+      tokens.fetch_add(1, std::memory_order_acq_rel);
+      wake_one();
+   }
+
+protected:
+   bool try_satisfy(waiter_record*) noexcept override
+   {
+      int current = tokens.load(std::memory_order_acquire);
+      while (current > 0) {
+         if (tokens.compare_exchange_weak(current, current - 1,
+                                          std::memory_order_acq_rel,
+                                          std::memory_order_relaxed)) {
+            if (hold_for.load(std::memory_order_acquire) == this_thread::id()) {
+               took.store(true, std::memory_order_release);
+               while (!may_continue.load(std::memory_order_acquire)) {
+                  this_core::cpu_relax();
+               }
+            }
+            return true;
+         }
+      }
+      return false;
+   }
+};
+
 }  // namespace
 
 /* ============================================================================
@@ -128,10 +171,10 @@ TEST_F(MultiCoreWaitables_Test,
 }
 
 /* ============================================================================
- * Cross-core wake to a waiter parked on wait_on_any
+ * Cross-core cancel of a waiter parked with a cancel signal
  * ========================================================================= */
 TEST_F(MultiCoreWaitables_Test,
-       GivenWaiterOnCore0WithWaitOnAny_WhenCore1WakesSecondSource_ThenWinnerIs1)
+       GivenWaiterOnCore0WithACancel_WhenCore1RaisesIt_ThenTheWaitReturnsFalse)
 {
    for (int rep = 0; rep < stress_repetitions; ++rep) {
       SCOPED_TRACE("stress rep " + std::to_string(rep));
@@ -141,13 +184,13 @@ TEST_F(MultiCoreWaitables_Test,
       cyros::test::guarded_stack waiter_stack;
       cyros::test::guarded_stack signaler_stack;
 
-      TestWaitable w0;
-      TestWaitable w1;
-      std::atomic<std::size_t> winner{static_cast<std::size_t>(-1)};
+      TestWaitable w;
+      cancel_signal cancel;
+      std::atomic<int> result{-1};
 
       thread waiter(
          [&]{
-            winner.store(this_thread::wait_on_any(w0, w1), std::memory_order_release);
+            result.store(this_thread::wait_on(w, cancel) ? 1 : 0, std::memory_order_release);
          },
          waiter_stack,
          thread::priority(0),
@@ -156,7 +199,7 @@ TEST_F(MultiCoreWaitables_Test,
 
       thread signaler(
          [&]{
-            w1.set_and_wake_one();
+            cancel.raise();
          },
          signaler_stack,
          thread::priority(0),
@@ -165,7 +208,7 @@ TEST_F(MultiCoreWaitables_Test,
 
       kernel::start();
 
-      EXPECT_EQ(winner.load(std::memory_order_acquire), 1U);
+      EXPECT_EQ(result.load(std::memory_order_acquire), 0) << "the cancel did not end the wait";
       kernel::finalise();
    }
 }
@@ -365,14 +408,127 @@ TEST_F(MultiCoreWaitables_Test,
 }
 
 /* ============================================================================
- * wait_on_any across sources woken by different cores
+ * A wake that takes a satisfied waiter's node is passed on
  *
- * The waiter on core0 calls wait_on_any over two sources. Each source has
- * its own signaler on a different core. Exactly one source fires per rep;
- * the winner index must match.
+ * A wake takes the head node, whatever its owner is doing. Between a
+ * waiter's satisfied poll and its disarm its node is still queued, so a wake
+ * landing there spends itself on a thread that needs nothing, and a waiter
+ * behind it stays parked beside the token that wake was for. The engine must
+ * pass such a wake on.
+ *
+ *    core1  U    parks, the only waiter
+ *    core1  R1   releases: pops U, readies it (R1 outranks U, U waits)
+ *    core0  T    arms (U's node is gone, so T heads the queue), polls, takes
+ *                R1's token, and is held there by the poll
+ *    core1  U    runs: its poll fails, it re-arms behind T, parks
+ *    core1  W1   releases: the head is T's node, still queued
+ *    core0  T    disarms, finds its node taken, returns
+ *
+ * Without the pass-on U stays parked with one token unclaimed, and W1, which
+ * runs only once U has parked, finds exactly that. T waits directly rather
+ * than through a fast path, which is R1's release landing between a fast
+ * path's failed take and its arm. Deterministic, so a few lifecycles.
  * ========================================================================= */
 TEST_F(MultiCoreWaitables_Test,
-       GivenWaitOnAnyAcrossSourcesWokenByDifferentCores_ThenWinnerIndexIsCorrect)
+       GivenSatisfiedWaiterStillQueued_WhenAWakeTakesItsNode_ThenTheWakeReachesTheParkedWaiter)
+{
+   constexpr int lifecycles = 3;
+
+   for (int rep = 0; rep < lifecycles; ++rep) {
+      SCOPED_TRACE("lifecycle " + std::to_string(rep));
+
+      kernel::initialise();
+
+      cyros::test::guarded_stack r1_stack;
+      cyros::test::guarded_stack u_stack;
+      cyros::test::guarded_stack w1_stack;
+      cyros::test::guarded_stack t_stack;
+
+      struct state
+      {
+         HeldCountingWaitable w;
+         TestWaitable first_gate;   // holds R1 until U has parked
+         TestWaitable second_gate;  // holds R1 once T has the token, so U runs
+         std::atomic<bool> r1_released{false};
+         std::atomic<bool> t_done{false};
+         std::atomic<bool> u_acquired{false};
+         std::atomic<bool> u_stranded{false};
+         std::atomic<int>  tokens_left{-1};
+      } s;
+
+      // core1, in priority order: R1 first to its gate, then U onto w, then W1.
+      thread r1(
+         [&s]{
+            this_thread::wait_on(s.first_gate);
+            s.w.release();
+            s.r1_released.store(true, std::memory_order_release);
+            while (!s.w.took.load(std::memory_order_acquire)) {
+               this_core::cpu_relax();
+            }
+            this_thread::wait_on(s.second_gate);
+         },
+         r1_stack, thread::priority(1), core1);
+
+      thread u(
+         [&s]{
+            this_thread::wait_on(s.w);
+            s.u_acquired.store(true, std::memory_order_release);
+         },
+         u_stack, thread::priority(5), core1);
+
+      thread w1(
+         [&s]{
+            // Runs only once R1 and U are parked, and again only once R1 is
+            // parked at its second gate and U parked behind T.
+            s.first_gate.set_and_wake_one();
+            s.w.release();
+            s.w.may_continue.store(true, std::memory_order_release);
+            while (!s.t_done.load(std::memory_order_acquire)) {
+               this_core::cpu_relax();
+            }
+            // A wake passed on to U was posted to this core before T
+            // returned. The yield drains it, and U outranks us, so U has run
+            // by the time this thread does again.
+            this_thread::yield();
+            s.tokens_left.store(s.w.tokens.load(std::memory_order_acquire), std::memory_order_release);
+            bool const stranded = !s.u_acquired.load(std::memory_order_acquire);
+            s.u_stranded.store(stranded, std::memory_order_release);
+            if (stranded) {
+               s.w.release(); // free U, so the kernel quiesces
+            }
+            s.second_gate.set_and_wake_one();
+         },
+         w1_stack, thread::priority(9), core1);
+
+      thread t(
+         [&s]{
+            while (!s.r1_released.load(std::memory_order_acquire)) {
+               this_core::cpu_relax();
+            }
+            s.w.hold_for.store(this_thread::id(), std::memory_order_release);
+            this_thread::wait_on(s.w);
+            s.t_done.store(true, std::memory_order_release);
+         },
+         t_stack, thread::priority(3), core0);
+
+      kernel::start();
+
+      EXPECT_FALSE(s.u_stranded.load(std::memory_order_acquire))
+         << "U parked beside an unclaimed token: the wake for it was spent on T";
+      EXPECT_EQ(s.tokens_left.load(std::memory_order_acquire), 0);
+      kernel::finalise();
+   }
+}
+
+/* ============================================================================
+ * A waitable and a cancel signal woken by different cores
+ *
+ * The waiter on core0 waits on w until a cancel. Each has its own signaler on
+ * a different core, and exactly one fires per rep, so the result must say
+ * which.
+ * ========================================================================= */
+TEST_F(MultiCoreWaitables_Test,
+       GivenWaitWithACancel_WhenWOrTheCancelFiresFromAnotherCore_ThenTheResultSaysWhich)
 {
    for (int rep = 0; rep < stress_repetitions; ++rep) {
       SCOPED_TRACE("stress rep " + std::to_string(rep));
@@ -380,51 +536,50 @@ TEST_F(MultiCoreWaitables_Test,
       kernel::initialise();
 
       cyros::test::guarded_stack waiter_stack;
-      cyros::test::guarded_stack s_for_w0_stack;
-      cyros::test::guarded_stack s_for_w1_stack;
+      cyros::test::guarded_stack s_for_w_stack;
+      cyros::test::guarded_stack s_for_cancel_stack;
 
-      TestWaitable w0;
-      TestWaitable w1;
-      std::atomic<std::size_t> winner{static_cast<std::size_t>(-1)};
+      TestWaitable w;
+      cancel_signal cancel;
+      std::atomic<int> result{-1};
 
-      // Alternate which source fires per rep so both branches get exercised.
-      const bool fire_w0_this_rep = (rep % 2 == 0);
+      // Alternate which one fires per rep so both outcomes get exercised.
+      const bool fire_w_this_rep = (rep % 2 == 0);
 
       thread waiter(
          [&]{
-            winner.store(this_thread::wait_on_any(w0, w1), std::memory_order_release);
+            result.store(this_thread::wait_on(w, cancel) ? 1 : 0, std::memory_order_release);
          },
          waiter_stack,
          thread::priority(0),
          core0
       );
 
-      thread signaler_w0(
+      thread signaler_w(
          [&]{
-            if (fire_w0_this_rep) {
-               w0.set_and_wake_one();
+            if (fire_w_this_rep) {
+               w.set_and_wake_one();
             }
          },
-         s_for_w0_stack,
+         s_for_w_stack,
          thread::priority(0),
          core1
       );
 
-      thread signaler_w1(
+      thread signaler_cancel(
          [&]{
-            if (!fire_w0_this_rep) {
-               w1.set_and_wake_one();
+            if (!fire_w_this_rep) {
+               cancel.raise();
             }
          },
-         s_for_w1_stack,
+         s_for_cancel_stack,
          thread::priority(0),
          core2
       );
 
       kernel::start();
 
-      const std::size_t expected = fire_w0_this_rep ? 0U : 1U;
-      EXPECT_EQ(winner.load(std::memory_order_acquire), expected);
+      EXPECT_EQ(result.load(std::memory_order_acquire), fire_w_this_rep ? 1 : 0);
       kernel::finalise();
    }
 }
@@ -477,102 +632,27 @@ TEST_F(MultiCoreWaitables_Test,
 }
 
 
-// wait_on_any fans a single waiter across three sources, so the suite must
-// have room for at least three wait_nodes per park.
-static_assert(config::max_wait_nodes >= 3,
-              "multi-waitable tests wait on three sources at once");
-
 /* ============================================================================
- * Simple multi-source select: three sources, exactly one fires
+ * Heavy fan-in: one core drives w and another raises the cancel, at one waiter
  *
- * The waiter on core0 parks on wait_on_any across three sources, each owned
- * by nobody in particular. A single signaler on core1 sets and wakes exactly
- * one of the three, chosen by the rep so all three branches are exercised
- * across the stress loop. wait_on_any must return the index of the source
- * that fired.
+ * The waiter on core0 loops on wait_on(w, cancel). One signaler drives w in a
+ * handshake loop: wait until the waiter has consumed its last set, set, wake.
+ * Another does the same with the cancel: wait until the waiter has reset it,
+ * raise. The waiter consumes whichever ended each wait, clearing w on true
+ * and resetting the cancel on false, and tallies it.
  *
- * This is the multi-source analogue of the two-source select test: it
- * confirms the arm-all / disarm-all bookkeeping and the lowest-index winner
- * rule hold when the source that fires is not always source 0. With only one
- * source satisfied there is no tie, so the returned index is unambiguous.
+ * The handshakes mean every set and every raise is consumed exactly once, so
+ * the waiter performs exactly 2 * iterations_per_rep waits and each side's
+ * tally must reach iterations_per_rep. Both often hold at once here, and then
+ * w wins and the cancel ends the next wait. A lost wake, or a node disarmed
+ * wrongly under adversarial interleaving across three cores, shows up as a
+ * hang or as a tally short of its count.
  * ========================================================================= */
 TEST_F(MultiCoreWaitables_Test,
-       GivenWaitOnAnyAcrossThreeSources_WhenExactlyOneFires_ThenWinnerIsThatSource)
-{
-   for (int rep = 0; rep < stress_repetitions; ++rep) {
-      SCOPED_TRACE("stress rep " + std::to_string(rep));
-
-      kernel::initialise();
-
-      cyros::test::guarded_stack waiter_stack;
-      cyros::test::guarded_stack signaler_stack;
-
-      TestWaitable w0;
-      TestWaitable w1;
-      TestWaitable w2;
-      std::atomic<std::size_t> winner{static_cast<std::size_t>(-1)};
-
-      // Rotate which source fires so every branch is covered across the reps.
-      const std::size_t fires = static_cast<std::size_t>(rep % 3);
-
-      thread waiter(
-         [&]{
-            winner.store(this_thread::wait_on_any(w0, w1, w2), std::memory_order_release);
-         },
-         waiter_stack,
-         thread::priority(0),
-         core0
-      );
-
-      thread signaler(
-         [&]{
-            switch (fires) {
-               case 0: w0.set_and_wake_one(); break;
-               case 1: w1.set_and_wake_one(); break;
-               case 2: w2.set_and_wake_one(); break;
-            }
-         },
-         signaler_stack,
-         thread::priority(0),
-         core1
-      );
-
-      kernel::start();
-
-      EXPECT_EQ(winner.load(std::memory_order_acquire), fires);
-      kernel::finalise();
-   }
-}
-
-/* ============================================================================
- * Heavy multi-source fan-in: three signalers hammer one wait_on_any waiter
- *
- * The waiter on core0 loops, each pass parking on wait_on_any across three
- * sources. Three signalers, one per remaining core, each own one source and
- * drive it in a handshake loop: wait until their source is consumed, set it,
- * wake. The waiter clears whichever source won and tallies it.
- *
- * The handshake (a signaler will not re-set its source until the waiter has
- * cleared it) means every set transitions its source false->true exactly
- * once and every consume transitions it true->false exactly once, so no set
- * coalesces and none is lost. Each signaler emits exactly
- * iterations_per_rep sets, the waiter performs exactly
- * 3 * iterations_per_rep parks, and the two must balance: each source is
- * consumed exactly iterations_per_rep times.
- *
- * This exercises the parts the single-source stress cannot reach: arming and
- * disarming N nodes per park under adversarial interleaving, the lowest-index
- * winner rule under genuine ties (several sources satisfied at once, which
- * happens constantly here because three cores set concurrently), and repeated
- * cross-core wake fan-in into one waiter's intake. A lost wake or a botched
- * multi-node disarm shows up as a hang (the waiter parks with a set it never
- * observed) or as a per-source tally that does not reach iterations_per_rep.
- * ========================================================================= */
-TEST_F(MultiCoreWaitables_Test,
-       GivenThreeSignalersFanningIntoOneWaitOnAny_WhenStressed_ThenNoWakeIsLost)
+       GivenOneCoreDrivingWAndAnotherRaisingTheCancel_WhenStressed_ThenEveryEventIsSeenOnce)
 {
    constexpr int iterations_per_rep = 40;
-   constexpr int total_parks = 3 * iterations_per_rep;
+   constexpr int total_waits = 2 * iterations_per_rep;
 
    for (int rep = 0; rep < stress_repetitions; ++rep) {
       SCOPED_TRACE("stress rep " + std::to_string(rep));
@@ -580,72 +660,57 @@ TEST_F(MultiCoreWaitables_Test,
       kernel::initialise();
 
       cyros::test::guarded_stack waiter_stack;
-      cyros::test::guarded_stack s0_stack;
-      cyros::test::guarded_stack s1_stack;
-      cyros::test::guarded_stack s2_stack;
+      cyros::test::guarded_stack w_stack;
+      cyros::test::guarded_stack cancel_stack;
 
-      TestWaitable w0;
-      TestWaitable w1;
-      TestWaitable w2;
-
-      std::atomic<int> consumed_w0{0};
-      std::atomic<int> consumed_w1{0};
-      std::atomic<int> consumed_w2{0};
+      struct state
+      {
+         TestWaitable     w;
+         cancel_signal    cancel;
+         std::atomic<int> by_w{0};
+         std::atomic<int> by_cancel{0};
+      } s;
 
       thread waiter(
-         [&]{
-            for (int i = 0; i < total_parks; ++i) {
-               const std::size_t idx = this_thread::wait_on_any(w0, w1, w2);
-               // Clear the winner and tally it. The owning signaler is spinning
-               // on this clear before it may set again.
-               switch (idx) {
-                  case 0:
-                     w0.condition.store(false, std::memory_order_release);
-                     consumed_w0.fetch_add(1, std::memory_order_acq_rel);
-                     break;
-                  case 1:
-                     w1.condition.store(false, std::memory_order_release);
-                     consumed_w1.fetch_add(1, std::memory_order_acq_rel);
-                     break;
-                  case 2:
-                     w2.condition.store(false, std::memory_order_release);
-                     consumed_w2.fetch_add(1, std::memory_order_acq_rel);
-                     break;
+         [&s]{
+            for (int i = 0; i < total_waits; ++i) {
+               if (this_thread::wait_on(s.w, s.cancel)) {
+                  s.w.condition.store(false, std::memory_order_release);
+                  s.by_w.fetch_add(1, std::memory_order_acq_rel);
+               } else {
+                  s.cancel.reset();
+                  s.by_cancel.fetch_add(1, std::memory_order_acq_rel);
                }
             }
          },
-         waiter_stack,
-         thread::priority(0),
-         core0
-      );
+         waiter_stack, thread::priority(0), core0);
 
-      auto make_signaler = [](TestWaitable& w) {
-         return [&w]{
+      thread w_signaler(
+         [&s]{
             for (int i = 0; i < iterations_per_rep; ++i) {
-               // Wait for the waiter to consume our previous set before
-               // issuing the next, so each set is observed individually.
-               while (w.condition.load(std::memory_order_acquire)) {
+               while (s.w.condition.load(std::memory_order_acquire)) {
                   this_thread::yield();
                }
-               w.set_and_wake_one();
+               s.w.set_and_wake_one();
             }
-         };
-      };
+         },
+         w_stack, thread::priority(0), core1);
 
-      thread signaler0(make_signaler(w0), s0_stack, thread::priority(0), core1);
-      thread signaler1(make_signaler(w1), s1_stack, thread::priority(0), core2);
-      thread signaler2(make_signaler(w2), s2_stack, thread::priority(0), core3);
+      thread cancel_signaler(
+         [&s]{
+            for (int i = 0; i < iterations_per_rep; ++i) {
+               while (s.cancel.raised()) {
+                  this_thread::yield();
+               }
+               s.cancel.raise();
+            }
+         },
+         cancel_stack, thread::priority(0), core2);
 
       kernel::start();
 
-      EXPECT_EQ(consumed_w0.load(std::memory_order_acquire), iterations_per_rep);
-      EXPECT_EQ(consumed_w1.load(std::memory_order_acquire), iterations_per_rep);
-      EXPECT_EQ(consumed_w2.load(std::memory_order_acquire), iterations_per_rep);
-      EXPECT_EQ(consumed_w0.load(std::memory_order_acquire)
-              + consumed_w1.load(std::memory_order_acquire)
-              + consumed_w2.load(std::memory_order_acquire),
-                total_parks)
-         << "waiter consumed fewer sets than the signalers sent - lost wake";
+      EXPECT_EQ(s.by_w.load(std::memory_order_acquire), iterations_per_rep);
+      EXPECT_EQ(s.by_cancel.load(std::memory_order_acquire), iterations_per_rep);
       kernel::finalise();
    }
 }

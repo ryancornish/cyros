@@ -23,15 +23,16 @@
 
 using namespace cyros;
 
-/* A mutex must never be composable into a wait_on_any group, and the ban is
- * enforced by the type system rather than by a runtime check: sync::mutex is a
- * facade over base_mutex, which is deliberately NOT a waitable.
+/* A mutex must never be waitable through this_thread::wait_on, and in
+ * particular never with a cancel signal beside it, and the ban is enforced by
+ * the type system rather than by a runtime check: sync::mutex is a facade
+ * over base_mutex, which is deliberately NOT a waitable.
  *
  * This assertion is what two deleted tests turned into. The renounce-window
- * race was only constructible through that composition, so making it
- * ill-formed retires that machinery and its test together. A compile-time
- * check is the right shape for that half: there is no runtime behaviour left
- * to observe.
+ * race was only constructible through composing a mutex with another wait
+ * source, so making it ill-formed retired that machinery and its test
+ * together. A compile-time check is the right shape for that half: there is
+ * no runtime behaviour left to observe.
  *
  * The already-admitted handover hole (cross-core-defects.md 8.1) is NOT
  * retired by the ban, only its deterministic test was. It has a second
@@ -42,7 +43,7 @@ using namespace cyros;
  * migrates such an owner to the holder list, and it stays load-bearing.
  * See mutex-first-class-plan.md D6. */
 static_assert(!std::is_convertible_v<mutex&, waitable&>,
-              "a mutex must not be usable as a waitable, or it can enter a wait_on_any group");
+              "a mutex must not be usable as a waitable, or it can be waited on beside a cancel");
 static_assert(!std::is_base_of_v<waitable, mutex>,
               "a mutex must not derive from waitable");
 

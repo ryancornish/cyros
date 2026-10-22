@@ -23,11 +23,6 @@ namespace cyros::config
 inline constexpr std::size_t cores = 2;
 
 /**
- * @brief Maximum wait nodes per thread.
- */
-inline constexpr std::size_t max_wait_nodes = 8;
-
-/**
  * @brief Number of scheduling priorities.
  */
 inline constexpr std::size_t max_priorities = 31;

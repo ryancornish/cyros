@@ -10,10 +10,8 @@
 #include <cyros/kernel/attribute.hpp>
 
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <span>
 
 namespace cyros
 {
@@ -37,9 +35,9 @@ enum class reschedule_policy
  * variable must release, the bits an event-flags waiter wants) and builds it
  * on the waiting thread's stack, naming the waitable it belongs to. Building
  * it installs it on the calling thread, and destroying it uninstalls it. While
- * installed, any ordinary wait_on / wait_on_any that includes that waitable
- * hands the record to that waitable's polls (and to no other source's), and
- * records on it whether a wake of that waitable chose this waiter.
+ * installed, an ordinary wait_on of that waitable hands the record to its
+ * polls (and to no other waitable's), and records on it whether a wake of
+ * that waitable chose this waiter.
  *
  *    waiter self(*this, m);         // a waiter_record naming this waitable
  *    this_thread::wait_on(*this);   // an ordinary wait
@@ -66,7 +64,7 @@ public:
     * The waker records nothing. A wake takes the waiter's node off the queue
     * and readies it, as every wake always has, and the WAITER discovers it
     * was chosen when its own disarm finds that node already gone
-    * (waitable_arm_guard, where the rule this rests on is written down).
+    * (wait_engine, where the rule this rests on is written down).
     * Written and read only by the waiting thread, so it needs no atomic.
     *
     * Discovered at the end of the pass the wake landed in, so the poll in
@@ -81,7 +79,6 @@ private:
    bool                  chosen_by_wake{false};
 
    friend class waitable;
-   template<std::size_t> friend class waitable_arm_guard;
    friend class wait_engine;
 };
 
@@ -138,9 +135,10 @@ class CYROS_PUBLIC inheritance_cache
 class CYROS_PUBLIC wait_queue
 {
    /**
-    * @brief Per-thread parking record (one per TCB, reused).
+    * @brief One wait's place in one queue.
     *
-    * Threaded into one or more queues while the thread is parked.
+    * Lives on the waiting thread's stack for the length of the wait. It has
+    * one next pointer, so a wait with a cancel signal uses two, one per queue.
     */
    struct wait_node
    {
@@ -286,8 +284,6 @@ class CYROS_PUBLIC wait_queue
    friend class waitable;
    friend class base_mutex;
    friend class pi_wait_queue;
-   template<std::size_t> friend class waitable_arm_guard;
-   friend class wait_node_vector;
    friend class wait_engine;
 };
 
@@ -338,8 +334,8 @@ class CYROS_PUBLIC pi_wait_queue
  *
  *   try_satisfy(record)     virtual. Attempt to satisfy the caller without
  *                           blocking, consuming the resource if that is what
- *                           satisfaction means. wait_on_any polls it between
- *                           arm and park, which is the two-phase block that
+ *                           satisfaction means. wait_on polls it between arm
+ *                           and park, which is the two-phase block that
  *                           closes the lost-wakeup window. Runs in the calling
  *                           thread's context, with the caller's waiter_record
  *                           for this waitable, or null.
@@ -347,8 +343,9 @@ class CYROS_PUBLIC pi_wait_queue
  *   wake_all_where          wake only the waiters a filter accepts. ISR-safe.
  *   wake_one_and_transfer   barge-free handoff, see the protocol note below.
  *
- * Threads wait via this_thread::wait_on(w) or wait_on_any(w0, w1, ...), never
- * through methods on the waitable itself. Use composition instead of
+ * Threads wait via this_thread::wait_on(w), or wait_on(w, cancel) to give up
+ * when a cancel_signal is raised, never through methods on the waitable
+ * itself. Use composition instead of
  * inheritance when your object merely uses blocking internally without being a
  * wait target.
  *
@@ -361,8 +358,10 @@ class CYROS_PUBLIC pi_wait_queue
  *
  * Barge-free handoff, where a release commits the resource to the chosen
  * waiter under the queue lock so nothing can interpose, is available through
- * wake_one_and_transfer plus a try_satisfy that recognises ownership by id,
- * plus renounce_if_assigned for the group-wait interaction. This CANNOT be
+ * wake_one_and_transfer plus a try_satisfy that recognises ownership by id.
+ * A transfer that lands on a waiter whose cancel was also raised still
+ * counts: the wait polls w after its last disarm, before the cancel may end
+ * it, and that poll recognises the ownership. This CANNOT be
  * built outside the kernel from wake_one: choosing the best waiter and
  * committing to it must happen under the queue lock, which nothing else can
  * reach. That is why the surface exists here.
@@ -393,7 +392,7 @@ class CYROS_PUBLIC pi_wait_queue
  * Spurious wakeups
  * ----------------
  * A woken thread is not guaranteed its condition holds: the resource may have
- * been consumed before it runs. wait_on_any re-checks and re-parks
+ * been consumed before it runs. wait_on re-checks and re-parks
  * transparently, the same mandatory loop as around pthread_cond_wait.
  * ========================================================================= */
 
@@ -448,7 +447,7 @@ protected:
     * For a release that would otherwise take the queue's lock only to find it
     * empty. False is safe to act on in ONE order: change the state the waiters
     * poll FIRST, then ask. This fences before it looks, and a waiter fences
-    * between arming and its first poll (wait_on_any), so one side always sees
+    * between arming and its first poll (wait_on), so one side always sees
     * the other: the release finds the waiter armed, or the waiter's poll finds
     * the release. True may be stale, and a wake then finds nobody, as it
     * always could.
@@ -525,51 +524,63 @@ protected:
     */
    bool wake_one_and_transfer(transfer_fn transfer, reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
-   /**
-    * @brief Group-wait handback hook.
-    *
-    * A transfer can commit ownership to a thread parked in wait_on_any at any
-    * moment while its node is armed, so a group wait can wake owning MORE
-    * than the waitable it returns. The contract is that it owns exactly the
-    * returned index (plus anything it held before the call), so wait_on_any
-    * sweeps the non-chosen waitables through this hook after the final
-    * disarm, when no further transfer can choose the caller. Ownerless
-    * waitables have nothing to hand back, hence the default no-op.
-    *
-    * Defined in waitable.cpp, not here, and that is load-bearing. As the one
-    * virtual with a body it is the class's key function, so its vtable and
-    * itself exist once, in libcyros. Inline, every application that derives
-    * a waitable emitted its own copies, and against a release archive (its
-    * merged object's hidden symbols made local) the linker kept the
-    * application's and discarded the archive's, leaving the archive pointing
-    * into a discarded section: no derived waitable linked at all.
-    */
-   virtual void renounce_if_assigned(thread::id thread_id) noexcept;
 
 private:
+   /**
+    * @brief The class's key function, and nothing else.
+    *
+    * Defined in waitable.cpp, so the vtable exists once, in libcyros. That
+    * is load-bearing. Without an out-of-line virtual every application that
+    * derives a waitable emits its own copies, and against a release archive
+    * (its merged object's hidden symbols made local) the linker once kept
+    * the application's and discarded the archive's, leaving the archive
+    * pointing into a discarded section: no derived waitable linked at all
+    * (tests/consumer/release_waitable).
+    */
+   virtual void anchor() noexcept;
+
    /// Composed, not inherited. See wait_queue above for why the type is
    /// nameable here and still unusable.
    wait_queue queue;
 
-   friend class wait_node_vector;
-   template<std::size_t> friend class waitable_arm_guard;
    friend class wait_engine;
 };
 
 
 /**
- * @brief waitable type that NEVER blocks the thread
+ * @brief A level that ends a wait: once raised, it satisfies every waiter
+ *        until it is reset.
  *
- * This allows wait_for_any({target, non_blocking_token});
- * patterns.
+ * this_thread::wait_on(w, cancel) returns false when this ended the wait, and
+ * a plain wait_on(cancel) waits for it alone. Its poll consumes nothing,
+ * which is what lets it share a wait with a waitable that does: a wake that
+ * lands on its node is owed to no one, so a wait never has to hand one back.
+ * It is a type rather than any waitable for exactly that reason, and its
+ * poll is final.
+ *
+ * raise() is ISR-safe. reset() is for when nothing waits on it, as an alarm
+ * resets on its own thread before arming.
  */
-class CYROS_PUBLIC non_blocking_token : public waitable
+class CYROS_PUBLIC cancel_signal : public waitable
 {
+public:
+   cancel_signal() noexcept = default;
+
+   /// Raise it, then wake every waiter. ISR-safe.
+   void raise() noexcept;
+
+   /// Lower it again. A wait that polls it afterwards parks.
+   void reset() noexcept { raised_flag.store(false, std::memory_order_relaxed); }
+
+   [[nodiscard]] bool raised() const noexcept { return raised_flag.load(std::memory_order_acquire); }
+
 protected:
-   bool try_satisfy(waiter_record*) noexcept override
-   {
-      return true;
-   }
+   /// Defined in waitable.cpp: a public class's virtual with a body is
+   /// defined out of line, as waitable's anchor explains.
+   bool try_satisfy(waiter_record*) noexcept final;
+
+private:
+   std::atomic<bool> raised_flag{false};
 };
 
 

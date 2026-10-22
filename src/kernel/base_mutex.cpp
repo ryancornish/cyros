@@ -5,10 +5,12 @@
  * @file base_mutex.cpp
  * @brief The kernel mutex: ownership, inheritance, and its own blocking loop.
  *
- * The blocking loop here is deliberately NOT shared with wait_on_any. Only the
- * commit step is, via commit_to_block, because that is the part
- * where a lost wakeup hides. Arming one source and arming a span differ enough
- * that a common abstraction would cost more readability than it saves.
+ * The blocking loop here is deliberately NOT shared with this_thread::wait_on.
+ * Only the commit step is, via commit_to_block, because that is the part where
+ * a lost wakeup hides. A mutex publishes its wait-for edge, recognises a
+ * handover rather than polling, and never barges, which differ enough from a
+ * waitable's poll that a common abstraction would cost more readability than
+ * it saves.
  */
 
 #include <cyros/kernel/assert.hpp>

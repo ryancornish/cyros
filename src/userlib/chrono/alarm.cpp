@@ -25,25 +25,23 @@ alarm::~alarm()
 }
 
 /* Runs in the driver's callback context: a timer ISR on the hardware-shaped
- * drivers, the pump context under simulation. Two statements, both ISR-legal,
- * and disarm's spin is sized to exactly this body. */
+ * drivers, the pump context under simulation. raise() is a store and a
+ * wake_all, both ISR-legal, and disarm's spin is sized to exactly this body. */
 void alarm::on_timer(void* self) noexcept
 {
-   auto& a = *static_cast<alarm*>(self);
-   a.fired.store(true, std::memory_order_release);
-   a.wake_all();
+   static_cast<alarm*>(self)->raise();
 }
 
 bool alarm::pending() const noexcept
 {
-   return timer.id != 0 && !fired.load(std::memory_order_acquire);
+   return timer.id != 0 && !raised();
 }
 
 void alarm::arm_at(time::time_point tp) noexcept
 {
    CYROS_REQUIRE(!pending()); // Re-arming a pending alarm is a cancel-then-arm at the call site
 
-   fired.store(false, std::memory_order_relaxed);
+   reset();
    timer = time::schedule_at(tp, &on_timer, this);
    CYROS_FATAL(timer.id != 0); // Timer table full, a config-sized limit
 }
@@ -61,23 +59,13 @@ void alarm::disarm() noexcept
        * core's timer ISR and this thread is on that core, so an ISR that
        * started has finished. Under simulation the pump fires callbacks
        * outside its lock from whichever context advances time, so wait out
-       * the two-statement body before letting the caller destroy us. */
-      while (!fired.load(std::memory_order_acquire)) {
+       * the callback's body before letting the caller destroy us. */
+      while (!raised()) {
          this_core::cpu_relax();
       }
    }
    timer = {};
-   fired.store(false, std::memory_order_relaxed);
-}
-
-bool alarm::expired() const noexcept
-{
-   return fired.load(std::memory_order_acquire);
-}
-
-bool alarm::try_satisfy(waiter_record*) noexcept
-{
-   return fired.load(std::memory_order_acquire);
+   reset();
 }
 
 void sleep_until(time::time_point tp) noexcept

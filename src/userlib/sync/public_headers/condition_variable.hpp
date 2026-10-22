@@ -63,9 +63,9 @@ enum class cv_status
  * measured, the kernel marking the record from the wake and a registry in the
  * cv: ~/cyros-claude/archive/roadmap-history.md, with patches beside it.
  *
- * Not a waitable to users. It inherits privately, so it cannot join a
- * wait_on_any group, which would bypass the record and the mutex release. A
- * timed wait is provided here instead.
+ * Not a waitable to users. It inherits privately, so a user cannot wait_on
+ * it directly, which would bypass the record and the mutex release. A timed
+ * wait is provided here instead.
  */
 class CYROS_PUBLIC condition_variable : private waitable
 {

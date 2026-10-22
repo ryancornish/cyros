@@ -14,7 +14,9 @@
  * each emitted a copy, the linker kept the application's and discarded the
  * archive's, and the archive's own references, made local, pointed into the
  * discarded section ("defined in discarded section"). Building, linking and
- * running at all is most of the test; the wake is the rest.
+ * running at all is most of the test; the wake is the rest. A cancel_signal,
+ * cyros's own derived waitable, is built and waited on here too, for the same
+ * reason: its vtable must link from this side of a release archive.
  */
 
 #include <cyros/kernel/kernel.hpp>
@@ -51,9 +53,13 @@ private:
 };
 
 flag ready;
+flag never;
+cancel_signal stop;
 alignas(16) std::array<std::byte, 64 * 1024> waiter_stack;
+alignas(16) std::array<std::byte, 64 * 1024> canceller_stack;
 alignas(16) std::array<std::byte, 64 * 1024> raiser_stack;
 std::atomic<bool> woken{false};
+std::atomic<bool> cancelled{false};
 
 } // namespace
 
@@ -61,16 +67,20 @@ int main()
 {
    kernel::initialise();
 
-   // The waiter outranks the raiser on one core, so it is parked before the
-   // raise, and only the wake can let it finish.
+   // Both waiters outrank the raiser on one core, so they are parked before
+   // it runs, and only its wake and its cancel can let them finish.
    thread waiter([]{ this_thread::wait_on(ready); woken.store(true); },
                  waiter_stack, thread::priority(1), core0);
-   thread raiser([]{ ready.raise(); },
+   thread canceller([]{ cancelled.store(!this_thread::wait_on(never, stop)); },
+                    canceller_stack, thread::priority(1), core0);
+   thread raiser([]{ ready.raise(); stop.raise(); },
                  raiser_stack, thread::priority(2), core0);
 
    kernel::start();
    kernel::finalise();
 
-   std::printf("release_waitable: %s\n", woken.load() ? "woken" : "NOT WOKEN");
-   return woken.load() ? 0 : 1;
+   bool const ok = woken.load() && cancelled.load();
+   std::printf("release_waitable: %s, %s\n", woken.load() ? "woken" : "NOT WOKEN",
+               cancelled.load() ? "cancelled" : "NOT CANCELLED");
+   return ok ? 0 : 1;
 }

@@ -8,28 +8,26 @@
 #include <cyros/kernel/attribute.hpp>
 #include <cyros/time/time.hpp>
 
-#include <atomic>
 
 namespace cyros::chrono
 {
 
 /**
- * @brief A one-shot waitable deadline.
+ * @brief A one-shot deadline: a cancel_signal raised by a time:: timer.
  *
- * Wraps a one-shot time:: timer whose expiry satisfies every waiter. Expiry is
- * a level, not an event to consume: once fired, any thread that waits on this
- * alarm is satisfied until it is re-armed. That is what makes a fire that lands
- * before the waiter parks harmless, the pre-park poll sees it.
+ * Expiry is a level, not an event to consume: once fired, any thread that
+ * waits on this alarm is satisfied until it is re-armed. That is what makes a
+ * fire that lands before the waiter parks harmless, the pre-park poll sees it.
  *
- * Composes with the group wait: wait_on_any(thing, alarm) is a timed wait on
- * the thing, and which index comes back says whether it was the deadline.
+ * this_thread::wait_on(thing, alarm) is a timed wait on the thing, false when
+ * the deadline ended it, and this_thread::wait_on(alarm) is a sleep.
  *
  * @note Arm and destroy on the same thread. The timer callback runs on the
  *       arming core, so a same-thread disarm or destroy cannot race it. There
  *       is deliberately no support for destroying an armed alarm from another
  *       thread.
  */
-class CYROS_PUBLIC alarm : public waitable
+class CYROS_PUBLIC alarm : public cancel_signal
 {
 public:
    alarm() noexcept = default;
@@ -65,20 +63,15 @@ public:
 
    /**
     * @brief True once the deadline has fired and the alarm has not been
-    *        re-armed or disarmed since.
+    *        re-armed or disarmed since: raised(), in the alarm's own words.
     */
-   [[nodiscard]] bool expired() const noexcept;
-
-protected:
-   /// Non-consuming: a fired alarm satisfies every waiter that asks.
-   bool try_satisfy(waiter_record*) noexcept override;
+   [[nodiscard]] bool expired() const noexcept { return raised(); }
 
 private:
    static void on_timer(void* self) noexcept;
 
    [[nodiscard]] bool pending() const noexcept;
 
-   std::atomic<bool> fired{false};
    time::handle timer{};
 };
 

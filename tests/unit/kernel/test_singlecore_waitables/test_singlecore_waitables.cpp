@@ -180,23 +180,23 @@ TEST_F(SingleCoreWaitables_Test,
 }
 
 /* ============================================================================
- * wait_on_any over two waitables
+ * wait_on with a cancel signal
  * ========================================================================= */
 
 TEST_F(SingleCoreWaitables_Test,
-       GivenTwoWaitables_WhenSecondIsSatisfied_ThenWinnerIndexIs1)
+       GivenAWaitWithACancel_WhenTheCancelIsRaised_ThenTheWaitReturnsFalse)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
-   TestWaitable w0;
-   TestWaitable w1;
+   TestWaitable w;
+   cancel_signal cancel;
 
-   std::size_t winner = static_cast<std::size_t>(-1);
+   int result = -1;
 
    thread waiter(
       [&]{
-         winner = this_thread::wait_on_any(w0, w1);
+         result = this_thread::wait_on(w, cancel) ? 1 : 0;
       },
       waiter_stack,
       thread::priority(0),
@@ -205,7 +205,7 @@ TEST_F(SingleCoreWaitables_Test,
 
    thread signaler(
       [&]{
-         w1.set_and_wake_one();
+         cancel.raise();
       },
       signaler_stack,
       thread::priority(1),
@@ -214,26 +214,25 @@ TEST_F(SingleCoreWaitables_Test,
 
    kernel::start();
 
-   ASSERT_EQ(winner, 1U);
+   ASSERT_EQ(result, 0);
 }
 
 TEST_F(SingleCoreWaitables_Test,
-       GivenTwoWaitablesBothSatisfied_WhenWaiterChecks_ThenLowestIndexWins)
+       GivenWAndTheCancelBothHoldAlready_WhenWaiting_ThenWWins)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
 
-   TestWaitable w0;
-   TestWaitable w1;
-   w0.condition.store(true, std::memory_order_release);
-   w1.condition.store(true, std::memory_order_release);
+   TestWaitable w;
+   cancel_signal cancel;
+   w.condition.store(true, std::memory_order_release);
+   cancel.raise();
 
-   std::size_t winner = static_cast<std::size_t>(-1);
+   int result = -1;
 
    thread waiter(
       [&]{
-         // Both conditions are already true when wait_on_any is called.
-         // Tie-break by lowest index = 0.
-         winner = this_thread::wait_on_any(w0, w1);
+         // Both hold before the wait starts. w is polled first.
+         result = this_thread::wait_on(w, cancel) ? 1 : 0;
       },
       waiter_stack,
       thread::priority(0),
@@ -242,7 +241,7 @@ TEST_F(SingleCoreWaitables_Test,
 
    kernel::start();
 
-   ASSERT_EQ(winner, 0U);
+   ASSERT_EQ(result, 1);
 }
 
 /* ============================================================================
@@ -334,22 +333,22 @@ TEST_F(SingleCoreWaitables_Test,
 }
 
 /* ============================================================================
- * Spurious wake re-check loop on wait_on_any
+ * Spurious wake re-check loop on a wait with a cancel
  * ========================================================================= */
 
 TEST_F(SingleCoreWaitables_Test,
-       GivenWaitOnAnyWokenByOneSourceButConditionFalse_ThenWaiterReblocks)
+       GivenAWaitWithACancel_WhenWIsWokenButNotSatisfied_ThenTheWaiterParksAgainUntilTheCancel)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> signaler_stack{};
 
-   TestWaitable w0;
-   TestWaitable w1;
-   std::size_t winner = static_cast<std::size_t>(-1);
+   TestWaitable w;
+   cancel_signal cancel;
+   int result = -1;
 
    thread waiter(
       [&]{
-         winner = this_thread::wait_on_any(w0, w1);
+         result = this_thread::wait_on(w, cancel) ? 1 : 0;
       },
       waiter_stack,
       thread::priority(0),
@@ -358,11 +357,11 @@ TEST_F(SingleCoreWaitables_Test,
 
    thread signaler(
       [&]{
-         // Spurious-style wake: poke w0's queue without setting any condition.
+         // Spurious-style wake: poke w's queue without setting its condition.
          // The waiter must re-check, find nothing satisfied, and re-block.
-         w0.wake_one_no_set();
-         // Real wake: set w1, which is what the waiter should ultimately return on.
-         w1.set_and_wake_one();
+         w.wake_one_no_set();
+         // Then the cancel, which is what the waiter should return on.
+         cancel.raise();
       },
       signaler_stack,
       thread::priority(1),
@@ -371,7 +370,119 @@ TEST_F(SingleCoreWaitables_Test,
 
    kernel::start();
 
-   ASSERT_EQ(winner, 1U) << "spurious wake on w0 must not be reported as the winner";
+   ASSERT_EQ(result, 0) << "a spurious wake of w must not be reported as w";
+}
+
+/* ============================================================================
+ * A wake of w that lands as the cancel wins is not lost
+ *
+ * The cancel is already raised when T waits, so T's first poll of w fails and
+ * the cancel's succeeds. A release of w landing between w's poll and its
+ * disarm takes T's node, since T heads w's queue, though that wake was for
+ * the token the release brought. U waits on w behind T. The wait must poll w
+ * after its disarm and before the cancel may end it: T then takes the token
+ * and returns true. Ending on the cancel instead leaves U parked beside it.
+ *
+ * w's own poll makes the release, after it has looked and found nothing,
+ * which puts it in exactly that window. One core, deterministic: T is gated
+ * until U has parked, and the judge, least urgent, looks once T is done.
+ * ========================================================================= */
+
+namespace
+{
+
+class LateReleaseWaitable final : public waitable
+{
+public:
+   std::atomic<int>        tokens{0};
+   std::atomic<thread::id> release_late_for{0};
+
+   void release() noexcept
+   {
+      tokens.fetch_add(1, std::memory_order_acq_rel);
+      wake_one();
+   }
+
+protected:
+   bool try_satisfy(waiter_record*) noexcept override
+   {
+      bool const took = take();
+      if (!took && release_late_for.load(std::memory_order_acquire) == this_thread::id()) {
+         release_late_for.store(0, std::memory_order_relaxed);
+         release(); // after this poll looked, before the waiter's disarm
+      }
+      return took;
+   }
+
+private:
+   bool take() noexcept
+   {
+      int current = tokens.load(std::memory_order_acquire);
+      while (current > 0) {
+         if (tokens.compare_exchange_weak(current, current - 1,
+                                          std::memory_order_acq_rel,
+                                          std::memory_order_relaxed)) {
+            return true;
+         }
+      }
+      return false;
+   }
+};
+
+}  // namespace
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenARaisedCancel_WhenAWakeOfWLandsAfterItsPoll_ThenTheWaitStillTakesWAndNobodyIsStranded)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> t_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> u_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> judge_stack{};
+
+   struct state
+   {
+      LateReleaseWaitable w;
+      cancel_signal       cancel;
+      TestWaitable        gate;
+      int  t_result{-1};
+      int  tokens_left{-1};
+      bool u_acquired{false};
+      bool u_stranded{false};
+   } s;
+   s.cancel.raise();
+
+   thread t(
+      [&s]{
+         this_thread::wait_on(s.gate);
+         s.w.release_late_for.store(this_thread::id(), std::memory_order_release);
+         s.t_result = this_thread::wait_on(s.w, s.cancel) ? 1 : 0;
+      },
+      t_stack, thread::priority(1), core0);
+
+   thread u(
+      [&s]{
+         this_thread::wait_on(s.w);
+         s.u_acquired = true;
+      },
+      u_stack, thread::priority(2), core0);
+
+   thread judge(
+      [&s]{
+         // T outranks this, and nothing in its wait can park it, so it has
+         // finished by the time this runs again.
+         s.gate.set_and_wake_one();
+         s.tokens_left = s.w.tokens.load(std::memory_order_acquire);
+         s.u_stranded  = !s.u_acquired && s.tokens_left > 0;
+         if (!s.u_acquired) {
+            s.w.release(); // free U, so the kernel quiesces
+         }
+      },
+      judge_stack, thread::priority(3), core0);
+
+   kernel::start();
+
+   EXPECT_EQ(s.t_result, 1) << "the cancel ended a wait whose w had a token waiting for it";
+   EXPECT_FALSE(s.u_stranded) << "U parked beside the token the late release brought";
+   EXPECT_EQ(s.tokens_left, 0);
 }
 
 /* ============================================================================
@@ -567,13 +678,13 @@ TEST_F(SingleCoreWaitables_Test,
  * Per-waiter records, and chosen()
  *
  * A waiter_record names one waitable and is built on the waiting thread, which
- * installs it. An ordinary wait that includes that waitable then hands the
- * record to that waitable's polls and to no other source's, wherever it sits
- * in the group, and the waiter's own disarm marks it chosen() when a wake of
- * that waitable took its node. chosen() rests on two facts documented at
- * waitable_arm_guard: a node leaves its queue only by one disarm or one wake
- * per pass, and each node is disarmed at most once per pass. These cases pin
- * both, the binding by identity, and that a record is gone once destroyed.
+ * installs it. An ordinary wait on that waitable then hands the record to its
+ * polls and to no other waitable's, and the waiter's own disarm marks it
+ * chosen() when a wake of that waitable took its node. chosen() rests on two
+ * facts documented at wait_engine: a node leaves its queue only by one disarm
+ * or one wake per pass, and each node is disarmed exactly once per pass. These
+ * cases pin both, the binding by identity, and that a record is gone once
+ * destroyed.
  *
  * RecordWaitable answers from the record alone: the flag it points at, or
  * chosen() when answer_by_chosen is set, as a condition variable does. The
@@ -597,6 +708,7 @@ public:
    std::atomic<bool>           bail{false};
    bool                        answer_by_chosen{false};
    std::atomic<waiter_record*> last_polled{nullptr};
+   std::atomic<waiter_record*> wake_during_poll_of{nullptr}; ///< a wake lands inside this record's next poll
 
    void wake_best() noexcept { wake_one(); }
    void wake_everyone() noexcept { wake_all(); }
@@ -624,6 +736,10 @@ protected:
    bool try_satisfy(waiter_record* record) noexcept override
    {
       last_polled.store(record, std::memory_order_relaxed);
+      if (record != nullptr && record == wake_during_poll_of.load(std::memory_order_acquire)) {
+         wake_during_poll_of.store(nullptr, std::memory_order_relaxed);
+         wake_one();
+      }
       if (bail.load(std::memory_order_acquire)) return true;
       if (record == nullptr) return false;
       if (answer_by_chosen) return record->chosen();
@@ -634,7 +750,7 @@ protected:
 }  // namespace
 
 TEST_F(SingleCoreWaitables_Test,
-       GivenARecordNamingOneWaitable_WhenAnotherSourceWakes_ThenOnlyTheNamedWaitableSeesItAndItIsNotChosen)
+       GivenARecordNamingW_WhenTheCancelEndsTheWait_ThenOnlyWSawItAndItIsNotChosen)
 {
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> stack{};
    alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waker_stack{};
@@ -643,45 +759,51 @@ TEST_F(SingleCoreWaitables_Test,
    {
       RecordWaitable    self;
       RecordWaitable    other;
+      cancel_signal     cancel;
       std::atomic<bool> never{false};
-      std::size_t       index{99};
+      int               result{-1};
       bool              self_saw_record{false};
-      bool              other_saw_null{false};
-      bool              chosen_by_other_wake{true};
+      bool              chosen_by_cancel{true};
       waiter_record*    seen_after_destroy{reinterpret_cast<waiter_record*>(1)};
+      waiter_record*    seen_with_foreign_record{reinterpret_cast<waiter_record*>(1)};
    } s;
 
    thread poller(
       [&s]{
          {
-            // Named waitable listed SECOND: the binding is by identity. Neither
-            // source is satisfied, so this parks until the waker wakes `other`,
-            // whose polls must never see the record, and whose wake must not
-            // mark it.
+            // Neither w nor the cancel holds, so this parks until the waker
+            // raises the cancel, whose wake must not mark the record.
             tagged_record record(s.self, s.never);
-            s.index = this_thread::wait_on_any(s.other, s.self);
-            s.self_saw_record      = s.self.last_polled.load() == &record;
-            s.other_saw_null       = s.other.last_polled.load() == nullptr;
-            s.chosen_by_other_wake = record.chosen();
+            s.result           = this_thread::wait_on(s.self, s.cancel) ? 1 : 0;
+            s.self_saw_record  = s.self.last_polled.load() == &record;
+            s.chosen_by_cancel = record.chosen();
          }
 
          // Destroyed, so no longer installed: a plain wait gets null.
          s.self.bail = true;
          this_thread::wait_on(s.self);
          s.seen_after_destroy = s.self.last_polled.load();
+
+         // A record naming another waitable reaches no poll of this one: the
+         // binding is by identity.
+         {
+            tagged_record record(s.other, s.never);
+            this_thread::wait_on(s.self);
+            s.seen_with_foreign_record = s.self.last_polled.load();
+         }
       },
       stack, thread::priority(0), core0);
 
    // Less urgent on the same core, so it runs only once the poller has parked.
-   thread waker([&s]{ s.other.release_everyone(); }, waker_stack, thread::priority(1), core0);
+   thread waker([&s]{ s.cancel.raise(); }, waker_stack, thread::priority(1), core0);
 
    kernel::start();
 
-   EXPECT_EQ(s.index, 0u)               << "the wait did not return the other source's index";
-   EXPECT_TRUE(s.self_saw_record)       << "the named waitable did not receive the record in position 1";
-   EXPECT_TRUE(s.other_saw_null)        << "a source the record does not name received it";
-   EXPECT_FALSE(s.chosen_by_other_wake) << "a wake of another source marked the record chosen";
+   EXPECT_EQ(s.result, 0)                   << "the wait did not report the cancel";
+   EXPECT_TRUE(s.self_saw_record)           << "w's poll did not receive the record naming it";
+   EXPECT_FALSE(s.chosen_by_cancel)         << "the cancel's wake marked w's record chosen";
    EXPECT_EQ(s.seen_after_destroy, nullptr) << "a destroyed record still reached a poll";
+   EXPECT_EQ(s.seen_with_foreign_record, nullptr) << "a record naming another waitable reached this one's poll";
 }
 
 TEST_F(SingleCoreWaitables_Test,
@@ -760,9 +882,9 @@ TEST_F(SingleCoreWaitables_Test,
       bool only_first{false};
    } s;
 
-   // In queue order: a record naming w, a record naming the other waitable in
-   // a group wait that includes w, and no record at all. The filter must be
-   // handed the first, then null twice, exactly what each one's poll of w gets.
+   // In queue order: a record naming w, a record naming another waitable on a
+   // waiter of w, and no record at all. The filter must be handed the first,
+   // then null twice, exactly what each one's poll of w gets.
    thread named(
       [&s]{
          {
@@ -778,7 +900,7 @@ TEST_F(SingleCoreWaitables_Test,
       [&s]{
          {
             tagged_record record(s.other, s.never);
-            (void)this_thread::wait_on_any(s.w, s.other);
+            this_thread::wait_on(s.w);
          }
          s.done[1] = true;
          ++s.returned;
@@ -800,7 +922,6 @@ TEST_F(SingleCoreWaitables_Test,
          this_thread::yield();
          s.only_first = s.returned == 1 && s.done[0] && !s.done[1] && !s.done[2];
          s.w.release_everyone();
-         s.other.release_everyone();
       },
       sd, thread::priority(4), core0);
 
@@ -887,7 +1008,7 @@ TEST_F(SingleCoreWaitables_Test,
       bool              chosen{true};
    } s;
 
-   // Satisfied on the first poll, so the node is left early and then must not
+   // Satisfied on the first poll, so the node is disarmed once, and must not
    // be disarmed again: a second disarm would find it gone and mark a wake
    // that never happened.
    thread waiter(
@@ -901,4 +1022,61 @@ TEST_F(SingleCoreWaitables_Test,
    kernel::start();
 
    EXPECT_FALSE(s.chosen) << "a waiter nobody woke was marked chosen (a node disarmed twice)";
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenARecordBoundToW_WhenAWakeTakesTheNodeOfASatisfiedPoll_ThenTheRecordGetsItAndNobodyElseIsWoken)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> t_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> u_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> judge_stack{};
+
+   struct state
+   {
+      RecordWaitable    w;
+      TestWaitable      gate;
+      std::atomic<bool> ready{true};
+      std::atomic<bool> never{false};
+      waiter_record*    t_record{nullptr};
+      waiter_record*    last_polled_after_t{nullptr};
+      bool              t_chosen{false};
+   } s;
+
+   // A wake takes T's node inside a poll that satisfies T, the window where an
+   // ordinary wait passes the wake on to the waiter behind. But a record bound
+   // to w owns its wakes: it is marked chosen, as a condition variable learns
+   // of its notify, and passing the wake on as well would deliver it twice.
+   // U, behind T, must not be woken, so the last poll w sees is still T's.
+   thread t(
+      [&s]{
+         this_thread::wait_on(s.gate);
+         tagged_record record(s.w, s.ready);
+         s.t_record = &record;
+         s.w.wake_during_poll_of.store(&record, std::memory_order_release);
+         this_thread::wait_on(s.w);
+         s.t_chosen = record.chosen();
+      },
+      t_stack, thread::priority(1), core0);
+
+   thread u(
+      [&s]{
+         tagged_record record(s.w, s.never);
+         this_thread::wait_on(s.w);
+      },
+      u_stack, thread::priority(2), core0);
+
+   thread judge(
+      [&s]{
+         // Runs once T is gated and U parked. T outranks this and cannot
+         // park, and U outranks this too, so both have run if woken.
+         s.gate.set_and_wake_one();
+         s.last_polled_after_t = s.w.last_polled.load();
+         s.w.release_everyone(); // quiesce U
+      },
+      judge_stack, thread::priority(3), core0);
+
+   kernel::start();
+
+   EXPECT_TRUE(s.t_chosen) << "the wake that took T's node was not recorded on T's record";
+   EXPECT_EQ(s.last_polled_after_t, s.t_record) << "the wake was passed on to U as well";
 }

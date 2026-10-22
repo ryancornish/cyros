@@ -43,7 +43,7 @@ class MultiCoreTransfer_Test : public ::testing::Test {};
  * by ownership on release when contended. try_satisfy() recognises BOTH the
  * uncontended take and "ownership was already transferred to me while parked",
  * which is what lets a wake_one_and_transfer-released resource still compose with
- * wait_on / wait_on_any.
+ * wait_on, with a cancel signal or without.
  *
  * release() exposes wake_one_and_transfer() directly (protected in waitable) so test
  * threads can drive it without protected access.
@@ -532,19 +532,17 @@ TEST_F(MultiCoreTransfer_Test,
 }
 
 /* ============================================================================
- * wait_on_any composition: wake_one_and_transfer-released resource alongside a plain
- * barge-permitting waitable
+ * Composition with a cancel signal: a wake_one_and_transfer-released resource
+ * waited on until a cancel that never comes
  *
- * Proves wake_one_and_transfer's resource stays a first-class waitable: a thread can
- * block on {TransferResource, ordinary TestWaitable-style source} in one
- * wait_on_any call, and a wake_one_and_transfer release still resolves it correctly
- * (winner index for the transfer resource) even though the OTHER source in
- * the group is woken with plain wake_one semantics. This is the composition
- * the design is meant to preserve, unlike a separate substrate type
- * which could not participate in wait_on_any at all.
+ * Proves wake_one_and_transfer's resource stays a first-class waitable: a
+ * thread can block on it with a cancel signal armed beside it, and a
+ * transfer release still resolves the wait as satisfied. This is the
+ * composition the design is meant to preserve, unlike a separate substrate
+ * type which could not be waited on through this_thread at all.
  * ========================================================================= */
 TEST_F(MultiCoreTransfer_Test,
-       GivenWaiterBlockedOnTransferResourceAndPlainWaitable_WhenTransferReleases_ThenCorrectIndexWins)
+       GivenWaiterBlockedOnTransferResourceWithACancel_WhenTransferReleases_ThenTheWaitIsSatisfied)
 {
    for (int rep = 0; rep < stress_repetitions; ++rep) {
       SCOPED_TRACE("stress rep " + std::to_string(rep));
@@ -555,23 +553,12 @@ TEST_F(MultiCoreTransfer_Test,
       cyros::test::guarded_stack waiter_stack;
       cyros::test::guarded_stack witness_stack;
 
-      class PlainWaitable final : public waitable
-      {
-      public:
-         std::atomic<bool> condition{false};
-      protected:
-         bool try_satisfy(waiter_record*) noexcept override
-         {
-            return condition.load(std::memory_order_acquire);
-         }
-      };
-
       TransferResource r;
-      PlainWaitable never_fires; // stays unsatisfied for the test's duration
+      cancel_signal never_raised;
       std::atomic<bool> owner_ready{false};
       std::atomic<bool> waiter_armed{false};
       std::atomic<std::uint32_t> waiter_id{0};
-      std::atomic<std::size_t> winner{static_cast<std::size_t>(-1)};
+      std::atomic<int> result{-1};
 
       thread owner_thread(
          [&]{
@@ -580,8 +567,7 @@ TEST_F(MultiCoreTransfer_Test,
             ASSERT_TRUE(r.try_acquire());
             owner_ready.store(true, std::memory_order_release);
             // Release only once waiter_armed proves the waiter has genuinely
-            // armed via wait_on_any (which arms through the same
-            // wait_queue::arm() as wait_on), not merely signalled intent to.
+            // armed, not merely signalled intent to.
             while (!waiter_armed.load(std::memory_order_acquire)) {
                this_core::cpu_relax();
             }
@@ -598,7 +584,7 @@ TEST_F(MultiCoreTransfer_Test,
                this_core::cpu_relax();
             }
             waiter_id.store(this_thread::id(), std::memory_order_release);
-            winner.store(this_thread::wait_on_any(r, never_fires), std::memory_order_release);
+            result.store(this_thread::wait_on(r, never_raised) ? 1 : 0, std::memory_order_release);
          },
          waiter_stack,
          thread::priority(0),
@@ -617,8 +603,75 @@ TEST_F(MultiCoreTransfer_Test,
       kernel::start();
 
       ASSERT_NE(waiter_id.load(), 0u);
-      EXPECT_EQ(winner.load(), 0U) << "transfer resource did not win its wait_on_any slot";
+      EXPECT_EQ(result.load(), 1) << "a transfer release did not satisfy a wait with a cancel beside it";
       EXPECT_EQ(r.owner.load(), waiter_id.load());
+      kernel::finalise();
+   }
+}
+
+/* ============================================================================
+ * A transfer and a cancel both land on a parked waiter
+ *
+ * The waiter is parked on the resource until a cancel. Before it runs again
+ * the cancel is raised AND the owner releases, which transfers the resource
+ * to it. The waiter now owns the resource whether it wants it or not, so the
+ * wait must report it: true, owning. Reporting the cancel instead would leave
+ * a thread that believes it gave up holding a resource nobody will release.
+ *
+ * It holds because the wait polls the resource after its disarm and before
+ * the cancel may end the wait, and that poll recognises ownership by id. So a
+ * transfer needs nothing handed back. One core, deterministic: the conductor
+ * outranks the waiter, so both wakes land before the waiter runs, and the
+ * witness opens the conductor's gate only once both have parked.
+ * ========================================================================= */
+TEST_F(MultiCoreTransfer_Test,
+       GivenATransferAndACancelBothLandOnAParkedWaiter_WhenItRuns_ThenItReturnsTrueOwningTheResource)
+{
+   constexpr int lifecycles = 3;
+
+   for (int rep = 0; rep < lifecycles; ++rep) {
+      SCOPED_TRACE("lifecycle " + std::to_string(rep));
+
+      kernel::initialise();
+
+      cyros::test::guarded_stack conductor_stack;
+      cyros::test::guarded_stack waiter_stack;
+      cyros::test::guarded_stack witness_stack;
+
+      struct state
+      {
+         TransferResource           r;
+         cancel_signal              cancel;
+         cancel_signal              gate;
+         std::atomic<bool>          conductor_owned{false};
+         std::atomic<std::uint32_t> waiter_id{0};
+         std::atomic<int>           result{-1};
+      } s;
+
+      thread conductor(
+         [&s]{
+            s.conductor_owned.store(s.r.try_acquire(), std::memory_order_release);
+            this_thread::wait_on(s.gate);
+            s.cancel.raise();
+            s.r.release();
+         },
+         conductor_stack, thread::priority(0), core1);
+
+      thread waiter(
+         [&s]{
+            s.waiter_id.store(this_thread::id(), std::memory_order_release);
+            s.result.store(this_thread::wait_on(s.r, s.cancel) ? 1 : 0, std::memory_order_release);
+         },
+         waiter_stack, thread::priority(1), core1);
+
+      // Runs only once the conductor and the waiter have both parked.
+      thread witness([&s]{ s.gate.raise(); }, witness_stack, thread::priority(2), core1);
+
+      kernel::start();
+
+      ASSERT_TRUE(s.conductor_owned.load()) << "the conductor did not take the resource first";
+      EXPECT_EQ(s.r.owner.load(), s.waiter_id.load()) << "the release did not transfer to the parked waiter";
+      EXPECT_EQ(s.result.load(), 1) << "the waiter owns the resource but its wait reported the cancel";
       kernel::finalise();
    }
 }

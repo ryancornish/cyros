@@ -17,9 +17,6 @@ namespace cyros::config
 /** The TM4C123 has one core. */
 inline constexpr std::size_t cores = 1;
 
-/** Wait nodes per thread. No demo thread waits on more than one thing. */
-inline constexpr std::size_t max_wait_nodes = 8;
-
 /** Priorities 1 to 7 are the demo's threads and 15 is the idle thread. */
 inline constexpr std::size_t max_priorities = 16;
 

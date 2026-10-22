@@ -32,18 +32,11 @@ std::uint32_t event_flags::try_wait_until(std::uint32_t mask, time::time_point t
    chrono::alarm deadline;
    deadline.arm_at(tp);
 
-   // The flags are polled before the alarm on every pass, so bits that are
-   // set win over a deadline that fired in the same pass.
-   std::size_t index = 0;
-   std::uint32_t matched = 0;
-   {
-      waiter self(*this, request{mask, match, exit});
-      index = this_thread::wait_on_any(static_cast<waitable&>(*this), deadline);
-      matched = self.req.matched;
-   }
-   deadline.disarm();
-
-   return index == 0 ? matched : 0;
+   // The flags are polled before the deadline on every pass, so bits that are
+   // set win over a deadline that passed in the same pass. The record goes
+   // before the alarm, which disarms itself on the way out.
+   waiter self(*this, request{mask, match, exit});
+   return this_thread::wait_on(static_cast<waitable&>(*this), deadline) ? self.req.matched : 0;
 }
 
 std::uint32_t event_flags::try_wait_for(std::uint32_t mask, time::duration d,

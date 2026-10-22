@@ -22,11 +22,6 @@ inline constexpr std::size_t cores = 4;
 /**
  * @brief TODO
  */
-inline constexpr std::size_t max_wait_nodes = 8;
-
-/**
- * @brief TODO
- */
 inline constexpr std::size_t max_priorities = 31;
 
 /**

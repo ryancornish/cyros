@@ -253,7 +253,7 @@ struct thread_control_block
     * than per wait because a thread is in one wait at a time, and it is what
     * lets a record reach the kernel's poll without a second way to wait.
     * Owned by the thread itself: set and cleared only by waiter_record's
-    * constructor and destructor, read only by this thread's own wait_on_any.
+    * constructor and destructor, read only by this thread's own wait.
     *
     * Placed here on purpose: it fills the hole before the aligned port context
     * on both targets (16 bytes on x86-64, 4 on the M33), so it costs no size.

@@ -7,8 +7,8 @@
  *
  * Subject / Trusts / Proves
  * -------------------------
- * Subject: the block and wake path every waitable shares (wait_on_any, the arm
- *          guard, wake_one), measured through the semaphore.
+ * Subject: the block and wake path every waitable shares (wait_on, its arm
+ *          and disarm, wake_one), measured through the semaphore.
  * Trusts:  layers 0 to 5, and the semaphore's counting (test_sync_semaphore).
  * Proves:  that every hand-off completed, and REPORTS what each costs, so a
  *          change to the shared wait path can be priced for the waitables that

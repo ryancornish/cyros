@@ -11,13 +11,13 @@
 #include <cyros/kernel/attribute.hpp>
 
 #include <cstdint>
-#include <functional>
 #include <span>
 
 namespace cyros
 {
 
-using waitable_ref = std::reference_wrapper<class waitable>;
+class waitable;
+class cancel_signal;
 
 /**
  * @brief Core affinity mask
@@ -197,23 +197,22 @@ namespace this_thread
 
 CYROS_PUBLIC void yield();
 
-[[nodiscard]] CYROS_PUBLIC std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept;
-
-template<typename... Waitables>
-[[nodiscard]] std::size_t wait_on_any(Waitables&... waitables)
-{
-   static_assert(sizeof...(Waitables) > 0);
-   static_assert((std::is_base_of_v<waitable, std::remove_cv_t<Waitables>> && ...));
-   std::array<waitable_ref, sizeof...(Waitables)> inline_array{ std::ref(waitables)... };
-   return wait_on_any(std::span<waitable_ref>{inline_array});
-}
-
 /**
- * @brief Block until @p w is satisfied: wait_on_any of one waitable, by a path
- *        of its own that pays nothing for the group (no node vector, no loops
- *        over sources, no renounce sweep).
+ * @brief Block until @p w is satisfied.
  */
 CYROS_PUBLIC void wait_on(waitable& w) noexcept;
+
+/**
+ * @brief Block until @p w is satisfied, or until @p cancel is raised.
+ *
+ * @return true when @p w satisfied the wait, false when @p cancel ended it.
+ *         @p w is polled first on every pass, so it wins when both hold, and
+ *         a wake of @p w that chose this thread is never lost to the cancel.
+ *
+ * A timed wait is this with a chrono::alarm, which is a cancel_signal raised
+ * by a timer.
+ */
+[[nodiscard]] CYROS_PUBLIC bool wait_on(waitable& w, cancel_signal& cancel) noexcept;
 
 
 }  // namespace this_thread

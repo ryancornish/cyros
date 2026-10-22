@@ -20,10 +20,9 @@
  *     thread). No yield is "lost"; no wake is dropped.
  *
  * A wait_node has exactly one 'next' pointer, so it cannot be in two intrusive
- * lists at once, which is why waiting on several sources needs one node per
- * source. The nodes live in a wait_node_vector on the blocking thread's own
- * stack, so there is no heap and no pool. Every wait goes through wait_on_any,
- * including a wait on a single source.
+ * lists at once. A wait on w with a cancel_signal therefore uses two, one per
+ * queue. Both live on the blocking thread's own stack, so there is no heap
+ * and no pool. Every wait goes through wait_engine::run, at the bottom.
  */
 
 #include <cyros/kernel/waitable.hpp>
@@ -34,7 +33,6 @@
 #include "port_critical.hpp"
 #include "base_mutex_access.hpp"
 #include "scheduler.hpp"
-#include "waitable_utilities.hpp"
 #include "threading_subsystem.hpp"
 
 #include <algorithm>
@@ -223,7 +221,7 @@ CYROS_HOT void wait_queue::arm(wait_node& node, inheritance_cache* pi) noexcept
  * A node leaves a queue two ways: its owner disarms it, or a wake takes it
  * (every wake unlinks the node it chooses). So when the owner disarms each
  * node exactly once per arm, false means a wake chose that waiter.
- * waitable_arm_guard relies on exactly that, see the note there.
+ * wait_engine relies on exactly that, see the note there.
  *
  * Leaving a queue can only LOWER a holder's urgency, and a de-boost needs no
  * prompt because urgency is folded at the point of use, so nothing here
@@ -420,8 +418,8 @@ void waitable::wake_all(reschedule_policy policy) noexcept
 
 void waitable::wake_all_where(std::function_ref<bool(waiter_record const*)> wants, reschedule_policy policy) noexcept
 {
-   // The record each waiter's poll gets, bound by identity as wait_on_any
-   // binds it. A queued waiter is inside its wait, so the record it installed
+   // The record each waiter's poll gets, bound by identity as a wait binds
+   // it. A queued waiter is inside its wait, so the record it installed
    // before arming is still there: it comes off only after the last disarm,
    // and a disarm takes the lock this walk holds.
    queue.wake_all_where(
@@ -437,9 +435,26 @@ bool waitable::wake_one_and_transfer(transfer_fn transfer, reschedule_policy pol
    return queue.wake_one_and_transfer(transfer, policy);
 }
 
-void waitable::renounce_if_assigned(thread::id) noexcept
+void waitable::anchor() noexcept
 {
-   // Nothing to hand back: an ownerless waitable assigns nobody anything.
+   // The key function, see its declaration.
+}
+
+/* ============================================================================
+ * cancel_signal
+ * ========================================================================= */
+
+void cancel_signal::raise() noexcept
+{
+   // The flag first, then the wake: a waiter that arms after the store polls
+   // it, and one armed before is woken. Both ISR-legal.
+   raised_flag.store(true, std::memory_order_release);
+   wake_all();
+}
+
+bool cancel_signal::try_satisfy(waiter_record*) noexcept
+{
+   return raised();
 }
 
 /* ============================================================================
@@ -546,145 +561,136 @@ void request_repick(thread_control_block& tcb)
    }
 }
 
-/* The caller side of the two-phase block this file opens by describing. One
- * loop for every wait, a template over its spans' extent: a wait on one
- * waitable instantiates it with extent 1, which unrolls every loop below and
- * leaves no renounce sweep, and a group wait with a dynamic extent. Friended
- * by waitable, wait_queue and waiter_record, and it drives wait_node_vector
- * and waitable_arm_guard. */
+/* The caller side of the two-phase block this file opens by describing: one
+ * loop for every wait, on w alone or on w until a cancel signal is raised, a
+ * template over which, so a wait on w alone compiles with one node and no
+ * cancel branch. Friended by waitable, wait_queue and waiter_record.
+ *
+ * A wake takes the head node whatever its owner is doing, so a node still
+ * queued after its owner stopped needing it can have a wake spent on it that
+ * was meant for a waiter queued behind. The loop loses no wake by two rules,
+ * each one line below:
+ *
+ *  1. w is polled after its node is off the queue and before the cancel may
+ *     end the wait, so a wake of w that chose us is used, or met a barger
+ *     first. That is also what makes a transfer to us count: the poll
+ *     recognises the ownership, so nothing has to hand it back.
+ *  2. A wake of w that took our node after a poll had already satisfied us
+ *     is passed on, unless a waiter_record bound to w owns its wakes.
+ *
+ * The cancel signal needs neither, because it is a level: a wake that lands
+ * on its node is owed to no one.
+ *
+ * LOAD-BEARING: "the disarm found the node gone" means exactly "a wake chose
+ * us", which waiter_record::chosen() and rule 2 both rest on, while two facts
+ * hold:
+ *
+ *  a. A node leaves its queue by exactly one of two paths per pass: its owner
+ *     disarms it, here, or a wake takes it (wait_queue's wake_one, wake_all,
+ *     wake_all_where and wake_one_and_commit, the only unlinks besides
+ *     disarm).
+ *  b. Each pass disarms each node exactly once, here, after its last armed
+ *     poll.
+ *
+ * Break either and chosen() lies, and a condition variable either loses a
+ * notify (a missed mark: its waiter sleeps forever) or invents one (a false
+ * mark: it returns as if notified, and a timed wait that timed out reports
+ * no_timeout). Disarming a node twice is exactly the false mark. Adding any
+ * other way to unlink a node is exactly the missed mark.
+ */
 class wait_engine
 {
    using wait_node = wait_queue::wait_node;
 
 public:
-   template<std::size_t Extent>
-   static std::size_t run(std::span<waitable_ref, Extent> waitables,
-                          std::span<wait_node, Extent> nodes,
-                          thread_control_block& tcb) noexcept;
-
-   static std::size_t run_any(std::span<waitable_ref> waitables) noexcept
-   {
-      CYROS_REQUIRE(!waitables.empty()); // Nothing to wait on
-      CYROS_REQUIRE_OP(waitables.size(), <=, config::max_wait_nodes); // More than config::max_wait_nodes
-
-      auto& tcb = scheduler_for_this_core().get_current_thread();
-
-      // Indeterminate, so GCC does not zero it first. Every wait would otherwise
-      // pay a memset of all config::max_wait_nodes slots (68 bytes at 8) to
-      // protect bytes nothing reads: the vector only ever touches the nodes it
-      // constructs, which are exactly the ones in use.
-      wait_node_vector nodes [[indeterminate]] (waitables.size(), tcb);
-      return run(waitables, nodes.nodes(), tcb);
-   }
-
-   static void run_one(waitable& w) noexcept
-   {
-      auto& tcb = scheduler_for_this_core().get_current_thread();
-      std::array<waitable_ref, 1> one{ std::ref(w) };
-      wait_node node{ .owner = &tcb, .next = nullptr };
-      (void)run(std::span<waitable_ref, 1>{one}, std::span<wait_node, 1>{&node, 1}, tcb);
-   }
+   template<bool Cancellable>
+   static bool run(waitable& w, cancel_signal* cancel) noexcept;
 };
 
-template<std::size_t Extent>
-std::size_t wait_engine::run(std::span<waitable_ref, Extent> waitables,
-                             std::span<wait_node, Extent> nodes,
-                             thread_control_block& tcb) noexcept
+template<bool Cancellable>
+bool wait_engine::run(waitable& w, cancel_signal* const cancel) noexcept
 {
-   // The caller's record, if it installed one, goes to the one waitable it
-   // names and to no other source. Bound by identity, not by position.
-   waiter_record* const record = tcb.wait_record;
-   auto const record_for = [record](waitable const& w) noexcept -> waiter_record* {
-      return (record != nullptr && record->source == &w) ? record : nullptr;
-   };
+   auto& tcb = scheduler_for_this_core().get_current_thread();
 
-   // Lowest index wins on ties.
-   auto const first_satisfied = [&]() noexcept -> std::optional<std::size_t> {
-      for (std::size_t i = 0; waitable& waitable : waitables) {
-         if (waitable.try_satisfy(record_for(waitable))) {
-            return i;
-         }
-         ++i;
-      }
-      return std::nullopt;
-   };
+   // The caller's record, if it installed one naming w, goes to w's polls,
+   // and a record naming anything else reaches none. Bound by identity.
+   waiter_record* const record =
+      (tcb.wait_record != nullptr && tcb.wait_record->source == &w) ? tcb.wait_record : nullptr;
 
-   std::optional<std::size_t> chosen;
-   while (!chosen) {
+   wait_node node{ .owner = &tcb, .next = nullptr };
+   [[maybe_unused]] wait_node cancel_node{ .owner = &tcb, .next = nullptr };
+
+   while (true) {
+      // Armed before the first poll, with a full fence between, so a release
+      // that tests for waiters without the lock (waitable::may_have_waiters)
+      // either finds us armed or is found by the poll. A wake from here on
+      // readies us, and we are no longer 'prepared' to block.
       tcb.disposition = thread_disposition::prepared;
+      w.queue.arm(node);
+      if constexpr (Cancellable) cancel->queue.arm(cancel_node);
+      wait_queue::peek_fence();
 
-      {
-         // All waitable wakes are serialised on the arm_guard.
-         // If a wake fires BEFORE the arm_guard:
-         // - Thread is not readied because we are not registered.
-         waitable_arm_guard<Extent> arm_guard(waitables, nodes, record);
-         // If a wake fires AFTER the arm_guard:
-         // - Thread is readied and we are no longer 'prepared' to block.
+      bool const satisfied = w.try_satisfy(record);
+      bool cancelled = false;
+      if constexpr (Cancellable) cancelled = !satisfied && cancel->raised();
 
-         chosen = first_satisfied();
-         if (chosen) {
-            tcb.disposition = thread_disposition::none;
+      if (satisfied || cancelled) {
+         tcb.disposition = thread_disposition::none;
+      } else {
+         // Park, unless a wake beat us to it.
+         commit_to_block(tcb);
+      }
 
-            // Leave the queue we just acquired from IMMEDIATELY, rather than
-            // at the guard below. An owner still armed in its own resource's
-            // queue is a cycle in the wait-for graph: the fold reads that
-            // queue, finds the owner listed as a bridge, and recurses back
-            // into the owner until the depth budget runs out and answers 0.
-            // That is not the harmless over-boost it looks like. A thread
-            // folding to 0 can never be beaten by set_thread_ready's
-            // urgency < current comparison, so its core stops raising
-            // preemption hints entirely while the window is open.
-            //
-            // Safe to do early: we own it, so no release can transfer it to
-            // us in the meantime, which is the only thing the other nodes
-            // have to stay armed for.
-            arm_guard.leave(*chosen);
-         } else {
-            // Nothing was satisfied. Park, unless a wake beat us to it.
-            commit_to_block(tcb);
+      bool const chosen = !w.queue.disarm(node);
+      if constexpr (Cancellable) (void)cancel->queue.disarm(cancel_node);
+      if (chosen && record != nullptr) {
+         record->chosen_by_wake = true;
+      }
+
+      if (satisfied) {
+         if (chosen && record == nullptr) {
+            // Rule 2. The wake that took our node may have been meant for a
+            // waiter queued behind us, which would otherwise stay parked
+            // beside what that wake was for. At worst this wakes it for
+            // nothing, and its loop parks it again. A record bound to w is
+            // left out because it owns the wake instead: it was marked
+            // chosen above, as a condition variable learns of its notify,
+            // and passing the wake on as well would deliver it twice.
+            w.queue.wake_one(reschedule_policy::automatic);
          }
-      } // arm_guard: disarm every node not already left, noting which a wake took
+         return true;
+      }
 
-      if (!chosen) {
-         // Readied, by a wake or by losing the commit to one. Poll before
-         // arming again: a wake usually leaves what it was for, and taking it
-         // here saves arming and disarming every queue a second time. An
-         // unarmed poll loses nothing, since if every poll fails the next pass
-         // arms and polls again before it may park. And it is safe for every
-         // waitable, because past a wait's first poll a poll may only take what
-         // satisfies it (try_satisfy's contract). The one poll that does more,
-         // the condition variable's release of its mutex, is a first poll, and
-         // the first pass always polls armed.
-         chosen = first_satisfied();
+      // Rule 1: w first, unarmed. A wake usually leaves what it was for, and
+      // taking it here saves arming again. An unarmed
+      // poll loses nothing, since if it fails the next pass arms and polls
+      // again before it may park. And it is safe for every waitable, because
+      // past a wait's first poll a poll may only take what satisfies it
+      // (try_satisfy's contract). The one poll that does more, the condition
+      // variable's release of its mutex, is a first poll, and the first pass
+      // always polls armed.
+      if (w.try_satisfy(record)) {
+         return true;
+      }
+      if constexpr (Cancellable) {
+         if (cancel->raised()) {
+            return false;
+         }
       }
    }
-
-   // The sweep must run here, AFTER the disarm above: while any node of ours
-   // was still armed, a racing release could commit a transfer to us. With
-   // every node off every queue no further transfer can choose us, so the set
-   // of in-flight assignments is frozen and the ones we are not returning are
-   // handed back. The contract this enforces: on return the caller owns
-   // exactly waitables[chosen], plus whatever it already owned before the call.
-   for (std::size_t i = 0; waitable& waitable : waitables) {
-      if (i != chosen) {
-         waitable.renounce_if_assigned(tcb.id);
-      }
-      ++i;
-   }
-   return *chosen;
 }
 
 namespace this_thread
 {
 
-[[nodiscard]] CYROS_HOT std::size_t wait_on_any(std::span<waitable_ref> waitables) noexcept
-{
-   return wait_engine::run_any(waitables);
-}
-
 CYROS_HOT void wait_on(waitable& w) noexcept
 {
-   wait_engine::run_one(w);
+   (void)wait_engine::run<false>(w, nullptr);
+}
+
+[[nodiscard]] CYROS_HOT bool wait_on(waitable& w, cancel_signal& cancel) noexcept
+{
+   return wait_engine::run<true>(w, &cancel);
 }
 
 } // namespace this_thread
