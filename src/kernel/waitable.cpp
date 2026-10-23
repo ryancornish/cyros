@@ -303,6 +303,43 @@ void wait_queue::wake_all(reschedule_policy policy, inheritance_cache* pi) noexc
    cyros_port_preempt_enable(token);
 }
 
+void wait_queue::raise_all(std::atomic<bool>& flag, reschedule_policy policy) noexcept
+{
+   // ONE hold of the lock, with the readies inside it, where every other wake
+   // readies outside. A waiter returns from its wait only after its disarm,
+   // which takes this lock, so neither a waiter woken here nor one whose poll
+   // saw the flag can return, and destroy what owns this queue, until this is
+   // done with it. wake_all re-takes the lock after each wake, and a joiner
+   // could free the stack a termination lives in between two of them.
+   //
+   // The flag goes inside for the same reason: stored before the lock, a
+   // waiter arriving in between could poll it, disarm and return before the
+   // lock was ever taken.
+   schedule_hint aggregate_hint = schedule_hint::unwarranted;
+
+   auto token = cyros_port_preempt_disable();
+   {
+      spinlock_guard guard(lock);
+
+      flag.store(true, std::memory_order_release);
+
+      wait_node* node = head.load(std::memory_order_relaxed);
+      head.store(nullptr, std::memory_order_relaxed);
+      while (node != nullptr) {
+         wait_node* const next = node->next;
+         node->next = nullptr;
+         if (global_ready_thread(*node->owner) == schedule_hint::warranted) {
+            aggregate_hint = schedule_hint::warranted;
+         }
+         node = next;
+      }
+   }
+
+   apply_reschedule_policy(policy, aggregate_hint);
+
+   cyros_port_preempt_enable(token);
+}
+
 void wait_queue::wake_all_where(pick_fn pick, reschedule_policy policy) noexcept
 {
    // wake_all's batch, preemption held off throughout, except that a waiter
@@ -444,12 +481,11 @@ void waitable::anchor() noexcept
  * cancel_signal
  * ========================================================================= */
 
-void cancel_signal::raise() noexcept
+void cancel_signal::raise(reschedule_policy const policy) noexcept
 {
-   // The flag first, then the wake: a waiter that arms after the store polls
-   // it, and one armed before is woken. Both ISR-legal.
-   raised_flag.store(true, std::memory_order_release);
-   wake_all();
+   // The flag and the wakes together: a waiter that arms after them polls the
+   // flag, and one armed before is woken. raise_all says why together.
+   queue.raise_all(raised_flag, policy);
 }
 
 bool cancel_signal::try_satisfy(waiter_record*) noexcept

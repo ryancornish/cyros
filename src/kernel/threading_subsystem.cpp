@@ -80,6 +80,21 @@ void thread::join() noexcept
    this_thread::wait_on(tcb->termination);
 }
 
+CYROS_HOT void thread::resume() noexcept
+{
+   CYROS_REQUIRE(tcb != nullptr); // An empty handle, moved from or never assigned
+
+   // The token first, then the wake, as a waitable's release changes its state
+   // before it wakes. this_thread::suspend says why that order is enough.
+   tcb->resume_token.store(true, std::memory_order_release);
+
+   schedule_hint hint = global_ready_thread(*tcb);
+
+   if (hint == schedule_hint::warranted) {
+      cyros_port_pend_reschedule();
+   }
+}
+
 
 thread_control_block::thread_control_block(thread::priority priority,
                                            core_affinity affinity,
@@ -156,17 +171,22 @@ namespace this_thread
 
 [[nodiscard]] thread::id id()
 {
-   return scheduler_for_this_core().current_thread_id();
+   auto const& scheduler = scheduler_for_this_core();
+
+   return scheduler.current_thread_id();
 }
 
 [[nodiscard]] thread::priority priority()
 {
-   return scheduler_for_this_core().current_thread_urgency();
+   auto const& scheduler = scheduler_for_this_core();
+
+   return scheduler.current_thread_urgency();
 }
 
 [[noreturn]] void thread_exit()
 {
-   auto& tcb = scheduler_for_this_core().get_current_thread();
+   auto const& scheduler = scheduler_for_this_core();
+   auto& tcb = scheduler.get_current_thread();
 
    // Flag the thread's intent to terminate, the arbiter will handle the state
    // transition and teardown on next reschedule (requested immediately).
@@ -180,6 +200,34 @@ namespace this_thread
    cyros_port_thread_yield();
 
    CYROS_PORT_UNREACHABLE(); // Bug: The arbiter declined to retire this thread!
+}
+
+CYROS_HOT void suspend() noexcept
+{
+   auto const& scheduler = scheduler_for_this_core();
+   auto& tcb = scheduler.get_current_thread();
+
+   // wait_on's two-phase block with nothing to arm, because a resume names its
+   // thread and so has no queue to search. Prepared, then look: a resume this
+   // look misses has its wake still to come, and that wake lands here after
+   // its token is visible. From this core it revokes the commit or readies the
+   // park. From another it is drained by this core's scheduler, whose take of
+   // the intake acquires the resume's token store.
+   //
+   // A wake that brings no token is another wait's, late (a remote wake of an
+   // earlier wait, drained only now), so the thread looks again and parks.
+   while (true) {
+      tcb.disposition = thread_disposition::prepared;
+      if (tcb.resume_token.load(std::memory_order_acquire)) {
+         // A plain store is enough to take it: a resume landing between the
+         // load and this store finds the token already up, and merges with
+         // the one being taken, as two resumes before a suspend do.
+         tcb.resume_token.store(false, std::memory_order_relaxed);
+         tcb.disposition = thread_disposition::none;
+         return;
+      }
+      commit_to_block(tcb);
+   }
 }
 
 CYROS_HOT void yield()

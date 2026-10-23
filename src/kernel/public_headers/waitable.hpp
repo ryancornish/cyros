@@ -188,6 +188,11 @@ class CYROS_PUBLIC wait_queue
    /// about each queued waiter's thread. Waitable queues only, so no cache.
    void wake_all_where(pick_fn pick, reschedule_policy policy) noexcept;
 
+   /// Raise @p flag and wake every waiter in ONE hold of the lock, then touch
+   /// nothing of the queue again: cancel_signal::raise, whose waiter may
+   /// destroy the signal as soon as its wait ends.
+   void raise_all(std::atomic<bool>& flag, reschedule_policy policy) noexcept;
+
    [[nodiscard]] bool empty() const noexcept
    {
       // Advisory: not under lock. Fine for "should I bother waking" hints, and
@@ -285,6 +290,7 @@ class CYROS_PUBLIC wait_queue
    friend class base_mutex;
    friend class pi_wait_queue;
    friend class wait_engine;
+   friend class cancel_signal;
 };
 
 /**
@@ -544,6 +550,7 @@ private:
    wait_queue queue;
 
    friend class wait_engine;
+   friend class cancel_signal;
 };
 
 
@@ -566,8 +573,14 @@ class CYROS_PUBLIC cancel_signal : public waitable
 public:
    cancel_signal() noexcept = default;
 
-   /// Raise it, then wake every waiter. ISR-safe.
-   void raise() noexcept;
+   /// Raise it and wake every waiter. ISR-safe.
+   ///
+   /// Nothing of the signal is touched once a waiter can return, so a waiter
+   /// may destroy it as soon as its wait ends: a joiner may free the stack its
+   /// thread's termination lives in. Having only read raised() true is not
+   /// enough to destroy it: the raise may still be waking.
+   /// @param policy As for wake_all.
+   void raise(reschedule_policy policy = reschedule_policy::automatic) noexcept;
 
    /// Lower it again. A wait that polls it afterwards parks.
    void reset() noexcept { raised_flag.store(false, std::memory_order_relaxed); }

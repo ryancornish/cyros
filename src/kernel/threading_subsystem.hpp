@@ -24,27 +24,6 @@ class base_mutex;
 
 void thread_launcher(void* tcb_ptr);
 
-class thread_termination final : public waitable
-{
-   std::atomic<bool> terminated{false};
-
-protected:
-   bool try_satisfy(waiter_record*) noexcept override
-   {
-      return terminated.load(std::memory_order_acquire);
-   }
-
-public:
-   void terminate()
-   {
-      bool expected = false;
-      bool const first = terminated.compare_exchange_strong(expected, true, std::memory_order_release);
-      CYROS_ASSERT(first); // Terminated twice
-
-      wake_all(reschedule_policy::never);
-   }
-};
-
 enum class thread_state : std::uint8_t
 {
    created,
@@ -197,6 +176,11 @@ struct thread_control_block
     */
    std::atomic<std::uint8_t> pending_requests{0};
 
+   /* A thread::resume() not yet taken by this thread's this_thread::suspend().
+    * Set from any core or an ISR, taken only by the thread itself. One, not
+    * counted. In the hole after pending_requests, so it costs no size. */
+   std::atomic<bool> resume_token{false};
+
    [[nodiscard]] static constexpr std::uint8_t request_bit(thread_request r) noexcept
    {
       return static_cast<std::uint8_t>(1u << static_cast<std::uint8_t>(r));
@@ -246,8 +230,8 @@ struct thread_control_block
    std::span<std::byte> stack;
    thread::entry_fn entry;
 
-   // Thread-joining waitable
-   thread_termination termination;
+   // Raised once the thread has finished, which is what join waits on
+   cancel_signal termination;
 
    /* The waiter_record this thread has installed, or null. Per thread rather
     * than per wait because a thread is in one wait at a time, and it is what

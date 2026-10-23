@@ -589,7 +589,7 @@ TEST_F(MultiCoreWaitables_Test,
  *
  * thread::join() is implemented via wait_on(termination), so this is a
  * waitable test in disguise. With the target on core0 and the joiner on
- * core1, the target's thread_termination::terminate() (running on core0)
+ * core1, the raise of the target's termination signal (running on core0)
  * must wake the joiner parked on core1.
  * ========================================================================= */
 TEST_F(MultiCoreWaitables_Test,

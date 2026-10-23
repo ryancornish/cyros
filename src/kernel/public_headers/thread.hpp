@@ -113,6 +113,20 @@ public:
     */
    void join() noexcept;
 
+   /**
+    * @brief Let this thread's this_thread::suspend() return: the one it is
+    *        parked in, or else its next.
+    *
+    * A resume is kept until the thread takes it, so one that comes before
+    * the suspend is never lost. One, not counted: two resumes before a
+    * suspend release that one suspend only.
+    *
+    * ISR-safe, and callable from any core. Resuming a thread that is waiting
+    * on something else costs that wait one extra poll and keeps the resume
+    * for its next suspend.
+    */
+   void resume() noexcept;
+
 private:
    struct thread_control_block* tcb{nullptr};
 
@@ -196,6 +210,15 @@ namespace this_thread
 [[noreturn]] CYROS_PUBLIC void thread_exit();
 
 CYROS_PUBLIC void yield();
+
+/**
+ * @brief Park the calling thread until its thread::resume().
+ *
+ * Returns at once, taking the resume, if one came first. Only a thread can
+ * suspend itself: there is no call that parks another, so every block is one
+ * the blocking thread chose, at a point where it knows what it holds.
+ */
+CYROS_PUBLIC void suspend() noexcept;
 
 /**
  * @brief Block until @p w is satisfied.

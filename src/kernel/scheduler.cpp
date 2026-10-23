@@ -168,7 +168,7 @@ void scheduler::set_thread_terminated(thread_control_block& tcb)
 
    tcb.state = thread_state::terminated;
 
-   trace::thread_terminated(tcb); // Before terminate(), after which the TCB may be gone
+   trace::thread_terminated(tcb); // Before the raise, after which the TCB may be gone
 
    thread_registry::unregister_thread(tcb);
 
@@ -179,7 +179,12 @@ void scheduler::set_thread_terminated(thread_control_block& tcb)
    // access it afterwards. Any joiners on this can destroy the
    // outer thread handle if desired. This releases the owner
    // from the promise that the stack outlives this thread.
-   tcb.termination.terminate();
+   //
+   // Never pend: this runs inside the reschedule, before its pick, so the
+   // pick that follows already sees every joiner the raise readied. A pend
+   // would buy a second reschedule after the switch, which would send the
+   // thread just picked to the back of its level.
+   tcb.termination.raise(reschedule_policy::never);
 }
 
 std::uint8_t scheduler::current_thread_urgency() const

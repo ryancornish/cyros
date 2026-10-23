@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_singlecore_suspend"
+layer = 4
+source = "test_singlecore_suspend.cpp"
+config = "test_singlecore_suspend_config.hpp"
+
+[link]
+# Uses its own main() — link gtest but not gtest_main.
+system_libraries = ["boost_context", "gtest"]

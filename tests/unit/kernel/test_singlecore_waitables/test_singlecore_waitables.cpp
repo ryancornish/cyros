@@ -38,7 +38,7 @@ class SingleCoreWaitables_Test : public ::testing::Test
  *
  * Backed by a plain atomic flag the test can flip. wake_one/wake_all are
  * exposed via thin wrappers so tests can drive them directly. The flag-based
- * model mirrors how real primitives work (e.g. thread_termination's flag).
+ * model mirrors how real primitives work (e.g. cancel_signal's flag).
  */
 class TestWaitable final : public waitable
 {
