@@ -95,13 +95,15 @@
 #define CYROS_SPARC_CORE_DEPTH       8
 #define CYROS_SPARC_CORE_STRIDE_LOG2 4
 
-/* The software traps (tt 0x80 + n): GCC's own, and the one cyros takes for the
- * yield from the range the SPARC ABI leaves to the operating system. */
+/* The software traps (tt 0x80 + n): GCC's own, and the two cyros takes from
+ * the range the SPARC ABI leaves to the operating system, for the yield and
+ * for cyros_port_yield_to. */
 #define CYROS_SPARC_TA_HALT          0   /* ta 0 with traps off: QEMU's shutdown */
 #define CYROS_SPARC_TA_BREAKPOINT    1
 #define CYROS_SPARC_TA_FLUSH_WINDOWS 3   /* GCC: __builtin_flush_register_windows */
 #define CYROS_SPARC_TA_TRAP          5   /* GCC: __builtin_trap                   */
 #define CYROS_SPARC_TA_YIELD         9
+#define CYROS_SPARC_TA_YIELD_TO      10
 
 namespace cyros::port::sparcv8
 {
@@ -163,6 +165,7 @@ inline constexpr std::uint32_t tt_interrupt_first = 0x11u;
 inline constexpr std::uint32_t tt_interrupt_last  = 0x1Fu;
 inline constexpr std::uint32_t tt_software        = 0x80u;
 inline constexpr std::uint32_t tt_yield           = tt_software + CYROS_SPARC_TA_YIELD;
+inline constexpr std::uint32_t tt_yield_to        = tt_software + CYROS_SPARC_TA_YIELD_TO;
 
 inline std::uint32_t read_psr() noexcept
 {

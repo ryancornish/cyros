@@ -126,7 +126,7 @@ CYROS_HOT scheduler& scheduler_for_this_core()
    }
 }
 
-CYROS_HOT schedule_hint global_ready_thread(thread_control_block& tcb)
+CYROS_HOT schedule_hint global_ready_thread(thread_control_block& tcb, reschedule_policy const policy)
 {
    // Fast path: if the thread is already terminated (or terminating). Can happen with stale remote-ready-requests
    // A thread that terminates AFTER this check is handled by the scheduler-level guard when the request is drained.
@@ -146,7 +146,7 @@ CYROS_HOT schedule_hint global_ready_thread(thread_control_block& tcb)
       }
    }
 
-   // Reset local current thread's disposition in case we were committed to block
+   // Reset local current thread's disposition in case it was prepared to block
    // on a waitable that's owner has just handed to us
    tcb.disposition = thread_disposition::none;
 
@@ -156,7 +156,7 @@ CYROS_HOT schedule_hint global_ready_thread(thread_control_block& tcb)
       return schedule_hint::unwarranted;
    }
 
-   return scheduler.set_thread_ready(tcb);
+   return scheduler.set_thread_ready(tcb, policy);
 }
 
 void thread_launcher(void* tcb_ptr)
@@ -189,9 +189,11 @@ void idle_task()
          continue;
       }
 
+      // Returns once an interrupt has woken the core. Whatever it readied has
+      // been switched to by then, on the handler's road. A port that has to
+      // run its own scheduling loop for that hands the core back to it inside
+      // (linux_coop's), so the loop here never yields for it.
       cyros_port_idle();
-
-      this_thread::yield();
    }
 }
 
@@ -222,7 +224,7 @@ void register_thread(thread_control_block& tcb)
       return;
    }
 
-   if (global_ready_thread(tcb) == schedule_hint::warranted) {
+   if (global_ready_thread(tcb, reschedule_policy::automatic) == schedule_hint::warranted) {
       // Weak request: Registering the thread is not itself blocking, it is
       // only flagging that a higher-priority thread became ready.
       cyros_port_pend_reschedule();

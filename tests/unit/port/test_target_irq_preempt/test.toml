@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_target_irq_preempt"
+layer = 6
+kind = "unit"
+source = "test_target_irq_preempt.cpp"
+config = "test_target_irq_preempt_config.hpp"
+
+# Runs on bare metal, on the board the toolchain names: it uses the RP2350's
+# TIMER0 or the RP2040's TIMER, as test_target_device_irq does, so the QEMU
+# machines have nothing to run it on.
+hosted = false
+
+[components]
+port = ["rp2350_m33", "rp2350_hazard3", "rp2040"]
+time_driver = "periodic"
+features = ["sync"]
+
+[link]
+system_libraries = []

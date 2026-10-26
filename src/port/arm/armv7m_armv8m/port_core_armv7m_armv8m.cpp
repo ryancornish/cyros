@@ -33,6 +33,25 @@
  * most of the contract.
  *
  *
+ * The thread's road, carried out by PendSV
+ * ========================================
+ * Where the kernel has decided a switch in thread context (port_core.h, the
+ * thread's road), cyros_port_yield_to records it for this core as owed, pends
+ * PendSV and releases the kernel's mask. PendSV, taken at once, carries the
+ * switch out as cyros_port_switch would and returns, never calling the kernel. A
+ * switch made in Thread mode would not fit this architecture, because a
+ * thread an exception preempted can be resumed only by an exception return. So
+ * the switch stays in PendSV, and what goes is the kernel's reschedule inside
+ * it.
+ *
+ * Interrupts already waiting when the mask is released run first, while the
+ * kernel already counts the incoming thread as running. One that asks for a
+ * reschedule (cyros_port_pend_reschedule) finds the switch owed and marks it,
+ * and PendSV then carries out the switch and calls the kernel after it. That
+ * mark is the one software flag here, and it is not a pending flag, which
+ * PENDSVSET still is. It says only why PendSV was pended.
+ *
+ *
  * Masking: two hardware registers, not two counters
  * =================================================
  * The Linux preempt port derives a signal mask from two depth counters, because
@@ -141,6 +160,7 @@
 
 #include "cortex_m.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -153,15 +173,21 @@ namespace cortex_m = cyros::port::cortex_m;
 /**
  * @brief A suspended thread's port state.
  *
- * Only three words, because the registers themselves live on the thread's own
+ * Only four words, because the registers themselves live on the thread's own
  * stack: the hardware pushes r0-r3/r12/LR/PC/xPSR on exception entry and the
  * PendSV prologue pushes r4-r11 below them.
+ *
+ * `core` is the core the thread runs on, written each time a switch resumes
+ * it, so a running thread's context names its own core. Threads never
+ * migrate, so it never goes stale, and it saves cyros_port_yield_to asking
+ * the MCU layer which core this is, an out-of-line call on two cores.
  */
 struct cyros_port_context
 {
-   std::uint32_t sp;           /* PSP, pointing at the saved r4 slot */
-   std::uint32_t stack_limit;  /* the guard's bound (see the header) */
-   void*         tls;          /* saved thread TLS base              */
+   std::uint32_t sp;           /* PSP, pointing at the saved r4 slot       */
+   std::uint32_t stack_limit;  /* the guard's bound (see the header)       */
+   void*         tls;          /* saved thread TLS base                    */
+   std::uint32_t core;         /* its core, once a switch has resumed it   */
 };
 
 static_assert(sizeof(cyros_port_context) <= CYROS_PORT_CONTEXT_SIZE,
@@ -195,6 +221,28 @@ cyros_port_reschedule_t reschedule_handler = nullptr;
 void* current_tls[CYROS_PORT_CORE_COUNT] = {};
 
 /**
+ * @brief A switch the kernel decided on the thread's road, owed until PendSV.
+ *
+ * Written by cyros_port_yield_to and carried out by PendSV, which calls
+ * the kernel after it only when `reschedule` says something asked meanwhile
+ * (file comment). One per core, touched only by its own core: the thread
+ * writes it masked, and PendSV and the interrupts taken around it read it.
+ * The two that interrupts race are relaxed atomics, plain loads and stores on
+ * this architecture. `from` is written before `to` is published and read only
+ * once `to` is seen, with the mask's release between, which is a compiler
+ * barrier.
+ */
+struct owed_switch
+{
+   cyros_port_context*              from{nullptr};
+   std::atomic<cyros_port_context*> to{nullptr};       /* null: none owed       */
+   std::atomic<bool>                reschedule{false}; /* asked for while owed,
+                                                          cleared as it is served */
+};
+
+constinit owed_switch owed_switches[CYROS_PORT_CORE_COUNT] = {};
+
+/**
  * @brief Which core is executing, for indexing per-core port state.
  *
  * On a single-core target this is the constant 0, so the MMIO read disappears
@@ -215,6 +263,18 @@ inline std::uint32_t this_core() noexcept
       return 0u;
    } else {
       return cyros_port_get_core_id();
+   }
+}
+
+/* The core a RUNNING thread's context runs on, which is this one: what
+ * this_core() returns, read from the context instead (cyros_port_context). */
+inline std::uint32_t core_of(cyros_port_context const* running) noexcept
+{
+   if constexpr (CYROS_PORT_CORE_COUNT == 1) {
+      (void)running;
+      return 0u;
+   } else {
+      return running->core;
    }
 }
 
@@ -329,6 +389,8 @@ std::uint32_t device_irq_priority()
 void init_this_core()
 {
    current_tls[this_core()] = nullptr;
+   owed_switches[this_core()].to.store(nullptr, std::memory_order_relaxed);
+   owed_switches[this_core()].reschedule.store(false, std::memory_order_relaxed);
 
    /* Mask everything for the whole of bring-up. Nothing may preempt the kernel
     * between here and cyros_port_start_first, which is the moment the first
@@ -569,6 +631,7 @@ void cyros_port_context_init(cyros_port_context* context,
    context->sp          = reinterpret_cast<std::uint32_t>(sp);
    context->stack_limit = static_cast<std::uint32_t>(limit);
    context->tls         = nullptr;
+   context->core        = 0u;     /* set when a switch first resumes it */
 }
 
 void cyros_port_context_destroy(cyros_port_context* context)
@@ -582,6 +645,26 @@ void cyros_port_context_destroy(cyros_port_context* context)
    context->sp          = 0u;
    context->stack_limit = 0u;
    context->tls         = nullptr;
+   context->core        = 0u;
+}
+
+/* cyros_port_switch's work, in PendSV on CORE: which stack PSP holds, its guard
+ * and its TLS. Also how PendSV carries out an owed switch, whose two contexts
+ * the kernel has already vouched for. Inline into both, so the hot section's. */
+static inline void switch_stacks(std::uint32_t core, cyros_port_context* from, cyros_port_context* to)
+{
+   if (from != nullptr) {
+      from->sp  = cortex_m::get_psp();
+      from->tls = current_tls[core];
+   }
+
+   load_stack_guard(to->stack_limit);
+   cortex_m::set_psp(to->sp);
+
+   current_tls[core] = to->tls;
+   if constexpr (CYROS_PORT_CORE_COUNT > 1) {
+      to->core = core;
+   }
 }
 
 CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
@@ -593,19 +676,34 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    CYROS_ASSERT(to != nullptr);
    CYROS_ASSERT(to->sp != 0u);
 
-   /* Read once and reuse. On a multicore target this is an MMIO read, and the
-    * switch is the hottest path the port has. */
-   std::uint32_t const core = this_core();
+   /* Read once and reuse. On a multicore target asking is an MMIO read behind
+    * a call, and the switch is the hottest path the port has, so a running
+    * thread's context answers when there is one. */
+   switch_stacks(from != nullptr ? core_of(from) : this_core(), from, to);
+}
 
-   if (from != nullptr) {
-      from->sp  = cortex_m::get_psp();
-      from->tls = current_tls[core];
-   }
+CYROS_PORT_HOT void cyros_port_yield_to(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
+{
+   /* Thread context, masked by the kernel from baseline (port_core.h). FROM is
+    * the running thread, so it names this core. */
+   owed_switch& owed = owed_switches[core_of(from)];
+   owed.from = from;
+   owed.to.store(to, std::memory_order_relaxed);
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvset;
 
-   load_stack_guard(to->stack_limit);
-   cortex_m::set_psp(to->sp);
+   /* Unmasked, PendSV is taken at the ISB, after any interrupt already
+    * waiting, and makes the switch. Control returns here once this thread is
+    * switched back in, as from a yield. */
+   cortex_m::set_primask(token);
+   cortex_m::dsb();
+   cortex_m::isb();
+}
 
-   current_tls[core] = to->tls;
+CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
+{
+   /* The token is PRIMASK before the mask. A handler runs with PRIMASK clear,
+    * so the mode says the rest. */
+   return token == 0u && !cortex_m::in_handler_mode() && cortex_m::get_basepri() == 0u;
 }
 
 /**
@@ -665,6 +763,22 @@ extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME CYROS_PORT_HOT void PendSV_H
  */
 extern "C" [[gnu::used]] CYROS_PORT_HOT void cyros_port_pendsv_dispatch(void)
 {
+   /* An owed switch first, so the kernel never runs while the thread it counts
+    * as running is not the one PSP holds (port_core.h). Then the kernel, unless
+    * nothing asked for it. */
+   std::uint32_t const core = this_core();
+   owed_switch& owed = owed_switches[core];
+   if (auto* const to = owed.to.load(std::memory_order_relaxed); to != nullptr) {
+      switch_stacks(core, owed.from, to);
+      owed.to.store(nullptr, std::memory_order_relaxed);
+      /* The clear before the look, so an interrupt that asks after the look
+       * finds nothing owed, and pends this handler again. */
+      std::atomic_signal_fence(std::memory_order_seq_cst);
+      if (!owed.reschedule.load(std::memory_order_relaxed)) {
+         return;
+      }
+      owed.reschedule.store(false, std::memory_order_relaxed);
+   }
    CYROS_ASSERT(reschedule_handler != nullptr);
    reschedule_handler();
 }
@@ -679,6 +793,7 @@ void cyros_port_start_first(cyros_port_context* first)
    CYROS_ASSERT(first->sp != 0u);
 
    current_tls[this_core()] = first->tls;
+   first->core = this_core();
 
    load_stack_guard(first->stack_limit);
    cortex_m::set_psp(first->sp);
@@ -754,9 +869,17 @@ CYROS_PORT_HOT void cyros_port_thread_yield(void)
 CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
    /* Callable from anywhere, including an ISR and inside a critical section.
-    * Setting PENDSVSET is the whole implementation: the hardware holds the
-    * request until the execution priority drops to PendSV's level, which is
-    * exactly port.h's "next safe point". */
+    * Setting PENDSVSET is the implementation: the hardware holds the request
+    * until the execution priority drops to PendSV's level, which is exactly
+    * port.h's "next safe point".
+    *
+    * The one addition: an interrupt taken between cyros_port_yield_to's
+    * release and its PendSV finds the switch owed, which PendSV would carry
+    * out without asking the kernel, so it says it is asking (file comment). */
+   owed_switch& owed = owed_switches[this_core()];
+   if (owed.to.load(std::memory_order_relaxed) != nullptr) {
+      owed.reschedule.store(true, std::memory_order_relaxed);
+   }
    cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvset;
    cortex_m::dsb();
    cortex_m::isb();

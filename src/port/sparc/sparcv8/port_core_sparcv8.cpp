@@ -20,6 +20,15 @@
  * same path synchronously: a force-register write crosses the bus and lands
  * some cycles later, so a yield built on it could return before the switch.
  *
+ * The thread's road (port_core.h) enters the same path by its own trap,
+ * `ta 10`. cyros_port_yield_to makes it inside the kernel's mask, a software
+ * trap being taken whatever PIL says, with the two contexts in %o0 and %o1,
+ * and the handler swaps the frames, as cyros_port_switch does, instead of
+ * calling the kernel. So a thread is suspended by one kind of frame whichever
+ * road it took, and either road resumes it: a frame cyros_port_yield_to saved
+ * has PIL raised, so its thread resumes inside the kernel's mask and releases
+ * it itself.
+ *
  *
  * Register windows, and what a trap saves
  * =======================================
@@ -325,6 +334,8 @@ asm(
    CYROS_SPARC_ENTRY("cyros_sparc_flush_windows", "cyros_sparc_tt")
    ".elseif cyros_sparc_tt == 0x80 + " CYROS_SPARC_STR(CYROS_SPARC_TA_YIELD) " \n"
    CYROS_SPARC_ENTRY("cyros_sparc_yield_entry", "cyros_sparc_tt")
+   ".elseif cyros_sparc_tt == 0x80 + " CYROS_SPARC_STR(CYROS_SPARC_TA_YIELD_TO) " \n"
+   CYROS_SPARC_ENTRY("cyros_sparc_yield_entry", "cyros_sparc_tt")
    ".else                                                           \n"
    CYROS_SPARC_ENTRY("cyros_sparc_trap_entry", "cyros_sparc_tt")
    ".endif                                                          \n"
@@ -548,9 +559,10 @@ asm(
    ".pushsection .text.cyros_sparc_traps, \"ax\"                   \n"
    ".balign 4                                                       \n"
 
-   /* The yield, `ta 9`: every window of the yielding thread to its stack
-    * first (the file comment), then the common entry. Leaves window T+1
-    * invalid, so the exit always loads it back from the stack. */
+   /* The yield, `ta 9`, and cyros_port_yield_to's `ta 10`: every window of
+    * the yielding thread to its stack first (the file comment), then the
+    * common entry. Leaves window T+1 invalid, so the exit always loads it back
+    * from the stack. */
    ".global cyros_sparc_yield_entry                                 \n"
    ".type   cyros_sparc_yield_entry, #function                      \n"
    "cyros_sparc_yield_entry:                                        \n"
@@ -780,7 +792,9 @@ asm(
  *
  * An interrupt at the reschedule level is the reschedule, any other level
  * the target's, each run at its own level so that higher ones nest. `ta 9`
- * is a yield, run at the reschedule's. Anything else is a fault, run at 15.
+ * is a yield, run at the reschedule's, and `ta 10` a switch the kernel has
+ * decided (cyros_port_yield_to), which swaps the frames at 15. Anything else
+ * is a fault, run at 15.
  * Entered and left at PIL 15 ("Nested interrupts").
  *
  * Used: only the assembly above calls it, which the compiler cannot see, so an
@@ -808,14 +822,20 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_sparc_trap_dispatch
       }
       set_pil(sparcv8::pil_masked_preempt);
    }
-   else if (tt == sparcv8::tt_yield && outermost) {
+   else if ((tt == sparcv8::tt_yield || tt == sparcv8::tt_yield_to) && outermost) {
       /* Resume after the ta. Done on THIS thread's frame, before a switch
        * replaces it. */
       frame[sparcv8::frame_pc]  = frame[sparcv8::frame_npc];
       frame[sparcv8::frame_npc] = frame[sparcv8::frame_npc] + 4u;
-      set_pil(sparcv8::reschedule_level);
-      run_reschedule(state);
-      set_pil(sparcv8::pil_masked_preempt);
+      if (tt == sparcv8::tt_yield) {
+         set_pil(sparcv8::reschedule_level);
+         run_reschedule(state);
+         set_pil(sparcv8::pil_masked_preempt);
+      } else {
+         /* The two contexts cyros_port_yield_to passed, in its %o0 and %o1. */
+         cyros_port_switch(reinterpret_cast<cyros_port_context*>(frame[sparcv8::frame_o0]),
+                           reinterpret_cast<cyros_port_context*>(frame[sparcv8::frame_o0 + 1u]));
+      }
    }
    else {
       cyros_sparc_fault_handler(tt, frame);
@@ -1002,6 +1022,26 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
       from->frame = state.frame;
    }
    state.frame = to->frame;
+}
+
+CYROS_PORT_HOT void cyros_port_yield_to(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
+{
+   /* Thread context, masked by the kernel from baseline (port_core.h). The
+    * trap is taken masked, and its handler switches (the file comment). */
+   register cyros_port_context* o0 asm("o0") = from;
+   register cyros_port_context* o1 asm("o1") = to;
+   asm volatile("ta " CYROS_SPARC_STR(CYROS_SPARC_TA_YIELD_TO) : "+r"(o0), "+r"(o1) : : "memory");
+
+   /* Back by either road, still masked: the frame kept this thread's PIL. */
+   cyros_port_irq_restore(token);
+}
+
+CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
+{
+   /* The token is the interrupt field before the mask. Outside a trap, with
+    * it and the preemption field both clear, the caller was at PIL 0. */
+   return token == 0u && cyros_sparc_cores[this_core()].depth == 0u &&
+          (sparcv8::read_psr() & pil_preempt_bits) == 0u;
 }
 
 /* Not marked [[noreturn]], as on the other ports: port_core.h declares it

@@ -398,6 +398,56 @@ TEST(SingleCoreMultiThread_Test,
 }
 
 TEST(SingleCoreMultiThread_Test,
+     GivenEqualPriorityThreadsTakingTurns_WhenOneIsPreemptedAsItEnablesPreemption_ThenItKeepsItsTurn)
+{
+   // The case above on the other road. There the more urgent thread is made
+   // by the running thread at baseline, so the kernel switches to it at once,
+   // on the thread's road, knowing it is a preemption. Here it is made with
+   // preemption disabled, so the switch waits for the enable and is the port
+   // handler's, reschedule(), which has to work out from the bitmap that the
+   // thread it switches from was preempted rather than rotated.
+   cyros::test::guarded_stack s_a;
+   cyros::test::guarded_stack s_b;
+   cyros::test::guarded_stack s_urgent;
+
+   thread urgent_thread;
+
+   std::vector<char> order;
+
+   kernel::initialise();
+
+   thread a(
+      [&]{
+         order.push_back('a');
+         {
+            this_core::preemption_guard no_switch;
+            urgent_thread = thread([&]{ order.push_back('u'); }, s_urgent, thread::priority(9), core0);
+         }  // preempted here, by reschedule()
+         order.push_back('a');   // a's turn continues, before b's
+         this_thread::yield();
+         order.push_back('a');
+      },
+      s_a, thread::priority(10), core0
+   );
+   thread b(
+      [&]{
+         order.push_back('b');
+         this_thread::yield();
+         order.push_back('b');
+      },
+      s_b, thread::priority(10), core0
+   );
+
+   kernel::start();
+
+   const std::vector<char> expected{'a', 'u', 'a', 'b', 'a', 'b'};
+   EXPECT_EQ(order, expected)
+      << "a thread preempted on the handler's road lost its turn among its equals";
+
+   kernel::finalise();
+}
+
+TEST(SingleCoreMultiThread_Test,
      GivenSingleThread_WhenThreadCreatesAnotherThreadOfLowerPriority_ThenCreatedThreadDoesNotRunUntilFirstThreadFinishes)
 {
    cyros::test::guarded_stack s_creator;

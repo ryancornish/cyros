@@ -88,7 +88,7 @@ CYROS_HOT void thread::resume() noexcept
    // before it wakes. this_thread::suspend says why that order is enough.
    tcb->resume_token.store(true, std::memory_order_release);
 
-   schedule_hint hint = global_ready_thread(*tcb);
+   schedule_hint hint = global_ready_thread(*tcb, reschedule_policy::automatic);
 
    if (hint == schedule_hint::warranted) {
       cyros_port_pend_reschedule();
@@ -188,18 +188,19 @@ namespace this_thread
    auto const& scheduler = scheduler_for_this_core();
    auto& tcb = scheduler.get_current_thread();
 
-   // Flag the thread's intent to terminate, the arbiter will handle the state
-   // transition and teardown on next reschedule (requested immediately).
+   // Flag the thread's intent to terminate. reschedule() makes the state
+   // transition and the teardown, on the handler's road, whose stack is the
+   // port's: once the joiners are woken this thread's stack may be theirs.
    // Any preemption landing before this point is okay as eventually the scheduler
    //  will pick this thread again and continue teardown.
    tcb.disposition = thread_disposition::terminating;
-   // Any preemption landing after this point will cause the arbiter to retire
+   // Any preemption landing after this point will cause reschedule() to retire
    // this thread and never return. Most of the time, this window is not preempted
    // and so we manually trigger a reschedule which is guaranteed to not pick this thread
    // again.
    cyros_port_thread_yield();
 
-   CYROS_PORT_UNREACHABLE(); // Bug: The arbiter declined to retire this thread!
+   CYROS_PORT_UNREACHABLE(); // Bug: reschedule() declined to retire this thread!
 }
 
 CYROS_HOT void suspend() noexcept
@@ -232,9 +233,9 @@ CYROS_HOT void suspend() noexcept
 
 CYROS_HOT void yield()
 {
-   // Strong request: an explicit yield deliberately gives up the CPU and
-   // relies on the reschedule round-trip having completed on return.
-   cyros_port_thread_yield();
+   // Gives up the CPU to whatever is ready at its level, and returns once it
+   // runs again: the thread's road (scheduler.cpp, Switching threads).
+   scheduler_for_this_core().yield();
 }
 
 } // namespace this_thread

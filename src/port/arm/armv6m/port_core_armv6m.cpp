@@ -10,8 +10,10 @@
  * architectural.
  *
  * The Mainline layer (armv7m_armv8m) is the model, and its header says why
- * every switch happens in PendSV at the lowest priority. That holds here
- * unchanged. What ARMv6-M takes away, and what this layer does instead:
+ * every switch happens in PendSV at the lowest priority, and how a switch on
+ * the thread's road (cyros_port_yield_to) is owed to PendSV, which carries it
+ * out without calling the kernel. Both hold here unchanged. What ARMv6-M
+ * takes away, and what this layer does instead:
  *
  *   no BASEPRI     the preempt grade is a software deferral (below)
  *   Thumb-1 only   PendSV saves r8 to r11 through low registers
@@ -34,26 +36,28 @@
  * a per-core depth, and PendSV consults it:
  *
  *   preempt_disable   raises the depth and returns the old one as the token
- *   PendSV            finding the depth raised, records that a switch is
- *                     owed and returns to the same thread
+ *   PendSV            finding the depth raised, records that the reschedule
+ *                     is deferred and returns to the same thread
  *   preempt_enable    restores the depth from the token, and at zero with a
- *                     switch owed, pends PendSV again
+ *                     reschedule deferred, pends PendSV again
  *
  * The token restores rather than decrements, as BASEPRI's does on Mainline,
  * so a region entered while already disabled leaves it disabled.
  *
  * The depth is per core, not per thread, and that is sound because no thread
- * is ever switched out with it raised: PendSV defers instead, and a blocking
- * wait yields at baseline (cyros_port_thread_yield asserts it). Every switch
- * therefore happens at depth zero, and every thread resumes at depth zero.
+ * is ever switched out with it raised: PendSV defers instead, and a yield, a
+ * block or a wake that switches on the thread's road does so from baseline
+ * (the kernel checks it). Every switch therefore happens at depth zero, and
+ * every thread resumes at depth zero. That is also why a switch owed from the
+ * thread's road is never deferred.
  *
  * The races are benign by construction. An ISR may disable and enable
  * between a thread's read of the depth and its write, but an ISR's regions
  * are balanced, so the thread's write is still right. PendSV may land between
- * an enable's store of zero and its check of the owed flag: PendSV then sees
- * depth zero, clears the flag and switches, and the enable finds nothing
- * owed, or re-pends one more PendSV, which is a redundant pick and never a
- * wrong one.
+ * an enable's store of zero and its check of the deferred flag: PendSV then
+ * sees depth zero, clears the flag and switches, and the enable finds nothing
+ * deferred, or re-pends one more PendSV, which is a redundant pick and never
+ * a wrong one.
  *
  * What it costs over BASEPRI: a reschedule pended inside a preempt-disabled
  * region takes PendSV once to be deferred and once more to be delivered, and
@@ -146,7 +150,28 @@ void* current_tls[CYROS_PORT_CORE_COUNT] = {};
 /* The software preempt grade (see the header). Volatile because PendSV reads
  * them asynchronously to the thread that writes them. */
 volatile std::uint32_t preempt_depth[CYROS_PORT_CORE_COUNT] = {};
-volatile bool switch_owed[CYROS_PORT_CORE_COUNT] = {};
+volatile bool reschedule_deferred[CYROS_PORT_CORE_COUNT] = {};
+
+/**
+ * @brief A switch the kernel decided on the thread's road, owed until PendSV.
+ *
+ * The Mainline layer's, kept by the same two rules (port_core.h): PendSV
+ * carries it out first, and calls the kernel after it only when `reschedule`
+ * says an interrupt asked meanwhile. One per core, touched only by its own
+ * core: the thread writes it masked, and PendSV and the interrupts taken
+ * around it read it. Volatile, as the deferral's flags are, because a
+ * std::atomic's load and store are library calls on this architecture. `from`
+ * is written before `to` and read only once `to` is seen.
+ */
+struct owed_switch
+{
+   cyros_port_context* volatile from;
+   cyros_port_context* volatile to;          /* null: none owed       */
+   volatile bool                reschedule;  /* asked for while owed,
+                                                cleared as it is served */
+};
+
+constinit owed_switch owed_switches[CYROS_PORT_CORE_COUNT] = {};
 
 inline std::uint32_t this_core() noexcept
 {
@@ -234,7 +259,9 @@ void init_this_core()
    std::uint32_t const core = this_core();
    current_tls[core] = nullptr;
    preempt_depth[core] = 0u;
-   switch_owed[core] = false;
+   reschedule_deferred[core] = false;
+   owed_switches[core].to = nullptr;
+   owed_switches[core].reschedule = false;
 
    /* Masked for the whole of bring-up, as on Mainline: there is no thread
     * stack to switch from until cyros_port_start_first. */
@@ -328,8 +355,8 @@ CYROS_PORT_HOT void cyros_port_preempt_enable(cyros_mask_token_t token)
    std::uint32_t const core = this_core();
    compiler_barrier();
    preempt_depth[core] = token;
-   if (token == 0u && switch_owed[core]) {
-      switch_owed[core] = false;
+   if (token == 0u && reschedule_deferred[core]) {
+      reschedule_deferred[core] = false;
       /* Taken at the ISB when PRIMASK is clear, as a Mainline enable's is
        * when BASEPRI drops, and otherwise when the caller unmasks. */
       cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvset;
@@ -396,14 +423,11 @@ void cyros_port_context_destroy(cyros_port_context* context)
    context->stack_limit = 0u;
 }
 
-CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
+/* cyros_port_switch's work, in PendSV on CORE: which stack PSP holds, its
+ * guard and its TLS. Also how PendSV carries out an owed switch, whose two
+ * contexts the kernel has already vouched for. */
+static inline void switch_stacks(std::uint32_t core, cyros_port_context* from, cyros_port_context* to)
 {
-   /* From PendSV only, where PSP holds the outgoing thread's complete frame. */
-   CYROS_ASSERT(cortex_m::in_handler_mode());
-   CYROS_ASSERT(to != nullptr);
-   CYROS_ASSERT(to->sp != 0u);
-
-   std::uint32_t const core = this_core();
    if (from != nullptr) {
       from->sp  = cortex_m::get_psp();
       from->tls = current_tls[core];
@@ -411,6 +435,41 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    cortex_m::set_psp(to->sp);
    load_stack_guard(to->stack_limit);
    current_tls[core] = to->tls;
+}
+
+CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_context* to)
+{
+   /* From PendSV only, where PSP holds the outgoing thread's complete frame. */
+   CYROS_ASSERT(cortex_m::in_handler_mode());
+   CYROS_ASSERT(to != nullptr);
+   CYROS_ASSERT(to->sp != 0u);
+
+   switch_stacks(this_core(), from, to);
+}
+
+CYROS_PORT_HOT void cyros_port_yield_to(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
+{
+   /* Thread context, masked by the kernel from baseline (port_core.h), so the
+    * preemption depth is zero and PendSV carries this out rather than defer
+    * it. */
+   owed_switch& owed = owed_switches[this_core()];
+   owed.from = from;
+   owed.to = to;
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvset;
+
+   /* Unmasked, PendSV is taken at the ISB, after any interrupt already
+    * waiting, and makes the switch. Control returns here once this thread is
+    * switched back in. */
+   cortex_m::set_primask(token);
+   cortex_m::dsb();
+   cortex_m::isb();
+}
+
+CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
+{
+   /* The token is PRIMASK before the mask. A handler runs with PRIMASK clear,
+    * so the mode says the rest, and the preempt grade is the depth. */
+   return token == 0u && !cortex_m::in_handler_mode() && preempt_depth[this_core()] == 0u;
 }
 
 /**
@@ -459,7 +518,8 @@ extern "C" [[gnu::naked]] CYROS_PORT_LINKED_BY_NAME CYROS_PORT_HOT void PendSV_H
 }
 
 /**
- * @brief The C half of PendSV: deliver a reschedule, or owe it.
+ * @brief The C half of PendSV: carry out an owed switch, then deliver a
+ *        reschedule, or defer it.
  *
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
@@ -468,13 +528,30 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT void cyros_port_pendsv_dispatch(void)
 {
    CYROS_ASSERT(reschedule_handler != nullptr);
    std::uint32_t const core = this_core();
+
+   /* An owed switch first, so the kernel never runs while the thread it counts
+    * as running is not the one PSP holds (port_core.h). It was owed from depth
+    * zero, so it is never deferred. Then the kernel, unless nothing asked. */
+   owed_switch& owed = owed_switches[core];
+   if (owed.to != nullptr) {
+      switch_stacks(core, owed.from, owed.to);
+      owed.to = nullptr;
+      /* The clear before the look, so an interrupt that asks after the look
+       * finds nothing owed, and pends this handler again. */
+      compiler_barrier();
+      if (!owed.reschedule) {
+         return;
+      }
+      owed.reschedule = false;
+   }
+
    if (preempt_depth[core] != 0u) {
       /* The interrupted thread disabled preemption. Return to it, and let its
        * outermost enable pend this again. */
-      switch_owed[core] = true;
+      reschedule_deferred[core] = true;
       return;
    }
-   switch_owed[core] = false;
+   reschedule_deferred[core] = false;
    reschedule_handler();
 }
 
@@ -540,7 +617,15 @@ CYROS_PORT_HOT void cyros_port_thread_yield(void)
 CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
    /* From anywhere. Inside a preempt-disabled region PendSV runs at once and
-    * defers, and the region's enable delivers it. */
+    * defers, and the region's enable delivers it.
+    *
+    * An interrupt taken between cyros_port_yield_to's release and its PendSV
+    * finds the switch owed, which PendSV would carry out without asking the
+    * kernel, so it says it is asking (the Mainline layer's file comment). */
+   owed_switch& owed = owed_switches[this_core()];
+   if (owed.to != nullptr) {
+      owed.reschedule = true;
+   }
    cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvset;
    cortex_m::dsb();
    cortex_m::isb();

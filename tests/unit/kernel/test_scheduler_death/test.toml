@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_scheduler_death"
+layer = 3
+kind = "unit"
+source = "test_scheduler_death.cpp"
+config = "test_scheduler_death_config.hpp"
+
+# No port filter: the checks under test are kernel code, and the panic path is
+# common to both Linux ports.
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

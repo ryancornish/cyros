@@ -29,6 +29,11 @@
  * routine stays a normal call that unwinds, with no hidden non-local exit. The
  * signal handler is the analogue of PendSV running on the handler stack.
  *
+ * The kernel's other road, the thread's (port_core.h), comes through the same
+ * signal: cyros_port_yield_to() owes the handler a switch the kernel has
+ * already decided, which on_reschedule() makes without calling the kernel, as
+ * PendSV makes Cortex-M's.
+ *
  * Synchronous yield (first-step simplification)
  * ---------------------------------------------
  * cyros_port_thread_yield() raises the reschedule signal against itself. At
@@ -190,6 +195,17 @@ struct cpu_core
     * test_sync_semaphore's producer/consumer case under 6-way load on a 4-core
     * machine, see cross-core-defects.md section 14. */
    std::atomic<bool>       started{false};
+
+   /* Set by another core's IPI just before it raises the reschedule signal,
+    * and taken by on_reschedule() on every pass. The IPI IS that signal, so
+    * one sent while this core owes a switch (cyros_port_yield_to) merges with
+    * the owed switch's own signal, and on_reschedule() carries an owed switch
+    * out without calling the kernel unless something asked for a reschedule.
+    * This is how another core asks, as current_core_state::owed_reschedule is
+    * how this core's interrupts ask. Without it the remote wake waits in the
+    * intake until this core next switches for some other reason
+    * (test_multicore_owed_switch: half its runs lost a preemption). */
+   std::atomic<bool>       ipi_asked{false};
 };
 
 struct global_state
@@ -252,6 +268,19 @@ struct current_core_state
    // returned to the sigctx interceptor to resume. When set, always points to a TCB's
    // context frame.
    sigctx_ucontext_t*  resume_uc{nullptr};
+
+   // A switch the kernel decided on the thread's road and handed over with
+   // cyros_port_yield_to(), owed until the reschedule signal it raised is
+   // delivered. on_reschedule() carries it out without calling the kernel, and
+   // calls the kernel after it only when owed_reschedule says a reschedule was
+   // asked for meanwhile. The Cortex-M layer's owed switch, with the signal for
+   // PendSV. Written with the signal blocked, read by on_reschedule() and by
+   // the timer's handler, all on this thread, so the two the timer races are
+   // volatile, which keeps this struct assignable for the reset in
+   // cyros_port_start_cores().
+   cyros_port_context*          owed_from{nullptr};
+   cyros_port_context* volatile owed_to{nullptr};
+   volatile bool                owed_reschedule{false};
 
    // First signal delivery on this core takes the bring-up branch.
    bool                bootstrapping{false};
@@ -900,6 +929,29 @@ static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void*)
       return &current_core.first_ctx->sctx.uc;
    }
 
+   // Whether another core asked, taken on every pass: any pass that reaches
+   // the kernel answers it.
+   bool const remote_asked =
+      global.cores[current_core.core_id].ipi_asked.exchange(false, std::memory_order_acquire);
+
+   // A switch owed from the thread's road first, so the kernel never
+   // runs while the thread it counts as running is not the one this signal
+   // paused (port_core.h). Then the kernel, only if a reschedule was asked for
+   // meanwhile, here or by another core, and switching away from a thread that
+   // never ran, whose context is therefore already where it belongs.
+   if (auto* const to = current_core.owed_to; to != nullptr) {
+      auto* const from = current_core.owed_from;
+      sigctx_copy(/*dst=*/ &from->sctx.uc, from->sctx.fpstate, from->sctx.fpstate_size,
+                  /*src=*/ paused);
+      current_core.owed_to = nullptr;
+      current_core.current_context = to;
+      if (!current_core.owed_reschedule && !remote_asked) {
+         return &to->sctx.uc;
+      }
+      current_core.owed_reschedule = false; // cleared as it is served
+      paused = &to->sctx.uc;
+   }
+
    // Drive the core-local scheduler. It ends in cyros_port_switch(), which
    // records the context to resume in resume_uc and returns normally, so the
    // kernel reschedule routine unwinds like any other call. Clear resume_uc
@@ -1120,7 +1172,10 @@ void cyros_port_send_reschedule_ipi(std::uint32_t core_id)
 
    // Targeting the signal at a core is the whole IPI. A core at baseline takes
    // it now, a masked core takes it on unmask, an idle core parked in
-   // sigsuspend wakes and reschedules. Self-targeting works the same way.
+   // sigsuspend wakes and reschedules. Self-targeting works the same way. Said
+   // first, because the signal may merge with one already pending
+   // (cpu_core::ipi_asked).
+   target.ipi_asked.store(true, std::memory_order_release);
    pthread_kill(target.pthread, preempt_signo);
 }
 
@@ -1264,8 +1319,10 @@ void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to)
    CYROS_ASSERT(current_core.paused_uc); // a switch is only ever driven from on_reschedule
 
    // Null 'from' means nothing to save: first switch, or the outgoing thread was
-   // retired and its TCB may already be gone.
-   if (from) {
+   // retired and its TCB may already be gone. Nor is there when the paused
+   // context is from's own, an owed switch's thread that never ran
+   // (on_reschedule).
+   if (from && current_core.paused_uc != &from->sctx.uc) {
       // Relocate the captured frame into the outgoing TCB while paused_uc still
       // points at live handler-stack storage. This is what lets the thread
       // resume later, after this handler invocation is gone.
@@ -1280,6 +1337,33 @@ void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to)
    // the interceptor, which performs the rt_sigreturn from the trampoline. This
    // keeps the kernel reschedule routine a plain returning call.
    current_core.resume_uc = &to->sctx.uc;
+}
+
+void cyros_port_yield_to(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token)
+{
+   // Thread context, masked by the kernel from baseline (port_core.h).
+   CYROS_ASSERT(current_core.current_context == from);
+   CYROS_ASSERT(current_core.interrupt_disable_depth == 1);
+   CYROS_ASSERT(current_core.preempt_disable_depth == 0);
+   CYROS_ASSERT(to != nullptr);
+
+   current_core.owed_from = from;
+   current_core.owed_to = to;
+
+   // Blocked by the kernel's mask, so the signal stays pending until the
+   // restore below unblocks it and it is delivered, before the restore returns.
+   // on_reschedule() makes the switch there, and the restore returns once this
+   // thread is switched back in.
+   pthread_kill(pthread_self(), preempt_signo);
+   cyros_port_irq_restore(token);
+}
+
+bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
+{
+   (void)token; // unusable on this port, the depths say it. A handler's region is a depth too
+   return current_core.current_context != nullptr &&
+          current_core.interrupt_disable_depth == 1 &&
+          current_core.preempt_disable_depth == 0;
 }
 
 void cyros_port_start_first(cyros_port_context_t* first)
@@ -1328,6 +1412,12 @@ void cyros_port_pend_reschedule(void)
    // Weak-guarantee, deferred-safe. No thread context means nothing to switch
    // away from.
    if (!current_core.current_context) return;
+
+   // A timer interrupt that lands while a switch is owed marks it, so
+   // the reschedule follows the owed switch rather than being lost in it.
+   if (current_core.owed_to != nullptr) {
+      current_core.owed_reschedule = true;
+   }
 
    // Raise the reschedule signal against ourselves. At baseline it is delivered
    // before this returns. If a depth counter has it masked it stays pending and

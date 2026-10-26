@@ -51,8 +51,8 @@ enum class thread_disposition : std::uint8_t
 {
    none,        ///< No pending wish - scheduled purely on position.
    prepared,    ///< Wishes to block but still deciding - stays runnable if preempted.
-   committed,   ///< Decision made under preempt-disable - reschedule will park it.
-   terminating, ///< Finished. The arbiter retires it. Outranks state, never revoked.
+                ///< A wake clears it, and commit_to_block parks only a thread still prepared.
+   terminating, ///< Finished. reschedule() retires it. Outranks state, never revoked.
 };
 
 /**

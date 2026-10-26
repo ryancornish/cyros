@@ -25,6 +25,14 @@
  * synchronously. An SGI is a write to the GIC and arrives a little later, so a
  * yield built on it could return before the switch.
  *
+ * The thread's road (port_core.h) enters the same path by its own SVC,
+ * `svc 1`. cyros_port_yield_to makes it inside the kernel's mask, an SVC
+ * being taken whatever CPSR.I says, with the two contexts in r0 and r1, and
+ * the handler swaps the frames, as cyros_port_switch does, instead of calling
+ * the kernel. So a thread is suspended by one kind of frame whichever road it
+ * took, and either road resumes it: a frame cyros_port_yield_to saved has I
+ * set, so its thread resumes inside the kernel's mask and releases it itself.
+ *
  *
  * Modes and stacks
  * ================
@@ -65,9 +73,9 @@
  * bits on QEMU's R52), as the M-profile layer derives its own.
  *
  * Each TOKEN carries the previous state: the I bit, or the previous PMR. No
- * thread is switched out with PMR lowered or I set, since neither the SGI nor
- * a yield can then be taken, so every thread resumes with both open and a
- * token read before a switch is still true after it.
+ * thread is switched out with PMR lowered, nor with I set but inside
+ * cyros_port_yield_to, which resumes inside that mask and releases it itself.
+ * So a token read before a switch is still true after it.
  *
  * Baseline priority is CPSR.I clear and PMR open, outside a handler.
  *
@@ -327,6 +335,21 @@ CYROS_PORT_HOT void run_reschedule(core_state& state)
 constexpr std::uint32_t entered_by_irq = 0u;
 constexpr std::uint32_t entered_by_svc = 1u;
 
+/* The SVC numbers: a yield, and cyros_port_yield_to (the file comment). */
+constexpr std::uint32_t svc_yield    = 0u;
+constexpr std::uint32_t svc_yield_to = 1u;
+
+/* The number of the SVC that entered, from the instruction before the return
+ * address its frame holds: Thumb's SVC carries 8 bits, ARM's 24. */
+inline std::uint32_t svc_number(std::uint32_t const* frame) noexcept
+{
+   std::uintptr_t const after = frame[armv8r::frame_pc];
+   if ((frame[armv8r::frame_cpsr] & armv8r::cpsr_t) != 0u) {
+      return *reinterpret_cast<std::uint16_t const*>(after - 2u) & 0xFFu;
+   }
+   return *reinterpret_cast<std::uint32_t const*>(after - 4u) & 0xFFFFFFu;
+}
+
 } // namespace
 
 
@@ -358,7 +381,8 @@ extern "C" [[gnu::naked]] CYROS_PORT_HOT void cyros_port_irq_entry(void)
 }
 
 /**
- * @brief The SVC vector's target: a yield. The second half, from
+ * @brief The SVC vector's target: a yield, or a switch on the thread's road.
+ *        The second half, from
  *        `cyros_port_exception_exit`, is every entry's exit, and how
  *        cyros_port_start_first enters a thread for the first time.
  */
@@ -387,8 +411,9 @@ extern "C" [[gnu::naked]] CYROS_PORT_HOT void cyros_port_svc_entry(void)
 /**
  * @brief The C half of every IRQ and SVC. Returns the frame to resume.
  *
- * An SVC is a yield. An IRQ is acknowledged and dispatched by INTID: SGI 0 is
- * the reschedule, PPI 30 the timer, anything else a device's.
+ * `svc 0` is a yield, and `svc 1` a switch the kernel has decided
+ * (cyros_port_yield_to). An IRQ is acknowledged and dispatched by INTID: SGI 0
+ * is the reschedule, PPI 30 the timer, anything else a device's.
  *
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it.
@@ -400,7 +425,13 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_exception_disp
    state.frame = frame;
 
    if (entered_by == entered_by_svc) {
-      run_reschedule(state);
+      if (svc_number(frame) == svc_yield_to) {
+         /* The two contexts cyros_port_yield_to passed, in its r0 and r1. */
+         cyros_port_switch(reinterpret_cast<cyros_port_context*>(frame[armv8r::frame_r0]),
+                           reinterpret_cast<cyros_port_context*>(frame[armv8r::frame_r1]));
+      } else {
+         run_reschedule(state);
+      }
    }
    else {
       std::uint32_t const iar = armv8r::read_icc_iar1();
@@ -699,6 +730,26 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    }
 }
 
+CYROS_PORT_HOT void cyros_port_yield_to(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
+{
+   /* Thread context, masked by the kernel from baseline (port_core.h). The SVC
+    * is taken masked, and its handler switches (the file comment). */
+   register cyros_port_context* r0 asm("r0") = from;
+   register cyros_port_context* r1 asm("r1") = to;
+   asm volatile("svc %2" : "+r"(r0), "+r"(r1) : "i"(svc_yield_to) : "memory");
+
+   /* Back by either road: from another thread's SVC, still masked, or from the
+    * exception exit after a reschedule, likewise. */
+   cyros_port_irq_restore(token);
+}
+
+CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
+{
+   /* I clear before the mask means no exception was in progress, since every
+    * handler runs with it set. Then only the GIC's mask can hold preemption. */
+   return (token & armv8r::cpsr_i) == 0u && armv8r::read_icc_pmr() == pmr_open;
+}
+
 /* Not marked [[noreturn]], as on the other ports: port_core.h declares it
  * plain. */
 void cyros_port_start_first(cyros_port_context* first)
@@ -750,7 +801,7 @@ CYROS_PORT_HOT void cyros_port_thread_yield(void)
 
    /* Synchronous: the exception path runs the reschedule before the next
     * instruction, and resumes here when this thread is next switched in. */
-   asm volatile("svc 0" ::: "memory");
+   asm volatile("svc %0" : : "i"(svc_yield) : "memory");
 }
 
 CYROS_PORT_HOT void cyros_port_pend_reschedule(void)

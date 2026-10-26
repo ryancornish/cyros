@@ -311,6 +311,24 @@ void cyros_port_preempt_enable(cyros_mask_token_t token);
 
 /* ----------------------------------------------------------------------------
  * Context Management & Switching
+ *
+ * The kernel switches a core between threads by one of two roads, and a port
+ * provides both:
+ *
+ *  - The thread's road. The running thread, at baseline priority, yields,
+ *    blocks, or readies a thread more urgent than itself. The kernel decides
+ *    who runs next there and then, under its mask, and the port switches
+ *    straight to that thread: cyros_port_yield_to(). The kernel is not
+ *    called back.
+ *
+ *  - The handler's road. Anything else that warrants a switch asks for a
+ *    reschedule (Reschedule Requests, below), and the port calls the
+ *    kernel's reschedule handler at the next safe point. The kernel decides
+ *    there, and tells the port which context to resume when the handler
+ *    returns: cyros_port_switch().
+ *
+ * Either road may suspend a thread and either may resume it, so a context
+ * suspended by one must be resumable by the other.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -343,10 +361,11 @@ void cyros_port_context_init(cyros_port_context_t* context,
 void cyros_port_context_destroy(cyros_port_context_t* context);
 
 /**
- * @brief Switch from one context to another
+ * @brief The handler's road: switch from one context to another
  * @param from Context to save, or NULL when there is nothing to save
  * @param to Context to restore and resume
  *
+ * Called by the kernel's reschedule handler, inside the port's handler.
  * Saves the current CPU state into 'from' and loads the state from 'to'.
  * Execution resumes in 'to' context.
  *
@@ -354,6 +373,53 @@ void cyros_port_context_destroy(cyros_port_context_t* context);
  * retired thread whose context must not be written back.
  */
 void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to);
+
+/**
+ * @brief The thread's road: give the core to a thread the kernel has chosen.
+ * @param from  The calling thread's context, to save
+ * @param to    The context to resume, already the kernel's running thread
+ * @param token What cyros_port_irq_save() returned when the kernel masked
+ *
+ * Called in thread context with interrupts masked by the kernel, which masked
+ * from baseline priority, so `token` restores baseline
+ * (cyros_port_masked_from_baseline() is true of it). Saves `from`, resumes
+ * `to`, and releases the mask, without calling the kernel back. Returns when
+ * `from` is next resumed, by either road, with `token` restored. `from` and
+ * `to` always differ.
+ *
+ * The kernel makes `to` its running thread before the call, so for a moment
+ * the thread it counts as running is not the one executing. A port that
+ * switches inside the call leaves that moment no room. One that switches in
+ * an exception taken once the mask is released, as PendSV is, leaves room for
+ * interrupts already waiting, and must keep two rules:
+ *  - A switch owed is carried out before the reschedule handler is called,
+ *    so the handler never runs while the two differ.
+ *  - A reschedule requested meanwhile, by cyros_port_pend_reschedule() from
+ *    an interrupt, still reaches the handler, after the owed switch.
+ *
+ * Port implementation notes:
+ *  - rv32: a call that saves what a call keeps and returns into the incoming
+ *    thread, all inside the mask.
+ *  - Cortex-M: records the switch as owed, pends PendSV and releases the
+ *    mask. PendSV, taken at once, carries it out without calling the kernel.
+ *  - Cortex-R52 and SPARC: the yield's own trap, carrying `from` and `to`,
+ *    whose handler swaps the frames instead of calling the kernel.
+ *  - linux_coop: a jump straight into the incoming thread's context.
+ *  - linux_preempt: as Cortex-M, with the reschedule signal for PendSV.
+ */
+void cyros_port_yield_to(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token);
+
+/**
+ * @brief Whether a caller that masked was at baseline priority before it did.
+ * @param token What cyros_port_irq_save() returned when the caller masked
+ *
+ * True when the caller is in thread context, and the mask `token` came from
+ * is its only one: interrupts were not masked and preemption was not disabled
+ * (Reschedule Requests). Releasing that mask returns it to baseline, so the
+ * kernel may take the thread's road there. Called with that mask held, from
+ * any context.
+ */
+bool cyros_port_masked_from_baseline(cyros_mask_token_t token);
 
 /**
  * @brief Start executing the first thread
@@ -400,6 +466,11 @@ void cyros_port_start_first(cyros_port_context_t* first);
  *                                  baseline priority only, synchronous.
  *  cyros_port_pend_reschedule()   weak guarantee, callable from any context,
  *                                  may be deferred.
+ *
+ * Both lead to the handler's road. A yield, a block or a wake made by a thread
+ * at baseline takes the thread's road instead (cyros_port_yield_to), so the
+ * kernel yields here only for a thread's exit, whose teardown must run on the
+ * handler's stack rather than the thread's own.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -419,9 +490,9 @@ void cyros_port_start_first(cyros_port_context_t* first);
  * precondition inside this function.
  *
  * Use when the caller is deliberately giving up the CPU and depends on the
- * round-trip having completed on return - e.g. blocking in a wait operation,
- * an explicit yield, or a join. Callers MAY rely on post-switch state being
- * valid immediately after this function returns.
+ * round-trip having completed on return - e.g. a thread's exit, which never
+ * returns. Callers MAY rely on post-switch state being valid immediately after
+ * this function returns.
  *
  * Port implementation notes:
  *  - Cortex-M: pend PendSV, then DSB/ISB. From baseline priority PendSV is

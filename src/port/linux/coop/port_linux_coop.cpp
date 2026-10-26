@@ -227,14 +227,21 @@ private:
 /* transfer_t::data protocol.
  *
  * A make_fcontext entry point receives its argument through the data pointer of
- * the FIRST jump into it. Nothing else is carried:
+ * the FIRST jump into it, and a jump into a thread always carries a handoff:
  *
- *   first entry into a thread      : the cyros_port_context*
+ *   any jump into a thread         : a handoff*, the context it enters and
+ *                                    the thread that jumped, if one did
  *   first entry into a scheduler   : the cpu_core*
- *   ordinary suspend, either way   : nullptr
+ *   a thread's jump to a scheduler : nullptr
  *
- * A thread entry cannot finish (see cyros_port_entry_t), so control only arrives
- * back at a jump site from a suspend and every resume stores the handle. */
+ * Two kinds of context jump into a thread: the core's scheduler, from
+ * cyros_port_switch (the handler's road), and another thread, from
+ * cyros_port_yield_to (the thread's road). The thread that receives the jump stores the
+ * context it came from where that context belongs, the scheduler's as this
+ * core's thread_caller and a thread's in that thread's own port context
+ * (arrive, below). A thread entry cannot finish (see cyros_port_entry_t), so
+ * control only arrives back at a jump site from a suspend and every resume
+ * stores the handle. */
 
 
 /* ============================================================================
@@ -248,6 +255,18 @@ struct cyros_port_context
    std::size_t               stack_size;
    cyros_port_entry_t   entry;
    void*                arg;
+};
+
+/**
+ * @brief What a jump into a thread carries (the transfer protocol above).
+ *
+ * Lives on the jumping context's stack, which the receiver reads before
+ * anything else runs on this core.
+ */
+struct handoff
+{
+   cyros_port_context* to;    // the context the jump enters
+   cyros_port_context* from;  // the thread that jumped, or null for the scheduler
 };
 
 /* ============================================================================
@@ -518,6 +537,27 @@ static void start_scheduler()
 }
 
 /**
+ * @brief Store the context a jump into this thread came from, where it
+ *        belongs (the transfer protocol), and note which thread now runs.
+ *
+ * The scheduler's is this core's thread_caller, resumed to reschedule. A
+ * thread's goes back into its own port context, from which the scheduler, or
+ * cyros_port_yield_to, resumes it later. thread_caller is untouched by
+ * cyros_port_yield_to, so it stays the scheduler's, suspended in the
+ * cyros_port_switch that last jumped into a thread here.
+ */
+static void arrive(boost::context::transfer_t const transfer)
+{
+   auto const* const h = static_cast<handoff const*>(transfer.data);
+   current_core.current_context = h->to;
+   if (h->from != nullptr) {
+      h->from->thread = context_handle::came_from(transfer.fctx);
+   } else {
+      current_core.thread_caller = context_handle::came_from(transfer.fctx);
+   }
+}
+
+/**
  * @brief Perform the synchronous switch into the scheduler context.
  *
  * Precondition: we are inside a thread context (current_context != nullptr).
@@ -528,7 +568,7 @@ static void switch_to_scheduler_context()
 {
    CYROS_ASSERT(current_core.current_context); // Not inside a thread context
    CYROS_ASSERT(current_core.thread_caller);   // No scheduler context to resume
-   current_core.thread_caller = context_handle::came_from(current_core.thread_caller.jump(nullptr).fctx);
+   arrive(current_core.thread_caller.jump(nullptr));
 }
 
 /* ----------------------------------------------------------------------------
@@ -737,10 +777,8 @@ void cyros_port_preempt_enable(cyros_mask_token_t token)
 [[gnu::noreturn]]
 static void thread_trampoline(boost::context::transfer_t entry_transfer)
 {
-   auto* context = static_cast<cyros_port_context*>(entry_transfer.data);
-
-   current_core.thread_caller   = context_handle::came_from(entry_transfer.fctx);
-   current_core.current_context = context;
+   arrive(entry_transfer);
+   auto* const context = current_core.current_context;
 
    context->entry(context->arg); // Enter user code, which does not come back
 
@@ -795,17 +833,45 @@ void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_context_t* to)
 {
    CYROS_ASSERT(to->thread); // No context to switch to
 
-   current_core.current_context = to;
+   handoff h{.to = to, .from = nullptr};
+   auto const back = to->thread.jump(&h);
 
-   // The first entry consumes `to` as the trampoline's argument; later resumes
-   // land inside the thread's own jump() and ignore it.
-   auto const back = to->thread.jump(to);
-
-   // Always resumable: an entry never returns, so this is always a suspend.
-   // Only cyros_port_context_destroy empties the handle.
-   to->thread = context_handle::came_from(back.fctx);
+   // Back from whichever thread now runs, which switches on the thread's road
+   // may have made another than `to`. Always resumable: an entry never returns, so this is
+   // always a suspend. Only cyros_port_context_destroy empties the handle.
+   current_core.current_context->thread = context_handle::came_from(back.fctx);
 
    current_core.current_context = nullptr;
+}
+
+void cyros_port_yield_to(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token)
+{
+   (void)token; // inert on this port, there is no mask to restore
+
+   // Thread context, masked by the kernel from baseline (port_core.h). Nothing
+   // here is asynchronous, so nothing was pended inside the kernel's mask.
+   CYROS_ASSERT(current_core.current_context == from);
+   CYROS_ASSERT(current_core.interrupt_disable_depth == 1);
+   CYROS_ASSERT(current_core.preempt_disable_depth == 0);
+   CYROS_ASSERT(!current_core.reschedule_pending);
+   CYROS_ASSERT(to->thread); // No context to switch to
+
+   // Every thread here is suspended at baseline: by a jump to the scheduler,
+   // which a yield makes there and a reschedule after its mask, or by this
+   // switch. The depths are the core's, so the mask goes first, by hand, as
+   // there is no pend to resolve.
+   current_core.interrupt_disable_depth = 0;
+
+   handoff h{.to = to, .from = from};
+   arrive(to->thread.jump(&h));
+}
+
+bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
+{
+   (void)token; // inert on this port: the depths say it
+   return current_core.current_context != nullptr &&
+          current_core.interrupt_disable_depth == 1 &&
+          current_core.preempt_disable_depth == 0;
 }
 
 void cyros_port_start_first(cyros_port_context_t* first)
@@ -877,18 +943,22 @@ void cyros_port_idle(void)
    auto& core_poke = global.cores[current_core.core_id].core_poke;
 
    // Fast path: don't sleep if already pending.
-   if (core_poke.pending.exchange(false, std::memory_order_acq_rel)) {
-      return;
+   if (!core_poke.pending.exchange(false, std::memory_order_acq_rel)) {
+      pthread_mutex_lock(&core_poke.mutex);
+
+      // Re-check under lock (avoids missed wake if signal happens between fast-path and lock)
+      while (!core_poke.pending.exchange(false, std::memory_order_acq_rel)) {
+         pthread_cond_wait(&core_poke.cond_var, &core_poke.mutex);
+      }
+
+      pthread_mutex_unlock(&core_poke.mutex);
    }
 
-   pthread_mutex_lock(&core_poke.mutex);
-
-   // Re-check under lock (avoids missed wake if signal happens between fast-path and lock)
-   while (!core_poke.pending.exchange(false, std::memory_order_acq_rel)) {
-      pthread_cond_wait(&core_poke.cond_var, &core_poke.mutex);
-   }
-
-   pthread_mutex_unlock(&core_poke.mutex);
+   // A poke cannot interrupt anything here, so nothing it asked for has run
+   // yet: hand the core back to the pump in scheduler_trampoline, whose
+   // reschedule takes in what was posted and whose loop sees a shutdown. On
+   // every other port the interrupt that woke the core has already done both.
+   switch_to_scheduler_context();
 }
 
 

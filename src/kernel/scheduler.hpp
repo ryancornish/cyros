@@ -22,6 +22,7 @@ enum class [[nodiscard]] schedule_hint
 {
    unwarranted, ///< The action did not ready any better thread that currently running
    warranted,   ///< The action may have readied a better thread that currently running
+   rescheduled, ///< The action warranted a reschedule and has made it already
 };
 
 void idle_task();
@@ -93,23 +94,73 @@ private:
     * urgency can beat its base and the pick folds it there. The caller holds
     * this core's critical section and the thread is in neither structure.
     *
-    * The part of set_thread_ready every admission needs, and all reschedule
-    * needs to rotate the thread it is switching away from: that thread is
-    * running, so it cannot be terminated, enqueued or listed, and nothing
-    * reads a hint about it.
+    * The part of set_thread_ready every admission needs, and all a switch
+    * needs to file the thread departing: that thread is running, so it cannot
+    * be terminated, enqueued or listed, and nothing reads a hint about it.
     *
-    * AT_FRONT files a matrix thread ahead of its equals: reschedule's
-    * preempted thread. A holder goes on the holder list either way, where
-    * equal urgency is settled by tie_rotor.
+    * AT_FRONT files a matrix thread ahead of its equals: a preempted thread.
+    * A holder goes on the holder list either way, where equal urgency is
+    * settled by tie_rotor.
     *
     * Inline, like set_thread_running, set_thread_blocked and pick_next, and
     * defined in scheduler.cpp, the only file that calls any of the four.
     * Every switch runs them, and out of line the asserts in them are enough
     * to stop GCC at -O2 inlining them, when the call costs more than the
     * body. */
+    // TODO: Rewrite description and maybe rename
    inline void admit(thread_control_block& tcb, bool at_front = false);
 
-   inline bool preempted(thread_control_block const& tcb) const;
+   /* set_thread_ready's work, under this core's critical section, which the
+    * caller holds. */
+   inline schedule_hint make_ready(thread_control_block& tcb);
+
+   /* ------------------------------------------------------------------------
+    * Switching threads (scheduler.cpp tells it whole)
+    *
+    * A switch is one decision with two roads into it. The running thread
+    * departs for a reason, which files it (depart), the pick becomes the
+    * running thread (run_next), and the port switches. On the thread's road
+    * (switch_from_thread) the thread itself yields, parks or is preempted by
+    * its own wake, at baseline, and knows why. On the handler's road
+    * (reschedule) the port calls in at a safe point, and the reason is worked
+    * out from what the thread was left as (departure_of).
+    * ---------------------------------------------------------------------- */
+
+   /**
+    * @brief The reasons for a thread 'departing'
+    *
+    * 'departing' means a thread transitioning from 'running'
+    * to any other state. The reason determines where it is next filed.
+    */
+   enum class departure : std::uint8_t
+   {
+      yielded,   ///< Pushed to the back of its queue
+      preempted, ///< Pushed to the front of its queue (a more urgent thread is ready)
+      parked,    ///< Committed to waiting on a waitable
+      exited,    ///< Terminated
+   };
+
+   /**
+    * @brief Thread-initiated switch
+    *
+    * Does not require the arbiter (reschedule() on interrupt) to
+    * determine what thread to swap to as we already know based on the event/s
+    * leading up to this call. Must be called with reschedule interrupt masked.
+    * Returns once the thread is picked to run again (may be immediately, if this is the best thread).
+    *
+    * @param reason Why the thread is departing (e.g. voluntary yield, waking a better thread, etc...)
+    * @param mask Interrupt mask - released by `cyros_port_yield_to`
+    *
+    * @note When the assert is compiled in, LTO doesn't otherwise inline this
+    *       so it is forced inline with an attribute.
+    */
+   [[gnu::always_inline]]
+   inline void switch_from_thread(departure reason, cyros_mask_token_t mask);
+
+   inline void depart(thread_control_block& tcb, departure reason);
+   [[nodiscard]] inline departure departure_of(thread_control_block const& tcb) const;
+   [[nodiscard]] inline bool preempted(thread_control_block const& tcb) const;
+   inline thread_control_block& run_next();
 
 public:
    static constexpr thread::id idle_thread_id = 0; // Reserved
@@ -157,7 +208,18 @@ public:
 
    void start();
 
-   schedule_hint set_thread_ready(thread_control_block& tcb);
+   /**
+    * @brief Ready a thread pinned here, and say whether a reschedule is now
+    *        warranted.
+    *
+    * A wake whose POLICY allows a reschedule, made by the running thread at
+    * baseline, takes the reschedule it warrants itself, on the thread's road,
+    * in the critical section that readied the thread, and returns
+    * schedule_hint::rescheduled once the waker runs again. Everything that
+    * must not switch (reschedule() taking in the intake, a batch of wakes
+    * that pends once after) uses the default, which never does.
+    */
+   schedule_hint set_thread_ready(thread_control_block& tcb, reschedule_policy policy = reschedule_policy::never);
 
    inline void set_thread_running(thread_control_block& tcb);
 
@@ -238,14 +300,31 @@ public:
    }
 
    /**
-   * @brief Select the next runnable thread for this core and switch to it.
-   *
-   * Pick the highest-priority ready thread for this core and context-switch
-   * to it, parking or re-enqueuing the outgoing thread as its state and
-   * disposition dictate. Runs on the owning core in the current thread's
-   * context, driven by a yield, a wake, or a preemption IPI. See the .cpp
-   * for the full transition policy.
-   */
+    * @brief this_thread::yield: to the back of its level, and the pick runs.
+    *
+    * The thread's road. Called by the running thread at baseline.
+    */
+   void yield();
+
+   /**
+    * @brief Park the running thread, which is prepared to block, and run the
+    *        pick.
+    *
+    * The thread's road, called by commit_to_block inside the critical section
+    * in which it found the thread still prepared, whose token is MASK, so no
+    * wake on this core can land between that look and the park. The switch
+    * releases MASK, and this returns once the thread has been woken and runs
+    * again.
+    */
+   void park(cyros_mask_token_t mask);
+
+   /**
+    * @brief The handler's road: called by the port at a safe point, once a
+    *        reschedule was pended or the port's yield made.
+    *
+    * Works out why the running thread departs from what it was left as, files
+    * it, and switches to the pick. See the .cpp.
+    */
    void reschedule();
 
    void reset();
@@ -284,11 +363,14 @@ public:
  * remote scheduler. DEFINED IN kernel.cpp for that access.
  *
  * @param tcb thread control block of the thread to make runnable.
+ * @param policy the waker's: anything but never lets a wake on this core take
+ *        the reschedule it warrants itself (scheduler::set_thread_ready).
  * @return schedule_hint::warranted if the thread was queued on the current core
  *         and has higher priority than the running thread, indicating the caller
- *         should request a local reschedule.
+ *         should request a local reschedule, and schedule_hint::rescheduled
+ *         if that reschedule has been made already.
  */
-schedule_hint global_ready_thread(thread_control_block& tcb);
+schedule_hint global_ready_thread(thread_control_block& tcb, reschedule_policy policy);
 
 /* ---------------------------------------------------------------------------
  * A thread's relationship to scheduling: what it is worth, when it parks, and
@@ -363,18 +445,20 @@ inline constexpr unsigned max_inheritance_depth = 8;
  * @brief Commit to parking, unless a wake has already revoked the intent.
  *
  * The subtle half of the two-phase block, and the ONLY part of it that is worth
- * sharing between the group wait and a primitive with its own blocking loop. The
- * arming loops differ enough (one source versus many) that a shared abstraction
- * would cost more readability than it saves, but this test-and-commit must be
- * identical everywhere or the lost-wakeup window reopens.
+ * sharing between the wait engine and the primitives with blocking loops of
+ * their own (base_mutex::lock, this_thread::suspend). The arming loops differ
+ * enough that a shared abstraction would cost more readability than it saves,
+ * but this test-and-park must be identical everywhere or the lost-wakeup window
+ * reopens.
  *
- * The test and the store run with this core's interrupts masked, so a wake
- * cannot land between deciding to block and recording it. A wake that arrived
+ * The test and the park run with this core's interrupts masked, so a wake
+ * cannot land between deciding to block and parking. A wake that arrived
  * earlier has already cleared the disposition, and that is what this re-reads:
  * seeing anything other than prepared means someone readied us after we armed,
- * so we must not park. Committed, it yields, and returns once the thread runs
- * again, never before the switch: the caller disarms next, and a thread that
- * disarmed before it parked would park armed on nothing.
+ * so we must not park. Still prepared, it parks (scheduler::park), and returns
+ * once the thread runs again, never before the switch: the caller disarms
+ * next, and a thread that disarmed before it parked would park armed on
+ * nothing.
  *
  * Caller must be armed on every source it intends to wake from BEFORE calling,
  * and at baseline, as for any yield.

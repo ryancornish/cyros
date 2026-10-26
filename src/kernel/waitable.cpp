@@ -5,19 +5,15 @@
  * @file waitable.cpp
  * @brief Implementation of the waitable kernel base class.
  *
- * Lost-wakeup correctness rests on two cooperating mechanisms:
- *
- *  1. The two-phase block in this file: arm (link a wait_node into the
- *     queue under the queue lock, set the thread's state to blocked), then
- *     park (yield to the scheduler). The queue lock is released between
- *     arm and park.
- *
- *  2. The scheduler's tolerance of state==ready on entry to reschedule().
- *     A wake that arrives in the window between arm-unlock and park sees a
- *     properly-linked, blocked thread; it unlinks the node and sets
- *     state=ready. When the thread then yields, reschedule() sees
- *     state==ready and treats it as a rotation (re-enqueue, pick the next
- *     thread). No yield is "lost"; no wake is dropped.
+ * Lost-wakeup correctness rests on the two-phase block in this file: the
+ * thread says it is prepared to block, arms (links a wait_node into the queue
+ * under the queue lock), polls, and only then commits (commit_to_block),
+ * which parks it only if it is still prepared, looked at and parked in one
+ * critical section. The queue lock is released between arm and commit. A
+ * wake that lands in that window takes the node and clears the disposition,
+ * so the commit finds it cleared and does not park, and a wake from another
+ * core that is still in flight is taken in by the park's own switch, which
+ * finds the thread readied and does not park it either. No wake is dropped.
  *
  * A wait_node has exactly one 'next' pointer, so it cannot be in two intrusive
  * lists at once. A wait on w with a cancel_signal therefore uses two, one per
@@ -30,7 +26,6 @@
 #include <cyros/kernel/core.hpp>
 #include <cyros/port/port.h>
 
-#include "port_critical.hpp"
 #include "base_mutex_access.hpp"
 #include "scheduler.hpp"
 #include "threading_subsystem.hpp"
@@ -83,7 +78,9 @@ namespace
  */
 void apply_reschedule_policy(reschedule_policy const policy, schedule_hint const hint)
 {
-   if (policy == reschedule_policy::never) {
+   // A wake that took its reschedule itself has nothing left to ask for,
+   // whatever its policy: `always` asks for one reschedule, not two.
+   if (policy == reschedule_policy::never || hint == schedule_hint::rescheduled) {
       return;
    }
 
@@ -267,7 +264,7 @@ CYROS_HOT void wait_queue::wake_one(reschedule_policy policy, inheritance_cache*
       refresh_top(pi);
    }
 
-   schedule_hint hint = global_ready_thread(*chosen);
+   schedule_hint hint = global_ready_thread(*chosen, policy);
    apply_reschedule_policy(policy, hint);
 }
 
@@ -292,7 +289,8 @@ void wait_queue::wake_all(reschedule_policy policy, inheritance_cache* pi) noexc
          node->next = nullptr;
          refresh_top(pi);
       }
-      schedule_hint hint = global_ready_thread(*chosen);
+      // never: the batch's one pend follows it, at the enable
+      schedule_hint hint = global_ready_thread(*chosen, reschedule_policy::never);
       if (hint == schedule_hint::warranted) {
          aggregate_hint = schedule_hint::warranted;
       }
@@ -328,7 +326,7 @@ void wait_queue::raise_all(std::atomic<bool>& flag, reschedule_policy policy) no
       while (node != nullptr) {
          wait_node* const next = node->next;
          node->next = nullptr;
-         if (global_ready_thread(*node->owner) == schedule_hint::warranted) {
+         if (global_ready_thread(*node->owner, reschedule_policy::never) == schedule_hint::warranted) {
             aggregate_hint = schedule_hint::warranted;
          }
          node = next;
@@ -379,7 +377,7 @@ void wait_queue::wake_all_where(pick_fn pick, reschedule_policy policy) noexcept
          }
       }
       for (std::size_t i = 0; i < count; ++i) {
-         if (global_ready_thread(*chosen[i]) == schedule_hint::warranted) {
+         if (global_ready_thread(*chosen[i], reschedule_policy::never) == schedule_hint::warranted) {
             aggregate_hint = schedule_hint::warranted;
          }
       }
@@ -419,7 +417,7 @@ CYROS_HOT bool wait_queue::wake_one_and_commit(commit_fn commit, reschedule_poli
    // delivery. Only the TCB is touched out here. The wait_node lives on the
    // waiter's stack and is only dereferenced under the lock, matching the
    // wake_one discipline.
-   schedule_hint hint = global_ready_thread(*chosen);
+   schedule_hint hint = global_ready_thread(*chosen, policy);
    apply_reschedule_policy(policy, hint);
    return true;
 }
@@ -525,27 +523,21 @@ std::uint8_t urgency_at(thread_control_block const& tcb, unsigned const depth) n
 
 CYROS_HOT void commit_to_block(thread_control_block& tcb)
 {
-   // Hazard: the thread could read 'prepared', an ISR could clear the
-   // disposition, and the thread would blindly overwrite it to 'committed'.
-   // Masking interrupts makes the test and the store one step with no
-   // read-modify-write, because every write to a disposition is made on its
-   // thread's own core: by the thread, by an ISR there, or by its scheduler. A
-   // remote wake goes through the intake and is applied here, in a reschedule.
-   bool committed = false;
-   {
-      port_critical_guard guard;
-      if (tcb.disposition == thread_disposition::prepared) {
-         tcb.disposition = thread_disposition::committed;
-         committed = true;
-      }
+   // Hazard: the thread could read 'prepared', an ISR could then clear the
+   // disposition as it readies the thread, and the thread would park anyway,
+   // on a wake already spent. Masking interrupts makes the look and the park
+   // one step, because every write to a disposition is made on its thread's
+   // own core: by the thread, by an ISR there, or by its scheduler. A remote
+   // wake goes through the intake, which the park's switch takes in first.
+   auto const mask = cyros_port_irq_save();
+   if (tcb.disposition != thread_disposition::prepared) {
+      cyros_port_irq_restore(mask);
+      return;
    }
 
-   // A wake that lands before the yield clears the disposition and finds us
-   // running, and the reschedule then rotates us instead of parking us, as it
-   // does for any wake that beats the park.
-   if (committed) {
-      cyros_port_thread_yield();
-   }
+   // Parked and switched away in this same critical section, which the switch
+   // releases. Returns once the thread has been woken and runs again.
+   scheduler_for_this_core().park(mask);
 }
 
 void request_repick(thread_control_block& tcb)

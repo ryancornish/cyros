@@ -86,7 +86,7 @@ class ThreadControlBlockPrinter:
     # Must match cyros::thread_state. 'created' is the zero value, so an
     # off-by-one here silently renames every state rather than failing.
     STATES = ("created", "ready", "running", "blocked", "terminated")
-    DISPOSITIONS = ("none", "prepared", "committed")
+    DISPOSITIONS = ("none", "prepared", "terminating")
 
     def _enum_string(self, field, names):
         try:

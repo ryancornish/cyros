@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_multicore_owed_switch"
+layer = 5
+kind = "unit"
+source = "test_multicore_owed_switch.cpp"
+config = "test_multicore_owed_switch_config.hpp"
+
+# linux_preempt only: its proof is a thread that spins, without yielding,
+# until a more urgent one preempts it, which a cooperative port cannot do by
+# design. The bare-metal ports' cross-core doorbells are interrupts that ask
+# for a reschedule as any interrupt does, which test_target_irq_preempt
+# covers on the boards.
+[components]
+port = ["linux_preempt"]
+
+[link]
+system_libraries = ["boost_context", "gtest", "gtest_main"]

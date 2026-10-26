@@ -60,6 +60,21 @@
  * resumes either.
  *
  *
+ * The thread's road: a call that returns into another thread
+ * ===========================================================
+ * Where the kernel has decided a switch in thread context (port_core.h, the
+ * thread's road), cyros_port_yield_to makes it with no trap path at all. It
+ * is a call, made inside the kernel's mask, that saves the call frame a yield
+ * saves, marked as a switch's, moves the guard, and resumes the incoming
+ * thread on that thread's own stack. A thread cyros_port_yield_to suspended
+ * is resumed by returning into its own call, still masked, and it releases
+ * the mask itself. Any other frame goes to the trap exit, which resumes
+ * anything. The trap exit in turn resumes a switch's frame as it resumes any
+ * call frame, unmasked, a few instructions before its owner would have
+ * unmasked anyway. So neither road needs to know how the thread it resumes
+ * was suspended.
+ *
+ *
  * Masking: two bits, not two counters
  * ===================================
  *
@@ -409,6 +424,7 @@ extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cy
       "addi  sp, sp, -128           \n"
       "ori   t0, ra, 1              \n"   /* mepc's slot, marked: a call frame */
       "sw    t0,    0(sp)           \n"
+      "sw    zero,  8(sp)           \n"   /* a yield's (riscv.hpp) */
       "sw    x4,   16(sp)           \n"
       "sw    x8,   32(sp)           \n"
       "sw    x9,   36(sp)           \n"
@@ -431,6 +447,78 @@ extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cy
       "1:                           \n"
       "mv    sp, t0                 \n"
       "call  cyros_port_yield_dispatch \n"
+      "j     cyros_port_trap_exit   \n");
+}
+
+/**
+ * @brief cyros_port_yield_to's half of the trap path, which takes no trap
+ *        (file comment): a CALL that saves a call frame and returns into
+ *        another.
+ *
+ * In thread context, masked by the kernel. Stores the return address (marked)
+ * and the registers a call keeps on the outgoing thread's stack, marked as a
+ * switch's frame, and points `from` at it. Then moves the guard to the
+ * incoming thread and resumes it: by returning into its own switch when a
+ * switch suspended it, and through cyros_port_trap_exit otherwise.
+ * `cyros_port_yield_to_saved` is the label after its last store, for the
+ * fault handler's overflow check.
+ */
+extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_yield_to_entry(cyros_port_context*, cyros_port_context*)
+{
+   asm volatile(
+      "addi  sp, sp, -128           \n"
+      "ori   t0, ra, 1              \n"   /* mepc's slot, marked: a call frame */
+      "sw    t0,    0(sp)           \n"
+      "li    t0, 1                  \n"   /* a switch's (riscv.hpp) */
+      "sw    t0,    8(sp)           \n"
+      "sw    x4,   16(sp)           \n"
+      "sw    x8,   32(sp)           \n"
+      "sw    x9,   36(sp)           \n"
+      "sw    x18,  72(sp)           \n"
+      "sw    x19,  76(sp)           \n"
+      "sw    x20,  80(sp)           \n"
+      "sw    x21,  84(sp)           \n"
+      "sw    x22,  88(sp)           \n"
+      "sw    x23,  92(sp)           \n"
+      "sw    x24,  96(sp)           \n"
+      "sw    x25, 100(sp)           \n"
+      "sw    x26, 104(sp)           \n"
+      "sw    x27, 108(sp)           \n"
+      ".global cyros_port_yield_to_saved \n"
+      "cyros_port_yield_to_saved: \n"
+      "sw    sp,    0(a0)           \n"   /* from->frame */
+#if CYROS_RISCV_STACK_GUARD
+      /* The incoming thread's guard, after the last store to the outgoing
+       * stack, which the old guard covered. 0 is no guard. */
+      "lw    t0,    4(a1)           \n"   /* to->guard */
+      "beqz  t0, 1f                 \n"
+      "csrw  pmpaddr0, t0           \n"
+      "1:                           \n"
+#endif
+      "lw    a0,    0(a1)           \n"   /* to->frame */
+      "lw    t0,    0(a0)           \n"
+      "andi  t1, t0, 1              \n"
+      "beqz  t1, 2f                 \n"   /* a trap frame */
+      "lw    t1,    8(a0)           \n"
+      "beqz  t1, 2f                 \n"   /* a yield's, which resumes at baseline */
+      "mv    sp, a0                 \n"   /* a switch's: return into it */
+      "lw    x4,   16(sp)           \n"
+      "lw    x8,   32(sp)           \n"
+      "lw    x9,   36(sp)           \n"
+      "lw    x18,  72(sp)           \n"
+      "lw    x19,  76(sp)           \n"
+      "lw    x20,  80(sp)           \n"
+      "lw    x21,  84(sp)           \n"
+      "lw    x22,  88(sp)           \n"
+      "lw    x23,  92(sp)           \n"
+      "lw    x24,  96(sp)           \n"
+      "lw    x25, 100(sp)           \n"
+      "lw    x26, 104(sp)           \n"
+      "lw    x27, 108(sp)           \n"
+      "andi  ra, t0, -2             \n"   /* drop the mark */
+      "addi  sp, sp, 128            \n"
+      "ret                          \n"
+      "2:                           \n"
       "j     cyros_port_trap_exit   \n");
 }
 
@@ -508,19 +596,21 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_yield_dispatch
 }
 
 
-/* The trap entry's and the yield's own extents, to recognise a fault taken
- * while either saved a frame. Each label follows its last store. */
+/* The trap entry's, the yield's and cyros_port_yield_to's own extents, to
+ * recognise a fault taken while one saved a frame. Each label follows its
+ * last store. */
 extern "C" void cyros_port_trap_exit(void);
 extern "C" void cyros_port_yield_saved(void);
+extern "C" void cyros_port_yield_to_saved(void);
 
 /**
  * @brief The default fault handler: report, and panic.
  *
  * Weak, so an application can take faults itself (riscv.hpp). An access fault
- * inside the trap entry, or the yield's while it saves, means it could not
- * save a frame below the interrupted sp, which with the guard on is a stack
- * overflow: the frame was headed into the guard, and in the trap entry's case
- * the original faulting instruction is lost.
+ * inside the trap entry, or the yield's or cyros_port_yield_to's while it saves,
+ * means it could not save a frame below the interrupted sp, which with the
+ * guard on is a stack overflow: the frame was headed into the guard, and in
+ * the trap entry's case the original faulting instruction is lost.
  */
 extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
 {
@@ -529,8 +619,11 @@ extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_riscv_fault_handle
    auto const exit        = reinterpret_cast<std::uint32_t>(&cyros_port_trap_exit);
    auto const yield       = reinterpret_cast<std::uint32_t>(&cyros_port_yield_entry);
    auto const yield_saved = reinterpret_cast<std::uint32_t>(&cyros_port_yield_saved);
+   auto const swap        = reinterpret_cast<std::uint32_t>(&cyros_port_yield_to_entry);
+   auto const swap_saved  = reinterpret_cast<std::uint32_t>(&cyros_port_yield_to_saved);
    bool const access = mcause == riscv::cause_load_access || mcause == riscv::cause_store_access;
-   bool const saving = (epc >= entry && epc < exit) || (epc >= yield && epc < yield_saved);
+   bool const saving = (epc >= entry && epc < exit) || (epc >= yield && epc < yield_saved) ||
+                       (epc >= swap && epc < swap_saved);
    if (guarded() && access && saving) {
       riscv::write0("\n*** stack overflow: the trap entry could not save a frame (the guard) ***");
    }
@@ -728,6 +821,26 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    }
 }
 
+CYROS_PORT_HOT void cyros_port_yield_to(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
+{
+   /* Thread context, masked by the kernel from baseline (port_core.h). The mask
+    * is what lets the frame be resumed by a return: nothing can trap in
+    * between, and the thread that returns into it unmasks only once it is
+    * running on its own stack again. */
+   cyros_port_yield_to_entry(from, to);
+
+   /* Back on this thread's stack: by a return from another thread's switch,
+    * still masked, or through the trap exit, already unmasked. */
+   cyros_port_irq_restore(token);
+}
+
+CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
+{
+   /* MIE set before the mask means no trap was in progress, since handlers
+    * run with it clear. MSIE, the preempt grade, no mask touches. */
+   return (token & riscv::mstatus_mie) != 0u && (riscv::read_mie() & riscv::mie_msie) != 0u;
+}
+
 /* Not marked [[noreturn]], as on ARM: port_core.h declares it plain. */
 void cyros_port_start_first(cyros_port_context* first)
 {
@@ -783,12 +896,11 @@ CYROS_PORT_HOT void cyros_port_thread_yield(void)
 
 CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
 {
-   /* Callable from anywhere. At baseline, MIE and MSIE both set, the next safe
-    * point is now (port_core.h): the soft IRQ would be taken a few cycles
-    * after its store, with a trap frame, so the switch is made here instead,
-    * as a yield makes it, with a call frame. MIE set means no trap is in
-    * progress, since handlers run with it clear. Anywhere else, raise the soft
-    * IRQ, which is taken when both bits are next set. */
+   /* Callable from anywhere. At baseline the next safe point is now
+    * (port_core.h): the soft IRQ would be taken a few cycles after its store,
+    * with a trap frame, so the switch is made here instead, as a yield makes
+    * it, with a call frame. Anywhere else, raise the soft IRQ, which is taken
+    * when MIE and MSIE are next both set. */
    if ((riscv::read_mstatus() & riscv::mstatus_mie) != 0u && (riscv::read_mie() & riscv::mie_msie) != 0u) {
       cyros_port_yield_entry();
       return;

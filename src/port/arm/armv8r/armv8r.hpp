@@ -167,6 +167,7 @@ inline constexpr std::uint32_t fp_words = 0u;
 inline constexpr std::uint32_t frame_words = fp_words + 16u;
 inline constexpr std::uint32_t frame_bytes = frame_words * 4u;
 inline constexpr std::uint32_t frame_r0    = fp_words + 0u;
+inline constexpr std::uint32_t frame_r1    = fp_words + 1u;
 inline constexpr std::uint32_t frame_lr    = fp_words + 13u;
 inline constexpr std::uint32_t frame_pc    = fp_words + 14u;
 inline constexpr std::uint32_t frame_cpsr  = fp_words + 15u;

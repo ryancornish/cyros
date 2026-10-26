@@ -559,7 +559,9 @@ TEST_F(SingleCoreWaitables_Test,
  *               pick and the waker keeps the core.
  *   always    : reschedule regardless. The waker goes to the back of its
  *               priority's FIFO run queue, so an equal-priority woken thread
- *               takes the core immediately.
+ *               takes the core immediately. A more urgent one preempts it,
+ *               and that preemption is the one reschedule: the waker keeps
+ *               the front of its level.
  *   never     : do not reschedule even when the woken thread IS more urgent.
  *               It stays ready until the next scheduling point the waker
  *               reaches on its own.
@@ -631,6 +633,57 @@ TEST_F(SingleCoreWaitables_Test,
    EXPECT_TRUE(waiter_ran_before_waker_finished.load())
       << "the always policy did not hand the core to the equal-priority waiter";
    EXPECT_TRUE(waiter_done.load());
+}
+
+TEST_F(SingleCoreWaitables_Test,
+       GivenAMoreUrgentWaiter_WhenWokenWithAlways_ThenTheWakerReschedulesOnceAndKeepsItsTurn)
+{
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waiter_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> waker_stack{};
+   alignas(CYROS_PORT_STACK_ALIGN) static std::array<std::byte, STACK_SIZE> equal_stack{};
+
+   TestWaitable w;
+   std::atomic<bool> waiter_done{false};
+   std::atomic<bool> equal_ran{false};
+   std::atomic<bool> waiter_ran_first{false};
+   std::atomic<bool> equal_ran_before_waker_resumed{false};
+
+   // MORE urgent than the waker, so the wake itself preempts it.
+   thread waiter(
+      [&]{
+         this_thread::wait_on(w);
+         waiter_done.store(true, std::memory_order_release);
+      },
+      waiter_stack, thread::priority(0), core0
+   );
+
+   thread waker(
+      [&]{
+         w.set_and_wake_one(reschedule_policy::always);
+
+         // `always` asks for one reschedule, and the wake that preempted the
+         // waker was it. The waker was preempted, not rotated, so it is back
+         // at the front of its level and runs on ahead of its equal.
+         waiter_ran_first.store(waiter_done.load(std::memory_order_acquire), std::memory_order_release);
+         equal_ran_before_waker_resumed.store(equal_ran.load(std::memory_order_acquire),
+                                              std::memory_order_release);
+      },
+      waker_stack, thread::priority(1), core0
+   );
+
+   // Behind the waker at its level.
+   thread equal(
+      [&]{ equal_ran.store(true, std::memory_order_release); },
+      equal_stack, thread::priority(1), core0
+   );
+
+   kernel::start();
+
+   EXPECT_TRUE(waiter_ran_first.load())
+      << "the always policy did not hand the core to the more urgent waiter";
+   EXPECT_FALSE(equal_ran_before_waker_resumed.load())
+      << "the waker was rescheduled twice: a second reschedule after the preempting one sent it behind its equal";
+   EXPECT_TRUE(equal_ran.load());
 }
 
 TEST_F(SingleCoreWaitables_Test,
