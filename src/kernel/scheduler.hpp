@@ -221,9 +221,7 @@ private:
     *
     * @note Forced inline, because when the assert is compiled in, LTO doesn't
     *       otherwise inline this. Inlined, `reason` is a constant in each
-    *       caller, so depart's switch folds away. Out of line, one copy
-    *       dispatches on it at run time, which cost the M33 9 percent
-    *       (direct-switch.md 8).
+    *       caller, so depart's switch folds away.
     */
    [[gnu::always_inline]]
    void direct_reschedule(departure_reason const reason, cyros_mask_token_t const mask)
