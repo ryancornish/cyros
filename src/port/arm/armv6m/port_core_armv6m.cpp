@@ -11,7 +11,7 @@
  *
  * The Mainline layer (armv7m_armv8m) is the model, and its header says why
  * every switch happens in PendSV at the lowest priority, and how a switch on
- * the thread's road (cyros_port_yield_to) is owed to PendSV, which carries it
+ * the thread's road (cyros_port_direct_switch) is owed to PendSV, which carries it
  * out without calling the kernel. Both hold here unchanged. What ARMv6-M
  * takes away, and what this layer does instead:
  *
@@ -447,7 +447,7 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    switch_stacks(this_core(), from, to);
 }
 
-CYROS_PORT_HOT void cyros_port_yield_to(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
 {
    /* Thread context, masked by the kernel from baseline (port_core.h), so the
     * preemption depth is zero and PendSV carries this out rather than defer
@@ -619,7 +619,7 @@ CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
    /* From anywhere. Inside a preempt-disabled region PendSV runs at once and
     * defers, and the region's enable delivers it.
     *
-    * An interrupt taken between cyros_port_yield_to's release and its PendSV
+    * An interrupt taken between cyros_port_direct_switch's release and its PendSV
     * finds the switch owed, which PendSV would carry out without asking the
     * kernel, so it says it is asking (the Mainline layer's file comment). */
    owed_switch& owed = owed_switches[this_core()];

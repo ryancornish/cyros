@@ -318,7 +318,7 @@ void cyros_port_preempt_enable(cyros_mask_token_t token);
  *  - The thread's road. The running thread, at baseline priority, yields,
  *    blocks, or readies a thread more urgent than itself. The kernel decides
  *    who runs next there and then, under its mask, and the port switches
- *    straight to that thread: cyros_port_yield_to(). The kernel is not
+ *    straight to that thread: cyros_port_direct_switch(). The kernel is not
  *    called back.
  *
  *  - The handler's road. Anything else that warrants a switch asks for a
@@ -339,8 +339,9 @@ void cyros_port_preempt_enable(cyros_mask_token_t token);
  * @param entry Thread entry point function
  * @param arg Argument to pass to entry function
  *
- * This function sets up the context so that when port_switch() is called
- * with this context, the thread starts executing at entry(arg).
+ * This function sets up the context so that when either switch first resumes
+ * it, cyros_port_switch() or cyros_port_direct_switch(), the thread starts
+ * executing at entry(arg).
  */
 void cyros_port_context_init(cyros_port_context_t* context,
                               void* stack_base,
@@ -407,7 +408,7 @@ void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to);
  *  - linux_coop: a jump straight into the incoming thread's context.
  *  - linux_preempt: as Cortex-M, with the reschedule signal for PendSV.
  */
-void cyros_port_yield_to(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token);
+void cyros_port_direct_switch(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token);
 
 /**
  * @brief Whether a caller that masked was at baseline priority before it did.
@@ -426,7 +427,7 @@ bool cyros_port_masked_from_baseline(cyros_mask_token_t token);
  * @param first First thread context to run
  *
  * This is called once at scheduler startup to begin execution.
- * Unlike port_switch(), there's no "from" context to save.
+ * Unlike cyros_port_switch(), there's no "from" context to save.
  */
 void cyros_port_start_first(cyros_port_context_t* first);
 
@@ -468,7 +469,7 @@ void cyros_port_start_first(cyros_port_context_t* first);
  *                                  may be deferred.
  *
  * Both lead to the handler's road. A yield, a block or a wake made by a thread
- * at baseline takes the thread's road instead (cyros_port_yield_to), so the
+ * at baseline takes the thread's road instead (cyros_port_direct_switch), so the
  * kernel yields here only for a thread's exit, whose teardown must run on the
  * handler's stack rather than the thread's own.
  * ------------------------------------------------------------------------- */

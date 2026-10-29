@@ -74,106 +74,11 @@ CYROS_HOT schedule_hint scheduler::set_thread_ready(thread_control_block& tcb, r
    if (hint == schedule_hint::warranted && policy != reschedule_policy::never &&
        cyros_port_masked_from_baseline(mask))
    {
-      switch_from_thread(departure::preempted, mask);
+      direct_reschedule(departure_reason::preempted, mask);
       return schedule_hint::rescheduled;
    }
    cyros_port_irq_restore(mask);
    return hint;
-}
-
-inline schedule_hint scheduler::make_ready(thread_control_block& tcb)
-{
-   // Idempotent: a remote core might have sent us a late request to ready
-   // this thread, and we have already terminated it since (or are terminating). No-op.
-   if (tcb.state == thread_state::terminated || tcb.disposition == thread_disposition::terminating) {
-      return schedule_hint::unwarranted;
-   }
-
-   // Idempotent: if already admitted, this is a redundant wake/admit (e.g.
-   // two signallers raced, or a stale wake from a prior round). The thread
-   // is already going to run.
-   if (tcb.is_enqueued() || tcb.is_listed_holder()) {
-      CYROS_ASSERT(tcb.state == thread_state::ready);
-
-      // Re-route before returning. Ownership can arrive AFTER admission:
-      // hand_over files a handed-over resource into the new owner's slots from
-      // the releasing core, and a thread that was already sitting in the ready
-      // matrix at that moment is a holder filed where the urgency fold never
-      // looks, which is unbounded inversion for whoever parks behind the
-      // resource it now owns. Every such handover is followed by a redundant
-      // admission of the new owner, which is what makes this the one place the
-      // routing can be re-derived without a new message. The reverse migration
-      // cannot be needed: only a running thread can release, so a READY
-      // holder cannot stop being one.
-      if (tcb.is_enqueued() && !tcb.holds_nothing()) {
-         ready_matrix.remove_thread(tcb);
-         link_holder(tcb);
-         if (urgency(tcb) < current_thread_urgency()) {
-            return schedule_hint::warranted;
-         }
-      }
-      return schedule_hint::unwarranted;
-   }
-
-   admit(tcb);
-
-   // The idle thread's urgency is the worst there is, so it never beats the
-   // running thread and needs no case of its own here.
-   if (urgency(tcb) < current_thread_urgency()) {
-      return schedule_hint::warranted;
-   }
-   return schedule_hint::unwarranted;
-}
-
-inline void scheduler::admit(thread_control_block& tcb, bool at_front)
-{
-   tcb.state = thread_state::ready;
-
-   trace::thread_ready(tcb);
-
-   // Idle thread does not belong in the ready_matrix,
-   // but DOES follow state transition semantics
-   if (&tcb == idle_thread) {
-      return;
-   }
-
-   // A thread holding a base_mutex can be more urgent than its base priority,
-   // so it cannot be filed under a fixed key. It goes on the holder list, which
-   // the pick folds urgency over. Everyone else is filed at base_priority, which
-   // never changes, so nothing ever re-keys the matrix.
-   if (tcb.holds_nothing()) {
-      if (at_front) {
-         ready_matrix.enqueue_thread_front(tcb);
-      } else {
-         ready_matrix.enqueue_thread(tcb);
-      }
-   } else {
-      link_holder(tcb);
-   }
-}
-
-inline void scheduler::set_thread_running(thread_control_block& tcb)
-{
-   CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
-   CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
-
-   tcb.state = thread_state::running;
-   current_thread = &tcb;
-
-   trace::thread_running(tcb);
-}
-
-inline void scheduler::set_thread_blocked(thread_control_block& tcb)
-{
-   CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
-   CYROS_ASSERT_OP(tcb.state, ==, thread_state::running);
-   CYROS_ASSERT_OP(tcb.disposition, ==, thread_disposition::prepared);
-   CYROS_ASSERT(!tcb.is_enqueued());
-
-   tcb.disposition = thread_disposition::none;
-   tcb.state = thread_state::blocked;
-
-   trace::thread_blocked(tcb);
 }
 
 void scheduler::set_thread_terminated(thread_control_block& tcb)
@@ -329,8 +234,6 @@ static thread_control_block* await_intake_link(thread_control_block* node)
 
 void scheduler::drain_intake()
 {
-   if (!intake_pending()) return; // Fast path: a load is far cheaper than an exchange
-
    auto* node = intake_head.exchange(nullptr, std::memory_order_acq_rel);
    if (node == nullptr) return;
 
@@ -374,13 +277,14 @@ void scheduler::drain_intake()
  *
  * The next thread is then the pick (pick_next), or the idle thread, and it
  * becomes the running thread (run_next). Before any of it, wakes posted by
- * other cores are taken in (take_intake), so the pick sees them. That is the
- * whole of a switch, and there are two roads into it.
+ * other cores are taken in (drain_intake), so the pick sees them. That is the
+ * whole of a switch, and there are two roads into it. The steps, and the
+ * thread's road, are inline in scheduler.hpp.
  *
- * The thread's road, switch_from_thread. The running thread yields, parks,
+ * The thread's road, direct_reschedule. The running thread yields, parks,
  * or readies a thread more urgent than itself, at baseline. It knows why it
  * departs, so it takes the steps itself, at once, inside the critical section
- * that made the change, and hands the port the result (cyros_port_yield_to).
+ * that made the change, and hands the port the result (cyros_port_direct_switch).
  * Nothing can come between the change and the switch: this core's interrupts
  * stay masked throughout, and another core's wakes reach this core only
  * through the intake, which the road takes in first.
@@ -413,41 +317,14 @@ CYROS_HOT void scheduler::yield()
    auto const mask = cyros_port_irq_save();
    CYROS_REQUIRE(cyros_port_masked_from_baseline(mask)); // yield() off baseline: in an interrupt, a critical section or with preemption disabled
 
-   switch_from_thread(departure::yielded, mask);
+   direct_reschedule(departure_reason::yielded, mask);
 }
 
 CYROS_HOT void scheduler::park(cyros_mask_token_t const mask)
 {
    CYROS_REQUIRE(cyros_port_masked_from_baseline(mask)); // Blocked off baseline: in an interrupt, a critical section or with preemption disabled
 
-   switch_from_thread(departure::parked, mask);
-}
-
-inline void scheduler::switch_from_thread(departure const reason, cyros_mask_token_t const mask)
-{
-   CYROS_ASSERT(reason != departure::exited); // Exit takes the handler's road
-
-   if constexpr (config::cores > 1) {
-      drain_intake();
-   }
-
-   // Unless a remote wake just taken in readied it, which settles its
-   // departure as reschedule() settles it: filed already, and a park revoked.
-   auto& out = *current_thread;
-   if (out.state == thread_state::running) {
-      depart(out, reason);
-   }
-
-   auto& next_thread = run_next();
-   if (&next_thread == &out) {
-      // Picked again: alone at its level after a yield, or readied by a
-      // remote wake. It runs on.
-      cyros_port_irq_restore(mask);
-      return;
-   }
-   // Saves this thread, resumes NEXT and releases MASK. Returns once this
-   // thread is switched back in, by either road.
-   cyros_port_yield_to(out.context(), next_thread.context(), mask);
+   direct_reschedule(departure_reason::parked, mask);
 }
 
 /**
@@ -463,14 +340,16 @@ CYROS_HOT void scheduler::reschedule()
    CYROS_ASSERT(!current_thread->is_enqueued());
 
    if constexpr (config::cores > 1) {
-      drain_intake();
+      if (intake_pending()) {
+         drain_intake();
+      }
    }
 
-   auto& out = *current_thread;
+   auto& prev_thread = *current_thread;
 
    // Where the port saves the current context into.
    // nullptr means discard the current context (akin to terminating it)
-   cyros_port_context* capture_context = out.context();
+   cyros_port_context* capture_context = prev_thread.context();
    thread_control_block* next_thread = nullptr;
    {
       // The departure and the pick must observe and mutate the matrix
@@ -478,13 +357,13 @@ CYROS_HOT void scheduler::reschedule()
       // the ISR's own pend tail-chaining a corrective reschedule.
       port_critical_guard guard;
 
-      switch (out.state) {
+      switch (prev_thread.state) {
          case thread_state::running: {
-            auto const reason = departure_of(out);
-            if (reason == departure::exited) {
+            auto const reason = departure_of(prev_thread);
+            if (reason == departure_reason::exited) {
                capture_context = nullptr; // Tell the port to retire the current context
             }
-            depart(out, reason);
+            depart(prev_thread, reason);
             break;
          }
 
@@ -495,7 +374,7 @@ CYROS_HOT void scheduler::reschedule()
          case thread_state::blocked:
          case thread_state::created:
          default:
-            CYROS_ASSERT1(false, out.state); // Illegal thread state
+            CYROS_ASSERT1(false, prev_thread.state); // Illegal thread state
             break;
       }
 
@@ -503,83 +382,6 @@ CYROS_HOT void scheduler::reschedule()
    }
 
    cyros_port_switch(capture_context, next_thread->context());
-}
-
-/**
- * @brief File the running thread by why it departs (Switching threads, above).
- */
-inline void scheduler::depart(thread_control_block& tcb, departure const why)
-{
-   switch (why) {
-      case departure::yielded:   admit(tcb);                   break;
-      case departure::preempted: admit(tcb, /*at_front*/ true); break;
-      case departure::parked:    set_thread_blocked(tcb);      break;
-      case departure::exited:    set_thread_terminated(tcb);   break;
-   }
-}
-
-/**
- * @brief Why the running thread departs, worked out from what it was left as:
- *        the handler's road, which was not there when it happened.
- *
- * Under this core's critical section. Only this core writes a disposition
- * (the thread, an ISR here, or this scheduler), so the read is stable.
- *
- * - terminating            -> exited
- * - none or prepared       -> preempted, when a strictly more urgent thread
- *                             is ready, and yielded otherwise: a time slice
- *                             or a reschedule with nothing more urgent ready
- *                             rotates equals. Prepared is kept either way.
- *
- * A park never reaches here: a commit is made and parked on the thread's road.
- */
-inline scheduler::departure scheduler::departure_of(thread_control_block const& tcb) const
-{
-   if (tcb.disposition == thread_disposition::terminating) {
-      return departure::exited;
-   }
-   return preempted(tcb) ? departure::preempted : departure::yielded;
-}
-
-/**
- * @brief Whether the running thread is being preempted: a strictly more urgent
- *        thread is ready in the matrix.
- *
- * Read before the thread is filed. Only the plain case is answered: with a
- * holder anywhere, urgency is a fold, and the thread keeps the rotation it
- * always had.
- */
-inline bool scheduler::preempted(thread_control_block const& tcb) const
-{
-   // The bitmap first: on a rotation among equals it is all that runs.
-   return ready_matrix.has_more_urgent_than(tcb.base_priority) && holders_head == nullptr && tcb.holds_nothing();
-}
-
-/**
- * @brief The pick, made the running thread: the idle thread when nothing is
- *        ready. May be the thread that just departed.
- */
-inline thread_control_block& scheduler::run_next()
-{
-   auto* next = pick_next();
-   if (next == nullptr) {
-      next = idle_thread;
-   }
-   set_thread_running(*next);
-   return *next;
-}
-
-inline thread_control_block* scheduler::pick_next()
-{
-   // Holders are the only threads whose urgency can beat their base priority,
-   // and they are rare: measured at about 1 percent of picks in the one test
-   // that exercises mutexes, and zero everywhere else. With none, the matrix's
-   // head is the pick. The fold over them is out of line, so the switch path
-   // does not carry its registers (performance-investigation.md 10).
-   if (holders_head == nullptr) [[likely]] {
-      return ready_matrix.pop_best_thread();
-   }
-   return pick_with_holders();
 }
 
 [[gnu::noinline, gnu::cold]] thread_control_block* scheduler::pick_with_holders()

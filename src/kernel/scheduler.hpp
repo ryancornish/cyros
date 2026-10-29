@@ -5,6 +5,7 @@
 #define CYROS_SCHEDULER_HPP
 
 #include "threading_subsystem.hpp"
+#include "trace_points.hpp"
 
 #include <array>
 #include <atomic>
@@ -27,6 +28,8 @@ enum class [[nodiscard]] schedule_hint
 
 void idle_task();
 
+[[nodiscard]] inline std::uint8_t urgency(thread_control_block const& tcb) noexcept; // Defined below the class
+
 /**
  * @brief Per-core state controller
  *
@@ -35,8 +38,20 @@ void idle_task();
 class scheduler
 {
 private:
-   /* Assigned by initialise(), not at construction, so that the scheduler, and
-    * kernel_state around it, is all zeros at startup (kernel.cpp). */
+   /**
+    * @brief The reasons for a thread 'departing'
+    *
+    * 'departing' means a thread transitioning from 'running'
+    * to any other state. The reason determines where it is next filed.
+    */
+   enum class departure_reason : std::uint8_t
+   {
+      yielded,   ///< Pushed to the back of its queue
+      preempted, ///< Pushed to the front of its queue (a more urgent thread is ready)
+      parked,    ///< Committed to blocking: out of the ready structures until woken
+      exited,    ///< Terminated
+   };
+
    std::uint32_t core_id{0};
    std::atomic<std::uint32_t> pinned_thread_counter{0};
    thread_control_block* current_thread{nullptr};
@@ -45,7 +60,7 @@ private:
 
    thread_ready_matrix ready_matrix;
 
-   /* Head of this core's intake stack. Any core pushes, only this one takes.
+   /* Head of this core's intake stack (MPSC)
     *
     * The TCB is the message: what a producer wants is recorded in
     * thread_control_block::pending_requests, and this list only says WHICH TCBs
@@ -102,17 +117,82 @@ private:
     * A holder goes on the holder list either way, where equal urgency is
     * settled by tie_rotor.
     *
-    * Inline, like set_thread_running, set_thread_blocked and pick_next, and
-    * defined in scheduler.cpp, the only file that calls any of the four.
-    * Every switch runs them, and out of line the asserts in them are enough
-    * to stop GCC at -O2 inlining them, when the call costs more than the
-    * body. */
+    * Inline, like set_thread_running, set_thread_blocked and pick_next: every
+    * switch runs them, and out of line the asserts in them are enough to
+    * stop GCC at -O2 inlining them, when the call costs more than the body. */
     // TODO: Rewrite description and maybe rename
-   inline void admit(thread_control_block& tcb, bool at_front = false);
+   void admit(thread_control_block& tcb, bool at_front = false)
+   {
+      tcb.state = thread_state::ready;
+
+      trace::thread_ready(tcb);
+
+      // Idle thread does not belong in the ready_matrix,
+      // but DOES follow state transition semantics
+      if (&tcb == idle_thread) {
+         return;
+      }
+
+      // A thread holding a base_mutex can be more urgent than its base priority,
+      // so it cannot be filed under a fixed key. It goes on the holder list, which
+      // the pick folds urgency over. Everyone else is filed at base_priority, which
+      // never changes, so nothing ever re-keys the matrix.
+      if (tcb.holds_nothing()) {
+         if (at_front) {
+            ready_matrix.enqueue_thread_front(tcb);
+         } else {
+            ready_matrix.enqueue_thread(tcb);
+         }
+      } else {
+         link_holder(tcb);
+      }
+   }
 
    /* set_thread_ready's work, under this core's critical section, which the
     * caller holds. */
-   inline schedule_hint make_ready(thread_control_block& tcb);
+   schedule_hint make_ready(thread_control_block& tcb)
+   {
+      // Idempotent: a remote core might have sent us a late request to ready
+      // this thread, and we have already terminated it since (or are terminating). No-op.
+      if (tcb.state == thread_state::terminated || tcb.disposition == thread_disposition::terminating) {
+         return schedule_hint::unwarranted;
+      }
+
+      // Idempotent: if already admitted, this is a redundant wake/admit (e.g.
+      // two signallers raced, or a stale wake from a prior round). The thread
+      // is already going to run.
+      if (tcb.is_enqueued() || tcb.is_listed_holder()) {
+         CYROS_ASSERT(tcb.state == thread_state::ready);
+
+         // Re-route before returning. Ownership can arrive AFTER admission:
+         // hand_over files a handed-over resource into the new owner's slots from
+         // the releasing core, and a thread that was already sitting in the ready
+         // matrix at that moment is a holder filed where the urgency fold never
+         // looks, which is unbounded inversion for whoever parks behind the
+         // resource it now owns. Every such handover is followed by a redundant
+         // admission of the new owner, which is what makes this the one place the
+         // routing can be re-derived without a new message. The reverse migration
+         // cannot be needed: only a running thread can release, so a READY
+         // holder cannot stop being one.
+         if (tcb.is_enqueued() && !tcb.holds_nothing()) {
+            ready_matrix.remove_thread(tcb);
+            link_holder(tcb);
+            if (urgency(tcb) < current_thread_urgency()) {
+               return schedule_hint::warranted;
+            }
+         }
+         return schedule_hint::unwarranted;
+      }
+
+      admit(tcb);
+
+      // The idle thread's urgency is the worst there is, so it never beats the
+      // running thread and needs no case of its own here.
+      if (urgency(tcb) < current_thread_urgency()) {
+         return schedule_hint::warranted;
+      }
+      return schedule_hint::unwarranted;
+   }
 
    /* ------------------------------------------------------------------------
     * Switching threads (scheduler.cpp tells it whole)
@@ -120,47 +200,172 @@ private:
     * A switch is one decision with two roads into it. The running thread
     * departs for a reason, which files it (depart), the pick becomes the
     * running thread (run_next), and the port switches. On the thread's road
-    * (switch_from_thread) the thread itself yields, parks or is preempted by
+    * (direct_reschedule) the thread itself yields, parks or is preempted by
     * its own wake, at baseline, and knows why. On the handler's road
     * (reschedule) the port calls in at a safe point, and the reason is worked
     * out from what the thread was left as (departure_of).
     * ---------------------------------------------------------------------- */
 
    /**
-    * @brief The reasons for a thread 'departing'
+    * @brief Thread-initiated reschedule
     *
-    * 'departing' means a thread transitioning from 'running'
-    * to any other state. The reason determines where it is next filed.
-    */
-   enum class departure : std::uint8_t
-   {
-      yielded,   ///< Pushed to the back of its queue
-      preempted, ///< Pushed to the front of its queue (a more urgent thread is ready)
-      parked,    ///< Committed to waiting on a waitable
-      exited,    ///< Terminated
-   };
-
-   /**
-    * @brief Thread-initiated switch
-    *
-    * Does not require the arbiter (reschedule() on interrupt) to
-    * determine what thread to swap to as we already know based on the event/s
-    * leading up to this call. Must be called with reschedule interrupt masked.
+    * Does not need the handler's road (reschedule()) to work out what thread
+    * to swap to, as we already know based on the event/s leading up to this
+    * call. Must be called at baseline, with this core's interrupts masked by
+    * cyros_port_irq_save, so that no wake on this core can land mid-pick.
     * Returns once the thread is picked to run again (may be immediately, if this is the best thread).
     *
     * @param reason Why the thread is departing (e.g. voluntary yield, waking a better thread, etc...)
-    * @param mask Interrupt mask - released by `cyros_port_yield_to`
+    * @param mask Interrupt mask - released by `cyros_port_direct_switch`, or
+    *        at once if the thread is picked again
     *
-    * @note When the assert is compiled in, LTO doesn't otherwise inline this
-    *       so it is forced inline with an attribute.
+    * @note Forced inline, because when the assert is compiled in, LTO doesn't
+    *       otherwise inline this. Inlined, `reason` is a constant in each
+    *       caller, so depart's switch folds away. Out of line, one copy
+    *       dispatches on it at run time, which cost the M33 9 percent
+    *       (direct-switch.md 8).
     */
    [[gnu::always_inline]]
-   inline void switch_from_thread(departure reason, cyros_mask_token_t mask);
+   void direct_reschedule(departure_reason const reason, cyros_mask_token_t const mask)
+   {
+      CYROS_ASSERT(reason != departure_reason::exited); // Exit takes the handler's road
 
-   inline void depart(thread_control_block& tcb, departure reason);
-   [[nodiscard]] inline departure departure_of(thread_control_block const& tcb) const;
-   [[nodiscard]] inline bool preempted(thread_control_block const& tcb) const;
-   inline thread_control_block& run_next();
+      if constexpr (config::cores > 1) {
+         if (intake_pending()) {
+            drain_intake();
+         }
+      }
+
+      // Unless a remote wake just taken in readied it, which settles its
+      // departure as reschedule() settles it: filed already, and a park revoked.
+      auto& prev_thread = *current_thread;
+      if (prev_thread.state == thread_state::running) {
+         depart(prev_thread, reason);
+      }
+
+      auto& next_thread = run_next();
+      if (&next_thread == &prev_thread) {
+         // Picked again: alone at its level after a yield, or readied by a
+         // remote wake. It runs on.
+         cyros_port_irq_restore(mask);
+         return;
+      }
+      // Saves this thread, resumes NEXT and releases MASK. Returns once this
+      // thread is switched back in, by either road.
+      cyros_port_direct_switch(prev_thread.context(), next_thread.context(), mask);
+   }
+
+   /**
+    * @brief File the running thread by why it departs (Switching threads,
+    *        scheduler.cpp).
+    */
+   void depart(thread_control_block& tcb, departure_reason const reason)
+   {
+      switch (reason) {
+         case departure_reason::yielded:   admit(tcb);                   break;
+         case departure_reason::preempted: admit(tcb, /*at_front*/ true); break;
+         case departure_reason::parked:    set_thread_blocked(tcb);      break;
+         case departure_reason::exited:    set_thread_terminated(tcb);   break;
+      }
+   }
+
+   /**
+    * @brief Why the running thread departs, worked out from what it was left as:
+    *        the handler's road, which was not there when it happened.
+    *
+    * Under this core's critical section. Only this core writes a disposition
+    * (the thread, an ISR here, or this scheduler), so the read is stable.
+    *
+    * - terminating            -> exited
+    * - none or prepared       -> preempted, when a strictly more urgent thread
+    *                             is ready, and yielded otherwise: a time slice
+    *                             or a reschedule with nothing more urgent ready
+    *                             rotates equals. Prepared is kept either way.
+    *
+    * A park never reaches here: a commit is made and parked on the thread's road.
+    */
+   [[nodiscard]] departure_reason departure_of(thread_control_block const& tcb) const
+   {
+      if (tcb.disposition == thread_disposition::terminating) {
+         return departure_reason::exited;
+      }
+      return preempted(tcb) ? departure_reason::preempted : departure_reason::yielded;
+   }
+
+   /**
+    * @brief Whether the running thread is being preempted: a strictly more urgent
+    *        thread is ready in the matrix.
+    *
+    * Read before the thread is filed. Only the plain case is answered: with a
+    * holder anywhere, urgency is a fold, and the thread keeps the rotation it
+    * always had.
+    */
+   [[nodiscard]] bool preempted(thread_control_block const& tcb) const
+   {
+      // The bitmap first: on a rotation among equals it is all that runs.
+      return ready_matrix.has_more_urgent_than(tcb.base_priority) && holders_head == nullptr && tcb.holds_nothing();
+   }
+
+   /**
+    * @brief The pick, made the running thread: the idle thread when nothing is
+    *        ready. May be the thread that just departed.
+    */
+   thread_control_block& run_next()
+   {
+      auto* next = pick_next();
+      if (next == nullptr) {
+         next = idle_thread;
+      }
+      set_thread_running(*next);
+      return *next;
+   }
+
+   /**
+    * @brief Push a TCB onto this core's intake stack.
+    *
+    * @return true when the intake was EMPTY before this push, meaning the
+    *         caller owns sending the IPI. That decision comes from the same
+    *         atomic that enqueues, so there is no separate "is a drain already
+    *         coming" flag to go stale against it.
+    *
+    * Caller must already hold the claim in tcb.pending_requests, so a TCB is
+    * on the stack at most once.
+    *
+    * @note Runs on the posting core, never this one: global_ready_thread
+    *       posts across cores only. Private because post_intake, which takes
+    *       the claim, is its one caller.
+    */
+   [[nodiscard]] bool push_intake(thread_control_block& tcb);
+
+   /**
+    * @brief Act on every request bit set for @p tcb.
+    *
+    * @note Runs on this scheduler's own core only
+    */
+   void service_intake(thread_control_block& tcb, std::uint8_t bits);
+
+   /**
+    * @brief Take the whole intake chain and service every request on it.
+    *
+    * This is redundant (and should not be called) on single-core configurations.
+    * To save an expensive function call + atomic exchange operation, wrap the callsite
+    * in a cheaper atomic load that checks if there are actually any requests.
+    * E.g.
+    * @code
+    * if constexpr (config::cores > 1) {
+    *    if (intake_pending()) {
+    *       drain_intake();
+    *    }
+    * }
+    * @endcode
+    *
+    * The relaxed load is enough. If it sees the intake empty, a push still in
+    * flight finds it empty too, so its poster sends this core a reschedule,
+    * and that drains it.
+    *
+    * @note Runs on this scheduler's own core only
+    */
+   void drain_intake();
 
 public:
    static constexpr thread::id idle_thread_id = 0; // Reserved
@@ -221,9 +426,29 @@ public:
     */
    schedule_hint set_thread_ready(thread_control_block& tcb, reschedule_policy policy = reschedule_policy::never);
 
-   inline void set_thread_running(thread_control_block& tcb);
+   void set_thread_running(thread_control_block& tcb)
+   {
+      CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+      CYROS_ASSERT_OP(tcb.state, ==, thread_state::ready);
 
-   inline void set_thread_blocked(thread_control_block& tcb);
+      tcb.state = thread_state::running;
+      current_thread = &tcb;
+
+      trace::thread_running(tcb);
+   }
+
+   void set_thread_blocked(thread_control_block& tcb)
+   {
+      CYROS_ASSERT_OP(tcb.pinned_core, ==, core_id);
+      CYROS_ASSERT_OP(tcb.state, ==, thread_state::running);
+      CYROS_ASSERT_OP(tcb.disposition, ==, thread_disposition::prepared);
+      CYROS_ASSERT(!tcb.is_enqueued());
+
+      tcb.disposition = thread_disposition::none;
+      tcb.state = thread_state::blocked;
+
+      trace::thread_blocked(tcb);
+   }
 
    void set_thread_terminated(thread_control_block& tcb);
 
@@ -234,21 +459,19 @@ public:
     * most urgent holder, whose urgency is folded from truth rather than read
     * from a cache. Returns nullptr when nothing is runnable.
     */
-   inline thread_control_block* pick_next();
+   thread_control_block* pick_next()
+   {
+      // Holders are the only threads whose urgency can beat their base priority,
+      // and they are rare: measured at about 1 percent of picks in the one test
+      // that exercises mutexes, and zero everywhere else. With none, the matrix's
+      // head is the pick. The fold over them is out of line, so the switch path
+      // does not carry its registers (performance-investigation.md 10).
+      if (holders_head == nullptr) [[likely]] {
+         return ready_matrix.pop_best_thread();
+      }
+      return pick_with_holders();
+   }
    thread_control_block* pick_with_holders();
-
-   /**
-    * @brief Push a TCB onto this core's intake stack. Any core may call.
-    *
-    * @return true when the intake was EMPTY before this push, meaning the
-    *         caller owns sending the IPI. That decision comes from the same
-    *         atomic that enqueues, so there is no separate "is a drain already
-    *         coming" flag to go stale against it.
-    *
-    * Caller must already hold the claim in tcb.pending_requests, so a TCB is
-    * on the stack at most once.
-    */
-   [[nodiscard]] bool push_intake(thread_control_block& tcb);
 
    /**
     * @brief Ask this core to service @p type for @p tcb. Any core may call.
@@ -258,18 +481,6 @@ public:
     * there is no full-queue case needing a correct response.
     */
    void post_intake(thread_control_block& tcb, thread_request request);
-
-   /**
-    * @brief Act on every request bit set for @p tcb. Owning core only.
-    */
-   void service_intake(thread_control_block& tcb, std::uint8_t bits);
-
-   /**
-    * @brief Take the whole intake chain and service every request on it.
-    *
-    * Single consumer: only the owning core may call this.
-    */
-   void drain_intake();
 
    /**
     * @brief Append a ready thread that holds something to the holder list.

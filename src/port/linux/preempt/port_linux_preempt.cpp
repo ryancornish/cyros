@@ -30,7 +30,7 @@
  * signal handler is the analogue of PendSV running on the handler stack.
  *
  * The kernel's other road, the thread's (port_core.h), comes through the same
- * signal: cyros_port_yield_to() owes the handler a switch the kernel has
+ * signal: cyros_port_direct_switch() owes the handler a switch the kernel has
  * already decided, which on_reschedule() makes without calling the kernel, as
  * PendSV makes Cortex-M's.
  *
@@ -198,7 +198,7 @@ struct cpu_core
 
    /* Set by another core's IPI just before it raises the reschedule signal,
     * and taken by on_reschedule() on every pass. The IPI IS that signal, so
-    * one sent while this core owes a switch (cyros_port_yield_to) merges with
+    * one sent while this core owes a switch (cyros_port_direct_switch) merges with
     * the owed switch's own signal, and on_reschedule() carries an owed switch
     * out without calling the kernel unless something asked for a reschedule.
     * This is how another core asks, as current_core_state::owed_reschedule is
@@ -270,7 +270,7 @@ struct current_core_state
    sigctx_ucontext_t*  resume_uc{nullptr};
 
    // A switch the kernel decided on the thread's road and handed over with
-   // cyros_port_yield_to(), owed until the reschedule signal it raised is
+   // cyros_port_direct_switch(), owed until the reschedule signal it raised is
    // delivered. on_reschedule() carries it out without calling the kernel, and
    // calls the kernel after it only when owed_reschedule says a reschedule was
    // asked for meanwhile. The Cortex-M layer's owed switch, with the signal for
@@ -1339,7 +1339,7 @@ void cyros_port_switch(cyros_port_context_t* from, cyros_port_context_t* to)
    current_core.resume_uc = &to->sctx.uc;
 }
 
-void cyros_port_yield_to(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token)
+void cyros_port_direct_switch(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token)
 {
    // Thread context, masked by the kernel from baseline (port_core.h).
    CYROS_ASSERT(current_core.current_context == from);

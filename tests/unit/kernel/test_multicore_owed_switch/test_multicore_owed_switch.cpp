@@ -7,7 +7,7 @@
  *        the thread's road its doorbell lands.
  *
  * Subject: the cross-core wake (L5) meeting a switch the kernel decided on the
- *          thread's road and the port owes (cyros_port_yield_to)
+ *          thread's road and the port owes (cyros_port_direct_switch)
  * Trusts:  layers 0 to 4: the harness, scheduling and a waitable's wake
  *
  * On linux_preempt the owed switch and the cross-core doorbell are the same

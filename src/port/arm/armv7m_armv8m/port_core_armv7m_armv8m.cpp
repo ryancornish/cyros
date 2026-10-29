@@ -36,7 +36,7 @@
  * The thread's road, carried out by PendSV
  * ========================================
  * Where the kernel has decided a switch in thread context (port_core.h, the
- * thread's road), cyros_port_yield_to records it for this core as owed, pends
+ * thread's road), cyros_port_direct_switch records it for this core as owed, pends
  * PendSV and releases the kernel's mask. PendSV, taken at once, carries the
  * switch out as cyros_port_switch would and returns, never calling the kernel. A
  * switch made in Thread mode would not fit this architecture, because a
@@ -179,7 +179,7 @@ namespace cortex_m = cyros::port::cortex_m;
  *
  * `core` is the core the thread runs on, written each time a switch resumes
  * it, so a running thread's context names its own core. Threads never
- * migrate, so it never goes stale, and it saves cyros_port_yield_to asking
+ * migrate, so it never goes stale, and it saves cyros_port_direct_switch asking
  * the MCU layer which core this is, an out-of-line call on two cores.
  */
 struct cyros_port_context
@@ -223,7 +223,7 @@ void* current_tls[CYROS_PORT_CORE_COUNT] = {};
 /**
  * @brief A switch the kernel decided on the thread's road, owed until PendSV.
  *
- * Written by cyros_port_yield_to and carried out by PendSV, which calls
+ * Written by cyros_port_direct_switch and carried out by PendSV, which calls
  * the kernel after it only when `reschedule` says something asked meanwhile
  * (file comment). One per core, touched only by its own core: the thread
  * writes it masked, and PendSV and the interrupts taken around it read it.
@@ -682,7 +682,7 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    switch_stacks(from != nullptr ? core_of(from) : this_core(), from, to);
 }
 
-CYROS_PORT_HOT void cyros_port_yield_to(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
+CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
 {
    /* Thread context, masked by the kernel from baseline (port_core.h). FROM is
     * the running thread, so it names this core. */
@@ -873,7 +873,7 @@ CYROS_PORT_HOT void cyros_port_pend_reschedule(void)
     * until the execution priority drops to PendSV's level, which is exactly
     * port.h's "next safe point".
     *
-    * The one addition: an interrupt taken between cyros_port_yield_to's
+    * The one addition: an interrupt taken between cyros_port_direct_switch's
     * release and its PendSV finds the switch owed, which PendSV would carry
     * out without asking the kernel, so it says it is asking (file comment). */
    owed_switch& owed = owed_switches[this_core()];

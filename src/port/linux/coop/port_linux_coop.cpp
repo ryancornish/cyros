@@ -236,7 +236,7 @@ private:
  *
  * Two kinds of context jump into a thread: the core's scheduler, from
  * cyros_port_switch (the handler's road), and another thread, from
- * cyros_port_yield_to (the thread's road). The thread that receives the jump stores the
+ * cyros_port_direct_switch (the thread's road). The thread that receives the jump stores the
  * context it came from where that context belongs, the scheduler's as this
  * core's thread_caller and a thread's in that thread's own port context
  * (arrive, below). A thread entry cannot finish (see cyros_port_entry_t), so
@@ -542,8 +542,8 @@ static void start_scheduler()
  *
  * The scheduler's is this core's thread_caller, resumed to reschedule. A
  * thread's goes back into its own port context, from which the scheduler, or
- * cyros_port_yield_to, resumes it later. thread_caller is untouched by
- * cyros_port_yield_to, so it stays the scheduler's, suspended in the
+ * cyros_port_direct_switch, resumes it later. thread_caller is untouched by
+ * cyros_port_direct_switch, so it stays the scheduler's, suspended in the
  * cyros_port_switch that last jumped into a thread here.
  */
 static void arrive(boost::context::transfer_t const transfer)
@@ -844,7 +844,7 @@ void cyros_port_switch(cyros_port_context_t* /*from*/, cyros_port_context_t* to)
    current_core.current_context = nullptr;
 }
 
-void cyros_port_yield_to(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token)
+void cyros_port_direct_switch(cyros_port_context_t* from, cyros_port_context_t* to, cyros_mask_token_t token)
 {
    (void)token; // inert on this port, there is no mask to restore
 

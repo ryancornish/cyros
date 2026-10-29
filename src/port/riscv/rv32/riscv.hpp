@@ -129,7 +129,7 @@ inline constexpr std::uint32_t cause_store_access    = 7u;
  * slot with bit 0 set, which no real mepc has, and tp and s0 to s11 in their
  * own slots. Every other slot is stale, since a call keeps nothing there, but
  * for mstatus's, which says which call it was: 0 for a yield, which resumes at
- * baseline, 1 for cyros_port_yield_to's, which another cyros_port_yield_to
+ * baseline, 1 for cyros_port_direct_switch's, which another cyros_port_direct_switch
  * resumes by returning into it, still masked. Only a trap frame
  * reaches a fault handler.
  * ========================================================================= */

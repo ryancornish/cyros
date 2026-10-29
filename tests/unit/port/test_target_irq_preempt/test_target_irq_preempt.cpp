@@ -9,7 +9,7 @@
  * Subject / Trusts / Proves
  * -------------------------
  * Subject: the switch a yield makes, on the thread's road
- *          (cyros_port_yield_to), on the RP2350's two ISAs and the RP2040.
+ *          (cyros_port_direct_switch), on the RP2350's two ISAs and the RP2040.
  * Trusts:  layers 0 to 5, the semaphore (test_sync_semaphore), and the timer
  *          interrupt reaching isr_irq0 (test_target_device_irq).
  * Proves:  that once an interrupt has woken a more urgent thread, no less
