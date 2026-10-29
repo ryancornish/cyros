@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_riscv_nested_fault"
+layer = 0
+kind = "unit"
+source = "test_riscv_nested_fault.cpp"
+config = "test_riscv_nested_fault_config.hpp"
+hosted = false
+
+[components]
+port = ["riscv_virt"]
+
+[link]
+system_libraries = []

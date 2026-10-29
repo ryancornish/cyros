@@ -118,12 +118,16 @@ inline constexpr std::uint32_t cause_store_access    = 7u;
 /* ============================================================================
  * The trap frame
  * ----------------------------------------------------------------------------
- * Every trap stores the whole integer register file on the interrupted
- * thread's own stack, 32 words, laid out by register number so the slot of x_n
- * is word n. x0 is always zero and x2 is the frame's own address plus its
- * size, so their slots carry mepc and mstatus instead. A suspended thread is
- * therefore nothing but a pointer to one of these, which is what lets a context
- * switch be a single store, as it is on ARM.
+ * A trap frame is the whole integer register file on the interrupted thread's
+ * own stack, 32 words, laid out by register number so the slot of x_n is word
+ * n. x0 is always zero and x2 is the frame's own address plus its size, so
+ * their slots carry mepc and mstatus instead. The trap entry stores it in two
+ * halves (port_core_rv32.cpp): the clobbered half always, and the kept half,
+ * gp, tp and s0 to s11, only for a fault or before a reschedule, so the frame
+ * an interrupt resumes without one is never whole, and every frame a switch
+ * suspends is. A suspended thread is therefore nothing but a pointer to one of
+ * these, which is what lets a context switch be a single store, as it is on
+ * ARM.
  *
  * A yield stores a CALL FRAME in the same layout: its return address in mepc's
  * slot with bit 0 set, which no real mepc has, and tp and s0 to s11 in their

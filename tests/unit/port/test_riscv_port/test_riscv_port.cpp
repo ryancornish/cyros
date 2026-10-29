@@ -15,7 +15,9 @@
  *          facilities are independent, that a reschedule pended while either
  *          is masked waits for the unmask and then runs exactly once, that a
  *          yield runs it synchronously, and that every register survives a
- *          trap.
+ *          trap by each of its three ways out: an interrupt that asks for no
+ *          reschedule, one that runs a reschedule, and one whose reschedule
+ *          switches to another context and back.
  *
  *
  * WHY A LAYER-0 TEST CAN TAKE A RESCHEDULE HERE
@@ -25,10 +27,11 @@
  * arrives on, and before cyros_port_start_first names an interrupt stack it
  * stays there. So a reschedule pended from this test's main thread is a real
  * trap, through the real entry and exit, and the handler it reaches is this
- * test's counter. That makes the register check below possible at layer 0,
- * and it is the check that matters most: the entry and exit are 64 hand-written
- * loads and stores, and one wrong offset still runs, still switches, and
- * quietly replaces a register.
+ * test's counter, which can switch to a context of the test's own as the
+ * kernel's reschedule would. That makes the register checks below possible at
+ * layer 0, and they are the checks that matter most: the entry and its ways
+ * out are about a hundred hand-written loads and stores, and one wrong offset
+ * still runs, still switches, and quietly replaces a register.
  */
 
 #include <cyros/port/port.h>
@@ -36,6 +39,7 @@
 
 #include <common/bench.hpp>
 
+#include <cstddef>
 #include <cstdint>
 
 extern "C" void cyros_port_trap_entry(void);
@@ -49,6 +53,7 @@ namespace
 constexpr std::uint32_t mstatus_mie = 1u << 3;
 constexpr std::uint32_t mie_msie    = 1u << 3;
 constexpr std::uint32_t mip_msip    = 1u << 3;
+constexpr std::uint32_t mip_mtip    = 1u << 7;
 
 std::uint32_t read_mstatus() { std::uint32_t v; asm volatile("csrr %0, mstatus" : "=r"(v) :: "memory"); return v; }
 std::uint32_t read_mie()     { std::uint32_t v; asm volatile("csrr %0, mie" : "=r"(v) :: "memory"); return v; }
@@ -59,9 +64,23 @@ void enable_irq() { asm volatile("csrsi mstatus, 8" ::: "memory"); }
 bool mie_set()  { return (read_mstatus() & mstatus_mie) != 0u; }
 bool msie_set() { return (read_mie() & mie_msie) != 0u; }
 bool msip_raised() { return (read_mip() & mip_msip) != 0u; }
+bool mtip_raised() { return (read_mip() & mip_mtip) != 0u; }
+
+/* A switch the hook makes itself, as the kernel's reschedule would: set
+ * before the reschedule is pended, taken by the next one. */
+cyros_port_context* volatile switch_from = nullptr;
+cyros_port_context* volatile switch_to   = nullptr;
 
 volatile int reschedule_calls = 0;
-void counting_reschedule() { reschedule_calls = reschedule_calls + 1; }
+void counting_reschedule()
+{
+   reschedule_calls = reschedule_calls + 1;
+   if (switch_to != nullptr) {
+      cyros_port_context* const to = switch_to;
+      switch_to = nullptr;
+      cyros_port_switch(switch_from, to);
+   }
+}
 
 /* A soft IRQ is a store to the CLINT and lands a few cycles after it. Long
  * enough for that, and nothing more is promised. */
@@ -297,14 +316,21 @@ void test_yield_is_synchronous()
  * Every register survives a trap
  *
  * Loads a pattern into all 29 general registers the trap path saves and that
- * this routine may own (everything but zero, sp and gp), takes a trap that is
- * already pending, and counts the registers that came back wrong. Naked and
- * self-contained, so the compiler holds nothing of its own in them. ra and gp
- * are kept on the stack and reused as the scratch and the count, because
- * every other register is carrying a pattern.
+ * this routine may own (everything but zero, sp and gp), takes a trap, and
+ * counts the registers that came back wrong, gp among them, which must come
+ * back as it was. The trap is the interrupt already pending, or with `fault`
+ * set an illegal instruction in its place, which the image's fault handler
+ * resumes past. Naked and self-contained, so the compiler holds nothing of
+ * its own in them. ra and gp are kept on the stack and reused as the scratch
+ * and the count, ra once its own value is on the stack too, because every
+ * other register is carrying a pattern.
+ *
+ * The 128 bytes below the routine's frame, where the trap stores its own,
+ * are poisoned first, so a slot the trap fails to store comes back as the
+ * poison, never as whatever an earlier frame happened to leave there.
  * ------------------------------------------------------------------------ */
 
-extern "C" [[gnu::naked]] std::uint32_t registers_wrong_after_a_trap()
+extern "C" [[gnu::naked]] std::uint32_t registers_wrong_after_a_trap(std::uint32_t /*fault*/)
 {
    asm volatile(
       "addi  sp, sp, -64            \n"
@@ -323,20 +349,45 @@ extern "C" [[gnu::naked]] std::uint32_t registers_wrong_after_a_trap()
       "sw    s9, 48(sp)             \n"
       "sw    s10, 52(sp)            \n"
       "sw    s11, 56(sp)            \n"
-      ".irp n, 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 \n"
+      "li    t0, 0x0BADF00D         \n"   /* the poison */
+      "addi  t1, sp, -128           \n"
+      "1:                           \n"
+      "sw    t0, 0(t1)              \n"
+      "addi  t1, t1, 4              \n"
+      "bne   t1, sp, 1b             \n"
+      "bnez  a0, 2f                 \n"
+      ".irp n, 1,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 \n"
       "li    x\\n, 0xA5000000 + \\n  \n"
       ".endr                        \n"
-      "csrsi mstatus, 8             \n"   /* the pending reschedule is taken here */
+      "csrsi mstatus, 8             \n"   /* the pending interrupt is taken here */
       "nop                          \n"
       "nop                          \n"
       "csrci mstatus, 8             \n"
-      "li    gp, 0                  \n"   /* the count of wrong registers */
+      "j     3f                     \n"
+      "2:                           \n"
+      ".irp n, 1,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 \n"
+      "li    x\\n, 0xA5000000 + \\n  \n"
+      ".endr                        \n"
+      ".option push                 \n"
+      ".option norvc                \n"
+      "csrw  mhartid, zero          \n"   /* read-only: the fault is taken here */
+      ".option pop                  \n"
+      "3:                           \n"
+      "sw    ra, 60(sp)             \n"   /* x1 as it came back, checked last */
+      "lw    ra,  4(sp)             \n"   /* gp as the routine found it */
+      "sub   ra, gp, ra             \n"
+      "snez  gp, ra                 \n"   /* the count of wrong registers, gp's first */
       ".irp n, 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 \n"
       "li    ra, 0xA5000000 + \\n    \n"
       "beq   x\\n, ra, 1f            \n"
       "addi  gp, gp, 1              \n"
       "1:                           \n"
       ".endr                        \n"
+      "lw    t0, 60(sp)             \n"
+      "li    t1, 0xA5000000 + 1     \n"
+      "beq   t0, t1, 1f             \n"
+      "addi  gp, gp, 1              \n"
+      "1:                           \n"
       "mv    a0, gp                 \n"
       "lw    ra,  0(sp)             \n"
       "lw    gp,  4(sp)             \n"
@@ -357,9 +408,9 @@ extern "C" [[gnu::naked]] std::uint32_t registers_wrong_after_a_trap()
       "ret                          \n");
 }
 
-void test_every_register_survives_a_trap()
+void test_every_register_survives_a_trap_that_reschedules()
 {
-   cyros::bench::start("every register survives a trap");
+   cyros::bench::start("every register survives a trap that runs a reschedule");
 
    int const before = reschedule_calls;
    cyros_mask_token_t const token = cyros_port_irq_save();
@@ -367,11 +418,175 @@ void test_every_register_survives_a_trap()
    settle();
    CYROS_CHECK(msip_raised());
 
-   std::uint32_t const wrong = registers_wrong_after_a_trap();
+   std::uint32_t const wrong = registers_wrong_after_a_trap(0u);
 
    /* The trap must actually have been taken inside the routine, or the check
     * proves nothing. */
    CYROS_CHECK_EQ(reschedule_calls, before + 1);
+   CYROS_CHECK_EQ(wrong, 0u);
+
+   cyros_port_irq_restore(token);
+}
+
+volatile int timer_interrupts = 0;
+void counting_timer(void*) { timer_interrupts = timer_interrupts + 1; }
+
+void test_every_register_survives_an_interrupt_that_asks_for_no_reschedule()
+{
+   cyros::bench::start("every register survives an interrupt that asks for no reschedule");
+
+   /* One timer interrupt, its deadline reached already, whose handler pends
+    * nothing: the way out that restores the clobbered half alone. */
+   int const before = reschedule_calls;
+   cyros_mask_token_t const token = cyros_port_irq_save();
+   cyros_port_time_register_isr_handler(counting_timer, nullptr);
+   cyros_port_time_setup(0u);
+   cyros_port_time_irq_enable();
+   cyros_port_time_arm(cyros_port_time_now());
+   settle();
+   CYROS_CHECK(mtip_raised());
+
+   std::uint32_t const wrong = registers_wrong_after_a_trap(0u);
+
+   /* Taken inside the routine, and no reschedule run, which would have
+    * counted. */
+   CYROS_CHECK_EQ(timer_interrupts, 1);
+   CYROS_CHECK_EQ(reschedule_calls, before);
+   CYROS_CHECK_EQ(wrong, 0u);
+
+   cyros_port_time_teardown();
+   cyros_port_irq_restore(token);
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Every register survives a trap that switches away and back
+ *
+ * Here the test is the kernel: the hook switches the boot context out of a
+ * trap to a second context, which fills every register with its own pattern
+ * and switches back by a trap of its own. The boot context's frame is only
+ * whole once the trap has stored its kept half, and the boot context is
+ * resumed from that frame, so a register either step misses comes back as
+ * the poison or as the second context's pattern.
+ * ------------------------------------------------------------------------ */
+
+alignas(CYROS_PORT_CONTEXT_ALIGN) std::byte boot_storage[CYROS_PORT_CONTEXT_SIZE];
+alignas(CYROS_PORT_CONTEXT_ALIGN) std::byte other_storage[CYROS_PORT_CONTEXT_SIZE];
+alignas(CYROS_PORT_STACK_ALIGN) std::byte other_stack[8192];
+
+cyros_port_context* boot_context()  { return reinterpret_cast<cyros_port_context*>(boot_storage); }
+cyros_port_context* other_context() { return reinterpret_cast<cyros_port_context*>(other_storage); }
+
+volatile int other_ran = 0;
+
+/* The second context's pattern in every register it may own, then the trap
+ * already pending, which switches back to the boot context. Resumed, should
+ * it ever be, after that trap. */
+extern "C" [[gnu::naked]] void other_registers_then_a_trap()
+{
+   asm volatile(
+      "addi  sp, sp, -64            \n"
+      "sw    ra,  0(sp)             \n"
+      "sw    tp,  8(sp)             \n"
+      "sw    s0, 12(sp)             \n"
+      "sw    s1, 16(sp)             \n"
+      "sw    s2, 20(sp)             \n"
+      "sw    s3, 24(sp)             \n"
+      "sw    s4, 28(sp)             \n"
+      "sw    s5, 32(sp)             \n"
+      "sw    s6, 36(sp)             \n"
+      "sw    s7, 40(sp)             \n"
+      "sw    s8, 44(sp)             \n"
+      "sw    s9, 48(sp)             \n"
+      "sw    s10, 52(sp)            \n"
+      "sw    s11, 56(sp)            \n"
+      ".irp n, 1,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 \n"
+      "li    x\\n, 0x5A000000 + \\n  \n"
+      ".endr                        \n"
+      "csrsi mstatus, 8             \n"   /* the pending reschedule: back to the boot context */
+      "nop                          \n"
+      "csrci mstatus, 8             \n"
+      "lw    ra,  0(sp)             \n"
+      "lw    tp,  8(sp)             \n"
+      "lw    s0, 12(sp)             \n"
+      "lw    s1, 16(sp)             \n"
+      "lw    s2, 20(sp)             \n"
+      "lw    s3, 24(sp)             \n"
+      "lw    s4, 28(sp)             \n"
+      "lw    s5, 32(sp)             \n"
+      "lw    s6, 36(sp)             \n"
+      "lw    s7, 40(sp)             \n"
+      "lw    s8, 44(sp)             \n"
+      "lw    s9, 48(sp)             \n"
+      "lw    s10, 52(sp)            \n"
+      "lw    s11, 56(sp)            \n"
+      "addi  sp, sp, 64             \n"
+      "ret                          \n");
+}
+
+/* The second context, each time it is switched in. It starts at baseline, as
+ * a new thread does. */
+void other_entry(void*)
+{
+   while (true) {
+      other_ran = other_ran + 1;
+      (void)cyros_port_irq_save();
+      switch_from = other_context();
+      switch_to   = boot_context();
+      cyros_port_pend_reschedule();
+      settle();
+      other_registers_then_a_trap();
+   }
+}
+
+void test_every_register_survives_a_trap_that_switches()
+{
+   cyros::bench::start("every register survives a trap that switches away and back");
+
+   cyros_port_context_init(other_context(), other_stack, sizeof(other_stack), other_entry, nullptr);
+
+   int const before_calls = reschedule_calls;
+   int const before_ran = other_ran;
+   cyros_mask_token_t const token = cyros_port_irq_save();
+   switch_from = boot_context();
+   switch_to   = other_context();
+   cyros_port_pend_reschedule();
+   settle();
+   CYROS_CHECK(msip_raised());
+
+   std::uint32_t const wrong = registers_wrong_after_a_trap(0u);
+
+   /* There and back: two reschedules, the other context run once between. */
+   CYROS_CHECK_EQ(reschedule_calls, before_calls + 2);
+   CYROS_CHECK_EQ(other_ran, before_ran + 1);
+   CYROS_CHECK_EQ(wrong, 0u);
+
+   cyros_port_irq_restore(token);
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Every register survives a fault its handler resumes
+ *
+ * A fault stores the whole frame at entry and is resumed from it, whatever
+ * its handler changed there, so this is the one check of the kept half on a
+ * fault's way in and out. The handler below resumes past the instruction.
+ * ------------------------------------------------------------------------ */
+
+volatile int faults_expected = 0;
+volatile int faults_taken = 0;
+
+void test_every_register_survives_a_fault_its_handler_resumes()
+{
+   cyros::bench::start("every register survives a fault its handler resumes");
+
+   cyros_mask_token_t const token = cyros_port_irq_save();
+   faults_expected = 1;
+
+   std::uint32_t const wrong = registers_wrong_after_a_trap(1u);
+
+   CYROS_CHECK_EQ(faults_taken, 1);
+   CYROS_CHECK_EQ(faults_expected, 0);
    CYROS_CHECK_EQ(wrong, 0u);
 
    cyros_port_irq_restore(token);
@@ -421,6 +636,25 @@ void test_timestamp_moves()
 } // namespace
 
 
+/* This image's fault handler, replacing the port's weak default for the whole
+ * image. It resumes past the illegal instruction the register check takes,
+ * only when a test expects one, and fails the run on any other fault. */
+extern "C" void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
+{
+   if (faults_expected == 0 || mcause != 2u) {
+      cyros::bench::print("\n*** unexpected fault, mcause ");
+      cyros::bench::print_hex(mcause);
+      cyros::bench::print(" mepc ");
+      cyros::bench::print_hex(frame[0]);
+      cyros::bench::print("\n");
+      cyros::bench::host_exit(3u);
+   }
+   faults_expected = faults_expected - 1;
+   faults_taken = faults_taken + 1;
+   frame[0] = frame[0] + 4u;
+}
+
+
 extern "C" int cyros_bench_main()
 {
    cyros::bench::print("rv32 port contract\n\n");
@@ -442,15 +676,18 @@ extern "C" int cyros_bench_main()
    test_pend_while_preemption_disabled_waits_for_the_enable();
    test_pend_at_baseline_runs_promptly();
    test_yield_is_synchronous();
-   test_every_register_survives_a_trap();
+   test_every_register_survives_a_trap_that_reschedules();
+   test_every_register_survives_an_interrupt_that_asks_for_no_reschedule();
+   test_every_register_survives_a_trap_that_switches();
+   test_every_register_survives_a_fault_its_handler_resumes();
 
    test_core_identity_and_hints();
    test_tls_pointer_is_the_thread_pointer();
    test_timestamp_moves();
 
-   /* Exactly the five reschedules the tests above asked for. */
+   /* Exactly the seven reschedules the tests above asked for. */
    cyros::bench::start("no reschedule beyond the ones asked for");
-   CYROS_CHECK_EQ(reschedule_calls, 5);
+   CYROS_CHECK_EQ(reschedule_calls, 7);
 
    cyros::bench::finish();
 }
