@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+name = "riscv32-elf-release"
+extends = "riscv32-elf-base.toml"
+
+# The RV32IMAC release build, the archive cyros ships for a RISC-V core. It
+# mirrors arm-none-eabi-release.toml: -O2, LTO across the kernel's own
+# translation units, and only the CYROS_PUBLIC ABI left global in the merged
+# archive. The port's weak hooks are CYROS_PORT_WEAK_HOOK, which keeps the LTO
+# merge from binding the archive's calls to their defaults
+# (~/cyros-claude/performance-investigation.md 16). RV32IMAC runs on the
+# RP2350's Hazard3 too. A build for its own instruction set adds its -march, as
+# riscv32-elf-rp2350.toml does.
+[flags]
+common_add = ["-O2"]
+c_add = ["-flto", "-fvisibility=hidden"]
+cxx_add = ["-flto", "-fvisibility=hidden", "-fvisibility-inlines-hidden"]
+
+[settings]
+debug = false
+optimization = "2"
+
+[archive]
+strategy = "lto_merged"
+localize_hidden = true
+
+# Must stay false while localize_hidden is true. gcc-release.toml says why.
+preserve_lto_sections = false

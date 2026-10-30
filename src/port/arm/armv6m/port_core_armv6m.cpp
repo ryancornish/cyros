@@ -12,7 +12,8 @@
  * The Mainline layer (armv7m_armv8m) is the model, and its header says why
  * every switch happens in PendSV at the lowest priority, and how a switch on
  * the thread's road (cyros_port_direct_switch) is owed to PendSV, which carries it
- * out without calling the kernel. Both hold here unchanged. What ARMv6-M
+ * out without calling the kernel, as is one an interrupt's wake decides
+ * (cyros_port_owe_switch). All of it holds here unchanged. What ARMv6-M
  * takes away, and what this layer does instead:
  *
  *   no BASEPRI     the preempt grade is a software deferral (below)
@@ -23,6 +24,9 @@
  *   no DWT         the timestamp is the target's counter alone
  *   no FPU         nothing to save, and EXC_RETURN is the same for every
  *                  thread, so unlike the Mainline layer it is not saved
+ *   no PENDSVACT   an interrupt cannot tell PendSV is active beneath it, so
+ *                  PendSV reads and clears its owed switch masked, where
+ *                  Mainline refuses to decide while PendSV is active
  *   no PSPLIM      the stack guard is an MPU region where the part has an
  *                  MPU (the M0+'s is optional, the RP2040's has 8 regions),
  *                  and nothing on an M0, which has none (below)
@@ -465,6 +469,28 @@ CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context* from, cyros_por
    cortex_m::isb();
 }
 
+CYROS_PORT_HOT bool cyros_port_interrupted_at_baseline(void)
+{
+   /* An interrupt's handler, SysTick's or a device's, with the depth zero:
+    * the interrupted thread's, since a handler's own regions are balanced,
+    * and with PRIMASK clear wherever a handler runs, PendSV is taken as the
+    * last of them returns and finds it zero. Inside PendSV too, which reads
+    * and clears its owed switch masked, so a revision cannot land between. */
+   return cortex_m::in_interrupt_handler() && preempt_depth[this_core()] == 0u;
+}
+
+CYROS_PORT_HOT void cyros_port_owe_switch(cyros_port_context* from, cyros_port_context* to)
+{
+   /* A switch owed already, by the thread's road or an earlier decision, keeps
+    * its source: the thread whose frame PSP holds. */
+   owed_switch& owed = owed_switches[this_core()];
+   if (owed.to == nullptr) {
+      owed.from = from;
+   }
+   owed.to = to;
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvset;
+}
+
 CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
 {
    /* The token is PRIMASK before the mask. A handler runs with PRIMASK clear,
@@ -531,18 +557,26 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT void cyros_port_pendsv_dispatch(void)
 
    /* An owed switch first, so the kernel never runs while the thread it counts
     * as running is not the one PSP holds (port_core.h). It was owed from depth
-    * zero, so it is never deferred. Then the kernel, unless nothing asked. */
+    * zero, so it is never deferred. Then the kernel, unless nothing asked.
+    *
+    * Masked from the read to the clear and the look: an interrupt's decision
+    * may revise the switch (cyros_port_owe_switch), and one landing in between
+    * would be lost. Mainline refuses to decide while PendSV is active instead,
+    * which this architecture cannot ask. An interrupt that asks after the
+    * look finds nothing owed, and pends this handler again. */
    owed_switch& owed = owed_switches[core];
+   cortex_m::disable_irq();
    if (owed.to != nullptr) {
       switch_stacks(core, owed.from, owed.to);
       owed.to = nullptr;
-      /* The clear before the look, so an interrupt that asks after the look
-       * finds nothing owed, and pends this handler again. */
-      compiler_barrier();
-      if (!owed.reschedule) {
+      bool const asked = owed.reschedule;
+      owed.reschedule = false;
+      cortex_m::enable_irq();
+      if (!asked) {
          return;
       }
-      owed.reschedule = false;
+   } else {
+      cortex_m::enable_irq();
    }
 
    if (preempt_depth[core] != 0u) {

@@ -23,7 +23,7 @@ enum class [[nodiscard]] schedule_hint
 {
    unwarranted, ///< The action did not ready any better thread that currently running
    warranted,   ///< The action may have readied a better thread that currently running
-   rescheduled, ///< The action warranted a reschedule and has made it already
+   rescheduled, ///< The action warranted a reschedule and has made it already, (or will make it)
 };
 
 void idle_task();
@@ -203,8 +203,36 @@ private:
     * (direct_reschedule) the thread itself yields, parks or is preempted by
     * its own wake, at baseline, and knows why. On the handler's road
     * (reschedule) the port calls in at a safe point, and the reason is worked
-    * out from what the thread was left as (departure_of).
+    * out from what the thread was left as (departure_of). An interrupt's wake
+    * decides as the thread's road does and leaves the switch to the
+    * interrupt's return (interrupt_reschedule).
     * ---------------------------------------------------------------------- */
+
+   /**
+    * @brief The decision, for a departure already known: take in other cores'
+    *        wakes, file the running thread, and make the pick running.
+    *
+    * The steps the thread's road and an interrupt's wake share, under this
+    * core's critical section, which the caller holds. Returns the pick, which
+    * is the departing thread itself when it is picked again.
+    */
+   [[gnu::always_inline]]
+   thread_control_block& decide(departure_reason const reason)
+   {
+      if constexpr (config::cores > 1) {
+         if (intake_pending()) {
+            drain_intake();
+         }
+      }
+
+      // Unless a remote wake just taken in readied it, which settles its
+      // departure as reschedule() settles it: filed already, and a park revoked.
+      auto& prev_thread = *current_thread;
+      if (prev_thread.state == thread_state::running) {
+         depart(prev_thread, reason);
+      }
+      return run_next();
+   }
 
    /**
     * @brief Thread-initiated reschedule
@@ -228,20 +256,8 @@ private:
    {
       CYROS_ASSERT(reason != departure_reason::exited); // Exit takes the handler's road
 
-      if constexpr (config::cores > 1) {
-         if (intake_pending()) {
-            drain_intake();
-         }
-      }
-
-      // Unless a remote wake just taken in readied it, which settles its
-      // departure as reschedule() settles it: filed already, and a park revoked.
       auto& prev_thread = *current_thread;
-      if (prev_thread.state == thread_state::running) {
-         depart(prev_thread, reason);
-      }
-
-      auto& next_thread = run_next();
+      auto& next_thread = decide(reason);
       if (&next_thread == &prev_thread) {
          // Picked again: alone at its level after a yield, or readied by a
          // remote wake. It runs on.
@@ -251,6 +267,32 @@ private:
       // Saves this thread, resumes NEXT and releases MASK. Returns once this
       // thread is switched back in, by either road.
       cyros_port_direct_switch(prev_thread.context(), next_thread.context(), mask);
+   }
+
+   /**
+    * @brief An interrupt's wake, deciding the preemption it warrants there
+    *        and owing the switch to the interrupt's return.
+    *
+    * Called by set_thread_ready under this core's critical section, inside
+    * an interrupt handler whose return the port says reaches the running
+    * thread at baseline (cyros_port_interrupted_at_baseline). The wake knows
+    * the running thread is preempted, as a thread's own wake does, so the
+    * decision is the thread's road's. The switch is not: the handler is not
+    * the departing thread, and the rest of it runs before its return. So the
+    * port owes the switch (cyros_port_owe_switch), carries it out as the
+    * interrupt returns, and calls no one back unless a reschedule was asked
+    * for too. A later wake in the same interrupt that beats the pick decides
+    * again: the pick, which never ran, departs preempted to the front of its
+    * level, where the pick took it from.
+    */
+   [[gnu::always_inline]]
+   void interrupt_reschedule()
+   {
+      auto& prev_thread = *current_thread;
+      auto& next_thread = decide(departure_reason::preempted);
+      if (&next_thread != &prev_thread) {
+         cyros_port_owe_switch(prev_thread.context(), next_thread.context());
+      }
    }
 
    /**
@@ -418,9 +460,12 @@ public:
     * A wake whose POLICY allows a reschedule, made by the running thread at
     * baseline, takes the reschedule it warrants itself, on the thread's road,
     * in the critical section that readied the thread, and returns
-    * schedule_hint::rescheduled once the waker runs again. Everything that
-    * must not switch (reschedule() taking in the intake, a batch of wakes
-    * that pends once after) uses the default, which never does.
+    * schedule_hint::rescheduled once the waker runs again. One made inside an
+    * interrupt whose return reaches a thread at baseline decides it there
+    * and owes the switch to that return (interrupt_reschedule), and returns
+    * schedule_hint::rescheduled at once. Everything that must not switch
+    * (reschedule() taking in the intake, a batch of wakes that pends once
+    * after) uses the default, which never does.
     */
    schedule_hint set_thread_ready(thread_control_block& tcb, reschedule_policy policy = reschedule_policy::never);
 

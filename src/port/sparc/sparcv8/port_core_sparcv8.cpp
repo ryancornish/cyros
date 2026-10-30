@@ -29,6 +29,13 @@
  * has PIL raised, so its thread resumes inside the kernel's mask and releases
  * it itself.
  *
+ * A switch the kernel decides in an interrupt's handler (port_core.h, an
+ * interrupt's wake), nested or not, is owed to the end of the outermost
+ * trap (cyros_port_owe_switch), which makes the same swap, so the interrupted
+ * thread is never resumed and no reschedule is taken for it. Only when that
+ * trap is an interrupt's: interrupts nest into the reschedule too, and one
+ * there pends instead.
+ *
  *
  * Register windows, and what a trap saves
  * =======================================
@@ -220,6 +227,20 @@ namespace
 {
 
 cyros_port_reschedule_t reschedule_handler = nullptr;
+
+/* A switch the kernel decided in an interrupt's handler, made as the
+ * outermost trap ends (cyros_port_owe_switch), and whether that outermost
+ * trap is a device's or the timer's interrupt. Kept apart from
+ * cyros_sparc_core_state, whose layout the trap entry indexes. `owed_to`
+ * null: none owed. */
+struct interrupt_decision
+{
+   cyros_port_context* owed_from;
+   cyros_port_context* owed_to;
+   bool                outer_interrupt;
+};
+
+interrupt_decision decisions[CYROS_PORT_CORE_COUNT] = {};
 
 inline std::uint32_t this_core() noexcept
 {
@@ -802,7 +823,8 @@ asm(
  */
 extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_sparc_trap_dispatch(std::uint32_t* frame, std::uint32_t tt)
 {
-   cyros_sparc_core_state& state = cyros_sparc_cores[this_core()];
+   std::uint32_t const core = this_core();
+   cyros_sparc_core_state& state = cyros_sparc_cores[core];
    /* The entry counted this trap, and recorded the outermost one's frame as
     * the thread's. A nested trap has its own frame, which it resumes, and
     * must not replace the thread's, or the outer trap would resume it. */
@@ -817,10 +839,27 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_sparc_trap_dispatch
           * inside the scheduler, or from a handler nested in it) is kept for
           * the next. */
          run_reschedule(state);
+         set_pil(sparcv8::pil_masked_preempt);
       } else {
+         interrupt_decision& decision = decisions[core];
+         if (outermost) {
+            decision.outer_interrupt = true;
+         }
          sparcv8::interrupt(level);
+         set_pil(sparcv8::pil_masked_preempt);
+
+         /* A switch a wake decided in this handler or one nested in it, made
+          * as the outermost trap ends, at 15, where nothing nests. A
+          * reschedule it also asked for is level 1, taken after, from the
+          * incoming thread. */
+         if (outermost) {
+            decision.outer_interrupt = false;
+            if (auto* const to = decision.owed_to; to != nullptr) {
+               decision.owed_to = nullptr;
+               cyros_port_switch(decision.owed_from, to);
+            }
+         }
       }
-      set_pil(sparcv8::pil_masked_preempt);
    }
    else if ((tt == sparcv8::tt_yield || tt == sparcv8::tt_direct_switch) && outermost) {
       /* Resume after the ta. Done on THIS thread's frame, before a switch
@@ -847,7 +886,7 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_sparc_trap_dispatch
 /**
  * @brief The default fault handler: report, and panic.
  */
-extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_sparc_fault_handler(std::uint32_t tt, std::uint32_t* frame)
+extern "C" CYROS_PORT_WEAK_HOOK void cyros_sparc_fault_handler(std::uint32_t tt, std::uint32_t* frame)
 {
    sparcv8::console_write("\n*** SPARC TRAP ***\n  tt   = ");
    write_hex(tt);
@@ -864,7 +903,7 @@ extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_sparc_fault_handle
 /**
  * @brief The default for an interrupt level nobody handles: panic, naming it.
  */
-extern "C" [[gnu::weak]] void cyros_sparc_device_interrupt(std::uint32_t level)
+extern "C" CYROS_PORT_WEAK_HOOK void cyros_sparc_device_interrupt(std::uint32_t level)
 {
    cyros_port_system_error(level, 0, "device interrupt with no handler", 0);
 }
@@ -882,6 +921,8 @@ void init_this_core()
    /* Masked for the whole of bring-up, as on every port: nothing may enter
     * the kernel until cyros_port_start_first has a thread to run. */
    psr_set(psr_pil_mask);
+
+   decisions[this_core()] = {};
 
    /* The board points TBR at the table before any compiled code, because
     * any call may need a window trap. Checked rather than set: a table set
@@ -1034,6 +1075,33 @@ CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context* from, cyros_por
 
    /* Back by either road, still masked: the frame kept this thread's PIL. */
    cyros_port_irq_restore(token);
+}
+
+CYROS_PORT_HOT bool cyros_port_interrupted_at_baseline(void)
+{
+   /* Inside a device's or the timer's handler, nested or not, whose outermost
+    * trap is an interrupt's: never the reschedule's, into which interrupts
+    * nest, nor a yield's or a fault's. The thread beneath had its preemption
+    * field clear, so the reschedule could be taken as that trap returns. A
+    * level 15 handler, which nests anywhere, never calls the kernel. */
+   std::uint32_t const core = this_core();
+   return decisions[core].outer_interrupt &&
+          (cyros_sparc_cores[core].frame[sparcv8::frame_psr] & pil_preempt_bits) == 0u;
+}
+
+CYROS_PORT_HOT void cyros_port_owe_switch(cyros_port_context* from, cyros_port_context* to)
+{
+   interrupt_decision& decision = decisions[this_core()];
+   CYROS_ASSERT(decision.outer_interrupt);   /* from an interrupt's handler only */
+   CYROS_ASSERT(to != nullptr);
+   CYROS_ASSERT(to != from);
+
+   /* A second decision before the outermost trap ends keeps the first one's
+    * source: the thread whose frame that trap stored. */
+   if (decision.owed_to == nullptr) {
+      decision.owed_from = from;
+   }
+   decision.owed_to = to;
 }
 
 CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)

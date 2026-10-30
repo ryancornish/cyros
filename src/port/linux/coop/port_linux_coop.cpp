@@ -866,6 +866,18 @@ void cyros_port_direct_switch(cyros_port_context_t* from, cyros_port_context_t* 
    arrive(to->thread.jump(&h));
 }
 
+bool cyros_port_interrupted_at_baseline(void)
+{
+   return false; // no interrupts on this port, so never in a handler
+}
+
+void cyros_port_owe_switch(cyros_port_context_t* from, cyros_port_context_t* to)
+{
+   (void)from;
+   (void)to;
+   CYROS_PORT_UNREACHABLE(); // Bug: only where cyros_port_interrupted_at_baseline() said true
+}
+
 bool cyros_port_masked_from_baseline(cyros_mask_token_t token)
 {
    (void)token; // inert on this port: the depths say it

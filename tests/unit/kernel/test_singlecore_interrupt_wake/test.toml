@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (C) 2026 Ryan Cornish
+[test]
+name = "test_singlecore_interrupt_wake"
+layer = 5
+kind = "unit"
+source = "test_singlecore_interrupt_wake.cpp"
+config = "test_singlecore_interrupt_wake_config.hpp"
+
+# linux_preempt only: its timer signal is the one interrupt a hosted port has.
+# The bare-metal ports run the twin, test_target_interrupt_wake.
+[components]
+port = "linux_preempt"
+time_driver = "periodic"
+
+[link]
+system_libraries = ["gtest", "gtest_main"]

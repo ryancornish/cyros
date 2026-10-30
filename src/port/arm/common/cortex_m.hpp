@@ -100,6 +100,10 @@ inline constexpr std::uint32_t shcsr_memfaultena = 1u << 16;
  * UsageFault with STKOF. */
 inline constexpr std::uint32_t shcsr_usgfaultena = 1u << 18;
 
+/* SHCSR.PENDSVACT: PendSV is active, running or beneath the running handler.
+ * Mainline only: ARMv6-M has no such bit. */
+inline constexpr std::uint32_t shcsr_pendsvact = 1u << 10;
+
 /* CPACR grants access to CP10 and CP11, which together ARE the FPU. Both are
  * two-bit fields: 0b11 is full access from privileged and unprivileged code.
  * Touching an FP instruction with these clear is a UsageFault (NOCP), which is
@@ -261,6 +265,20 @@ inline std::uint32_t get_control() noexcept
  * in order to choose between acting now and deferring.
  */
 inline bool in_handler_mode() noexcept { return get_ipsr() != 0u; }
+
+/* The exception numbers IPSR reports for SysTick and the first device. */
+inline constexpr std::uint32_t exception_systick = 15u;
+inline constexpr std::uint32_t exception_first_device = 16u;
+
+/**
+ * @brief True when the active exception is an interrupt: SysTick's or a
+ *        device's, never a fault's, an SVC's, PendSV's or NMI's.
+ */
+inline bool in_interrupt_handler() noexcept
+{
+   std::uint32_t const ipsr = get_ipsr();
+   return ipsr == exception_systick || ipsr >= exception_first_device;
+}
 
 
 /* ============================================================================

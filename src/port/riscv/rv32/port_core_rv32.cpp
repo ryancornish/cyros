@@ -31,7 +31,17 @@
  * A reschedule an interrupt handler pends is run before that trap returns,
  * rather than by a second trap the moment its mret unmasks, which would
  * restore the frame only to save it again: what ARM's tail-chaining into
- * PendSV does in hardware.
+ * PendSV does in hardware. The soft IRQ's own trap, a doorbell or a
+ * reschedule pended where it could not run, goes from the entry straight to
+ * the reschedule, past the interrupts' dispatch.
+ *
+ * A switch the kernel decided in an interrupt handler (port_core.h, an
+ * interrupt's wake) is owed to that trap's exit (cyros_port_owe_switch), which
+ * carries it out before any reschedule the handler also asked for, as PendSV
+ * does on ARM, and without calling the kernel otherwise. Until the exit the
+ * kernel counts the incoming thread as running while the interrupted one's
+ * registers are still on the hart: the one moment this layer has where the
+ * two differ, and only for the rest of one handler.
  *
  *
  * What a trap saves, and where
@@ -52,9 +62,9 @@
  * so an interrupt that asks for no reschedule restores the clobbered half and
  * returns. The thread's kept half never left the registers.
  *
- * An interrupt that asks for a reschedule stores the kept half as well, from
- * the registers that still hold it, and then runs the reschedule a yield runs
- * (below). A fault stores both halves at entry, so its handler is given every
+ * An interrupt that asks for a reschedule, or owes a switch, stores the kept
+ * half as well, from the registers that still hold it, and then runs the
+ * reschedule a yield runs (below), or makes the switch owed first. A fault stores both halves at entry, so its handler is given every
  * register and may change any. So the kernel only ever switches away from a
  * WHOLE frame: a suspended thread is just a pointer to its frame, and
  * cyros_port_switch is one store, as on ARM. Whole BEFORE the reschedule,
@@ -238,6 +248,13 @@ struct core_state
    std::uint32_t* frame;
    std::uintptr_t interrupt_stack_top;
    std::uint32_t  trap_depth;
+   /* A reschedule is running, which takes the depth an interrupt's handler
+    * does: cyros_port_interrupted_at_baseline() must tell them apart. */
+   std::uint32_t  in_reschedule;
+   /* A switch the kernel decided in this trap's interrupt handler, made at its
+    * exit (cyros_port_owe_switch). `owed_to` null: none owed. */
+   cyros_port_context* owed_from;
+   cyros_port_context* owed_to;
 };
 
 core_state cores[CYROS_PORT_CORE_COUNT] = {};
@@ -292,14 +309,17 @@ CYROS_PORT_HOT inline bool take_pended_reschedule() noexcept
    return false;
 }
 
-/* What an interrupt's dispatch hands its trap's exit: the frame, and whether a
- * reschedule must run before it is resumed. Two words, so the psABI returns
- * them in a0 and a1, where the exit looks. `reschedule` is a whole word, 0 or
- * 1, because a bool's padding would reach a1 unspecified. */
+/* What an interrupt's dispatch hands its trap's exit: the frame, and what
+ * must happen before a frame is resumed: a switch owed, a reschedule asked
+ * for, both, or neither (0). Two words, so the psABI returns them in a0 and
+ * a1, where the exit looks. */
+constexpr std::uint32_t exit_owed_switch = 1u;
+constexpr std::uint32_t exit_reschedule  = 2u;
+
 struct interrupt_resume
 {
    std::uint32_t* frame;
-   std::uint32_t  reschedule;
+   std::uint32_t  exit;
 };
 
 } // namespace
@@ -315,13 +335,17 @@ struct interrupt_resume
  * Naked because the prologue and epilogue ARE the mechanism. Stores the
  * frame's clobbered half on the interrupted stack, moves to the interrupt
  * stack (or stays put when a trap is already in progress, see the file
- * comment), and takes one of three ways out (file comment):
+ * comment), and takes one of these ways out (file comment):
  *
  *  - an interrupt that asks for no reschedule restores the clobbered half and
  *    returns
  *  - one that asks for a reschedule stores the kept half, runs the reschedule
  *    a yield runs, and resumes whatever frame it hands back, which is a
  *    DIFFERENT thread's after a switch
+ *  - one whose handler owed a switch stores the kept half, makes the switch,
+ *    then the reschedule if one was asked for too, and resumes the result
+ *  - the soft IRQ, the reschedule itself, goes there straight from the
+ *    entry: the kept half, then the reschedule
  *  - a fault stores the kept half, runs its handler, and resumes the frame
  *
  * `cyros_port_trap_saved` is the label after the entry's own stores, for the
@@ -364,7 +388,9 @@ extern "C" [[gnu::naked, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_trap_e
       "1:                           \n"
       "mv    sp, t0                 \n"
       "bgez  a1, 3f                 \n"   /* a fault */
-      "call  cyros_port_interrupt_dispatch \n" /* the frame in a0, a reschedule asked for in a1 */
+      "li    t1, 0x80000003         \n"   /* the soft IRQ, the reschedule itself */
+      "beq   a1, t1, 5f             \n"
+      "call  cyros_port_interrupt_dispatch \n" /* the frame in a0, what the exit must do in a1 */
       "bnez  a1, 2f                 \n"
       "mv    sp, a0                 \n"   /* none: the clobbered half back */
       "lw    t0,    0(sp)           \n"
@@ -404,7 +430,29 @@ extern "C" [[gnu::naked, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_trap_e
       "sw    x25, 100(a0)           \n"
       "sw    x26, 104(a0)           \n"
       "sw    x27, 108(a0)           \n"
+      "andi  t0, a1, 1              \n"   /* exit_owed_switch */
+      "bnez  t0, 4f                 \n"
       "call  cyros_port_reschedule_dispatch \n" /* returns the frame to resume in a0 */
+      "j     cyros_port_trap_exit   \n"
+      "4:                           \n"   /* a switch owed, a reschedule asked for in a1 or not */
+      "call  cyros_port_owed_switch_dispatch \n" /* returns the frame to resume in a0 */
+      "j     cyros_port_trap_exit   \n"
+      "5:                           \n"   /* the soft IRQ: the kept half, then the reschedule */
+      "sw    x3,   12(a0)           \n"
+      "sw    x4,   16(a0)           \n"
+      "sw    x8,   32(a0)           \n"
+      "sw    x9,   36(a0)           \n"
+      "sw    x18,  72(a0)           \n"
+      "sw    x19,  76(a0)           \n"
+      "sw    x20,  80(a0)           \n"
+      "sw    x21,  84(a0)           \n"
+      "sw    x22,  88(a0)           \n"
+      "sw    x23,  92(a0)           \n"
+      "sw    x24,  96(a0)           \n"
+      "sw    x25, 100(a0)           \n"
+      "sw    x26, 104(a0)           \n"
+      "sw    x27, 108(a0)           \n"
+      "call  cyros_port_soft_irq_dispatch \n" /* returns the frame to resume in a0 */
       "j     cyros_port_trap_exit   \n"
       "3:                           \n"   /* a fault: the kept half too, for its handler */
       "sw    x3,   12(a0)           \n"
@@ -615,46 +663,44 @@ extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cy
 
 /**
  * @brief The C half of an interrupt's trap, with the frame's clobbered half
- *        saved. Returns the frame, and whether a reschedule must run before
- *        it is resumed.
+ *        saved. Returns the frame, and what the exit must do before a frame
+ *        is resumed.
  *
- * Dispatched by cause: the soft IRQ is the reschedule, and the timer and
- * external interrupts go to the target, after which a reschedule either pended
- * is asked for. The reschedule itself runs once the trap's exit has made the
- * frame whole (cyros_port_reschedule_dispatch), so nothing here may switch.
+ * Dispatched by cause: the timer and external interrupts go to the target,
+ * after which a switch the handler owed and a reschedule either pended are
+ * reported. The soft IRQ, the reschedule itself, never comes here: the entry
+ * sends it straight to its own dispatch. The switch and the reschedule run
+ * once the trap's exit has made the frame whole
+ * (cyros_port_owed_switch_dispatch, cyros_port_reschedule_dispatch), so
+ * nothing here may switch.
  *
  * Used: only the assembly above calls it, which the compiler cannot see, so an
  * LTO build that drops unreferenced internal functions would drop it. The same
- * holds for the two dispatches below.
+ * holds for the dispatches below.
  */
 extern "C" [[gnu::used]] CYROS_PORT_HOT interrupt_resume cyros_port_interrupt_dispatch(std::uint32_t* frame, std::uint32_t cause)
 {
    core_state& state = cores[this_core()];
    ++state.trap_depth;
 
-   bool reschedule = false;
    switch (cause & ~riscv::mcause_interrupt) {
-   case riscv::cause_soft_interrupt:
-      /* Lowered BEFORE the reschedule, so a request made while it runs (a wake
-       * from inside the scheduler) is kept for the next one rather than lost
-       * to a late clear. */
-      riscv::soft_irq_clear(this_core());
-      reschedule = true;
-      break;
    case riscv::cause_timer_interrupt:
       riscv::timer_interrupt();
-      reschedule = take_pended_reschedule();
       break;
    case riscv::cause_ext_interrupt:
       riscv::external_interrupt();
-      reschedule = take_pended_reschedule();
       break;
    default:
       unexpected_trap(cause, frame[riscv::frame_mepc]);
    }
 
+   std::uint32_t exit = take_pended_reschedule() ? exit_reschedule : 0u;
+   if (state.owed_to != nullptr) {
+      exit |= exit_owed_switch;
+   }
+
    --state.trap_depth;
-   if (!reschedule) {
+   if (exit == 0u) {
       /* Re-arm the interrupt stack for the next trap. mret is still ahead and
        * MIE stays clear until it, so nothing can take a trap in between. A
        * reschedule re-arms it after itself, not before: until it has run, a
@@ -664,7 +710,7 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT interrupt_resume cyros_port_interrupt_di
        * condition survives its removal, and this is its argument. */
       riscv::write_mscratch(state.interrupt_stack_top);
    }
-   return {frame, reschedule ? 1u : 0u};
+   return {frame, exit};
 }
 
 /**
@@ -690,25 +736,74 @@ extern "C" [[gnu::used]] std::uint32_t* cyros_port_fault_dispatch(std::uint32_t*
    return frame;
 }
 
-/**
- * @brief The reschedule, on the interrupt stack with a whole frame. Returns
- *        the frame to resume.
- *
- * Reached by a yield, with the call frame it saved, and by an interrupt that
- * asked for one, once the trap's exit has stored the kept half (file comment).
- * Either way no other trap is in progress: a yield is made at baseline
- * (cyros_port_thread_yield checks), and an interrupt is only taken there. So
- * this one is the outermost, and the interrupt stack is re-armed after it.
- */
-extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_reschedule_dispatch(std::uint32_t* frame)
+namespace
 {
-   core_state& state = cores[this_core()];
+
+/* The reschedule, on the interrupt stack with a whole frame, as the outermost
+ * trap: no other is in progress, since a yield is made at baseline and an
+ * interrupt is only taken there. Returns the frame to resume, and re-arms the
+ * interrupt stack after the reschedule, not before (cyros_port_interrupt_dispatch). */
+CYROS_PORT_HOT inline std::uint32_t* reschedule_from(core_state& state, std::uint32_t* frame)
+{
    state.trap_depth = 1u;
+   state.in_reschedule = 1u;
    state.frame = frame;
    run_reschedule(state);
+   state.in_reschedule = 0u;
    state.trap_depth = 0u;
    riscv::write_mscratch(state.interrupt_stack_top);
    return state.frame;
+}
+
+} // namespace
+
+/**
+ * @brief The reschedule asked for by a yield, with the call frame it saved, or
+ *        by an interrupt's handler, once the trap's exit has stored the kept
+ *        half (file comment). Returns the frame to resume.
+ */
+extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_reschedule_dispatch(std::uint32_t* frame)
+{
+   return reschedule_from(cores[this_core()], frame);
+}
+
+/**
+ * @brief The soft IRQ's trap, sent here by the entry with the kept half
+ *        stored: a doorbell, or a reschedule pended where it could not run.
+ */
+extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_soft_irq_dispatch(std::uint32_t* frame)
+{
+   std::uint32_t const core = this_core();
+   /* Lowered BEFORE the reschedule, so a request made while it runs (a wake
+    * from inside the scheduler) is kept for the next one rather than lost to
+    * a late clear. */
+   riscv::soft_irq_clear(core);
+   return reschedule_from(cores[core], frame);
+}
+
+/**
+ * @brief An interrupt's exit with a switch its handler owed, the frame whole:
+ *        the switch, then the reschedule if the handler asked for one too.
+ *
+ * The owed switch first, so the kernel never runs while the thread it counts
+ * as running is not the one whose frame the trap holds (port_core.h), as
+ * PendSV takes its owed switch first on ARM. The reschedule then starts from
+ * the incoming thread, whose frame is already where it belongs.
+ */
+extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_owed_switch_dispatch(std::uint32_t* frame, std::uint32_t exit)
+{
+   core_state& state = cores[this_core()];
+   cyros_port_context* const to = state.owed_to;
+   state.owed_to = nullptr;
+   state.owed_from->frame = frame;
+   if (guarded()) {
+      riscv::write_pmpaddr0(to->guard);
+   }
+   if ((exit & exit_reschedule) != 0u) {
+      return reschedule_from(state, to->frame);
+   }
+   riscv::write_mscratch(state.interrupt_stack_top);
+   return to->frame;
 }
 
 
@@ -729,7 +824,7 @@ extern "C" void cyros_port_direct_switch_saved(void);
  * guard on is a stack overflow: the frame was headed into the guard, and in
  * the trap entry's case the original faulting instruction is lost.
  */
-extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
+extern "C" CYROS_PORT_WEAK_HOOK void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* frame)
 {
    std::uint32_t const epc = frame[riscv::frame_mepc];
    auto const entry       = reinterpret_cast<std::uint32_t>(&cyros_port_trap_entry);
@@ -772,6 +867,7 @@ void init_this_core()
    /* A reschedule left raised by a previous kernel lifecycle would otherwise
     * fire into the next lifecycle's first thread. */
    soft_irq_clear(this_core());
+   cores[this_core()].owed_to = nullptr;
 
    /* The reschedule is enabled here and stays enabled except inside a
     * preempt-disable. The timer's enable belongs to the time source. */
@@ -936,6 +1032,34 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    if (guarded()) {
       riscv::write_pmpaddr0(to->guard);
    }
+}
+
+CYROS_PORT_HOT bool cyros_port_interrupted_at_baseline(void)
+{
+   /* An interrupt's handler: the outermost trap, since interrupts never
+    * nest here, with an interrupt's cause, so not a fault's, and no
+    * reschedule running, which takes the same depth with whatever cause the
+    * last trap left. MSIE, which no trap touches, is still the interrupted
+    * thread's preempt grade. */
+   core_state const& state = cores[this_core()];
+   return state.trap_depth == 1u && state.in_reschedule == 0u &&
+          (riscv::read_mcause() & riscv::mcause_interrupt) != 0u &&
+          (riscv::read_mie() & riscv::mie_msie) != 0u;
+}
+
+CYROS_PORT_HOT void cyros_port_owe_switch(cyros_port_context* from, cyros_port_context* to)
+{
+   core_state& state = cores[this_core()];
+   CYROS_ASSERT_OP(state.trap_depth, ==, 1u);   /* from an interrupt's handler only */
+   CYROS_ASSERT(to != nullptr);
+   CYROS_ASSERT(to != from);
+
+   /* A second decision in this interrupt keeps the first one's source: the
+    * thread whose registers are in the trap's frame. */
+   if (state.owed_to == nullptr) {
+      state.owed_from = from;
+   }
+   state.owed_to = to;
 }
 
 CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)

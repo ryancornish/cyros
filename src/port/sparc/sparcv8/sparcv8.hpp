@@ -284,7 +284,7 @@ extern "C" std::uint32_t const cyros_sparc_trap_table[];
  * masked, so its handler must not call the kernel, as an ARM NMI's must not.
  * The default panics, naming the level.
  */
-extern "C" void cyros_sparc_device_interrupt(std::uint32_t level);
+extern "C" CYROS_PORT_LINKED_BY_NAME void cyros_sparc_device_interrupt(std::uint32_t level);
 
 /**
  * @brief Every trap that is not an interrupt, a window trap or the yield: a

@@ -15,10 +15,15 @@
  *          facilities are independent, that a reschedule pended while either
  *          is masked waits for the unmask and then runs exactly once, that a
  *          yield runs it synchronously, and that every register survives a
- *          trap by each of its three ways out: an interrupt that asks for no
- *          reschedule, one that runs a reschedule, and one whose reschedule
- *          switches to another context and back. And that a direct switch
- *          unmasks only once it stands on the incoming thread's stack.
+ *          trap by each of its ways out: an interrupt that asks for no
+ *          reschedule, the soft IRQ's own trap, an interrupt whose handler
+ *          asks for a reschedule, one whose reschedule switches to another
+ *          context and back, and one whose handler owes a switch. That a
+ *          switch owed beside a reschedule asked for is made first, that a
+ *          second switch owed in one interrupt keeps the first one's source,
+ *          and that only an interrupt's handler taken at baseline may owe
+ *          one. And that a direct switch unmasks only once it stands on the
+ *          incoming thread's stack.
  *
  *
  * WHY A LAYER-0 TEST CAN TAKE A RESCHEDULE HERE
@@ -72,10 +77,18 @@ bool mtip_raised() { return (read_mip() & mip_mtip) != 0u; }
 cyros_port_context* volatile switch_from = nullptr;
 cyros_port_context* volatile switch_to   = nullptr;
 
+/* What cyros_port_interrupted_at_baseline() answers inside the hook, when a
+ * test asks it to look. */
+volatile bool hook_asks = false;
+volatile bool hook_answer = true;
+
 volatile int reschedule_calls = 0;
 void counting_reschedule()
 {
    reschedule_calls = reschedule_calls + 1;
+   if (hook_asks) {
+      hook_answer = cyros_port_interrupted_at_baseline();
+   }
    if (switch_to != nullptr) {
       cyros_port_context* const to = switch_to;
       switch_to = nullptr;
@@ -640,6 +653,239 @@ void test_a_direct_switch_unmasks_on_the_incoming_stack()
 
 
 /* ---------------------------------------------------------------------------
+ * An interrupt that asks for a reschedule, or owes a switch
+ *
+ * The soft IRQ's own trap goes from the entry straight to the reschedule, so
+ * an interrupt whose HANDLER asks for one takes a way of its own: its
+ * dispatch reports the request, and the exit stores the kept half before the
+ * reschedule runs. And here the test is the kernel once more: a timer
+ * interrupt's handler owes the switch an interrupt's wake would decide
+ * (cyros_port_owe_switch), and the trap's exit makes it, the kept half stored
+ * first, without calling the hook unless a reschedule was asked for too.
+ * ------------------------------------------------------------------------ */
+
+void pending_timer(void*)
+{
+   timer_interrupts = timer_interrupts + 1;
+   cyros_port_pend_reschedule();
+}
+
+/* Arms the timer's interrupt to be taken at the next unmask, with HANDLER. */
+void timer_pending_with(cyros_port_isr_handler_t handler)
+{
+   cyros_port_time_register_isr_handler(handler, nullptr);
+   cyros_port_time_setup(0u);
+   cyros_port_time_irq_enable();
+   cyros_port_time_arm(cyros_port_time_now());
+   settle();
+   CYROS_CHECK(mtip_raised());
+}
+
+void test_every_register_survives_an_interrupt_that_asks_for_a_reschedule()
+{
+   cyros::bench::start("every register survives an interrupt whose handler asks for a reschedule");
+
+   int const before = reschedule_calls;
+   int const before_timer = timer_interrupts;
+   cyros_mask_token_t const token = cyros_port_irq_save();
+   timer_pending_with(pending_timer);
+
+   std::uint32_t const wrong = registers_wrong_after_a_trap(0u);
+
+   /* Run inside the timer's trap, and the soft IRQ the pend raised lowered
+    * there, not left to a trap of its own. */
+   CYROS_CHECK_EQ(timer_interrupts, before_timer + 1);
+   CYROS_CHECK_EQ(reschedule_calls, before + 1);
+   CYROS_CHECK(!msip_raised());
+   CYROS_CHECK_EQ(wrong, 0u);
+
+   cyros_port_time_teardown();
+   cyros_port_irq_restore(token);
+}
+
+alignas(CYROS_PORT_CONTEXT_ALIGN) std::byte third_storage[CYROS_PORT_CONTEXT_SIZE];
+alignas(CYROS_PORT_STACK_ALIGN) std::byte third_stack[4096];
+cyros_port_context* third_context() { return reinterpret_cast<cyros_port_context*>(third_storage); }
+
+/* Never switched to: only ever owed, and then replaced. */
+volatile int third_ran = 0;
+void third_entry(void*)
+{
+   third_ran = third_ran + 1;
+   while (true) {}
+}
+
+/* The owing handler, as an interrupt's wake would use the port. */
+volatile int owing_runs = 0;
+volatile bool owing_found_baseline = false;
+volatile bool owing_owes_third_first = false;
+volatile bool owing_also_pends = false;
+
+void owing_timer(void*)
+{
+   owing_runs = owing_runs + 1;
+   owing_found_baseline = cyros_port_interrupted_at_baseline();
+   if (owing_owes_third_first) {
+      cyros_port_owe_switch(boot_context(), third_context());
+      cyros_port_owe_switch(third_context(), other_context());
+   } else {
+      cyros_port_owe_switch(boot_context(), other_context());
+   }
+   if (owing_also_pends) {
+      cyros_port_pend_reschedule();
+   }
+}
+
+/* Takes the owing handler's interrupt inside the register check, and returns
+ * how many registers came back wrong. The other context starts from its entry,
+ * so if it is switched to it runs once and switches back by a reschedule. */
+std::uint32_t registers_wrong_after_an_owing_interrupt(bool third_first, bool also_pends)
+{
+   cyros_port_context_init(other_context(), other_stack, sizeof(other_stack), other_entry, nullptr);
+   cyros_port_context_init(third_context(), third_stack, sizeof(third_stack), third_entry, nullptr);
+   owing_owes_third_first = third_first;
+   owing_also_pends = also_pends;
+   timer_pending_with(owing_timer);
+   std::uint32_t const wrong = registers_wrong_after_a_trap(0u);
+   cyros_port_time_teardown();
+   return wrong;
+}
+
+void test_every_register_survives_an_interrupt_that_owes_a_switch()
+{
+   cyros::bench::start("every register survives an interrupt that owes a switch, there and back");
+
+   int const before_calls = reschedule_calls;
+   int const before_ran = other_ran;
+   int const before_runs = owing_runs;
+   cyros_mask_token_t const token = cyros_port_irq_save();
+
+   std::uint32_t const wrong = registers_wrong_after_an_owing_interrupt(false, false);
+
+   /* There by the owed switch, which calls no hook, and back by the other
+    * context's reschedule, which does. */
+   CYROS_CHECK_EQ(owing_runs, before_runs + 1);
+   CYROS_CHECK(owing_found_baseline);
+   CYROS_CHECK_EQ(other_ran, before_ran + 1);
+   CYROS_CHECK_EQ(reschedule_calls, before_calls + 1);
+   CYROS_CHECK_EQ(wrong, 0u);
+
+   cyros_port_irq_restore(token);
+}
+
+void test_a_switch_owed_beside_a_reschedule_is_made_first()
+{
+   cyros::bench::start("an interrupt that owes a switch and asks for a reschedule makes the switch first");
+
+   int const before_calls = reschedule_calls;
+   int const before_ran = other_ran;
+   enable_irq();
+   cyros_mask_token_t const token = cyros_port_irq_save();
+
+   /* The hook switches from the other context straight back, which is right
+    * only once the owed switch has made the other context the running one. */
+   switch_from = other_context();
+   switch_to   = boot_context();
+   std::uint32_t const wrong = registers_wrong_after_an_owing_interrupt(false, true);
+
+   CYROS_CHECK_EQ(reschedule_calls, before_calls + 1);
+   CYROS_CHECK_EQ(other_ran, before_ran);   /* switched in and straight out */
+   CYROS_CHECK_EQ(wrong, 0u);
+
+   /* And the other context's frame is still the one it was given: switched to
+    * now, it starts from its entry, and comes back here by a reschedule. A
+    * reschedule run before the owed switch would have saved the boot
+    * context's frame into it. */
+   cyros_port_direct_switch(boot_context(), other_context(), token);
+   CYROS_CHECK_EQ(other_ran, before_ran + 1);
+   CYROS_CHECK_EQ(reschedule_calls, before_calls + 2);
+}
+
+void test_a_second_switch_owed_keeps_the_first_source()
+{
+   cyros::bench::start("a second switch owed in one interrupt replaces the destination and keeps the source");
+
+   int const before_calls = reschedule_calls;
+   int const before_ran = other_ran;
+   cyros_mask_token_t const token = cyros_port_irq_save();
+
+   /* Owed to the third context, then to the other one from the third: the
+    * boot context's frame must still be what the exit saves, or the other
+    * context's reschedule switches back to a stale one. */
+   std::uint32_t const wrong = registers_wrong_after_an_owing_interrupt(true, false);
+
+   CYROS_CHECK_EQ(third_ran, 0);
+   CYROS_CHECK_EQ(other_ran, before_ran + 1);
+   CYROS_CHECK_EQ(reschedule_calls, before_calls + 1);
+   CYROS_CHECK_EQ(wrong, 0u);
+
+   cyros_port_irq_restore(token);
+}
+
+volatile int answering_runs = 0;
+volatile bool answering_answer = true;
+void answering_timer(void*)
+{
+   answering_runs = answering_runs + 1;
+   answering_answer = cyros_port_interrupted_at_baseline();
+}
+
+void test_only_an_interrupt_taken_at_baseline_may_owe_a_switch()
+{
+   cyros::bench::start("only an interrupt's handler, taken at baseline, may owe a switch");
+
+   /* Not in thread context, masked or not. */
+   enable_irq();
+   CYROS_CHECK(!cyros_port_interrupted_at_baseline());
+   (void)cyros_port_irq_save();
+   CYROS_CHECK(!cyros_port_interrupted_at_baseline());
+
+   /* Not in a timer interrupt taken with preemption disabled: no switch can
+    * be made at its exit. Interrupts still arrive there. */
+   int const before = answering_runs;
+   cyros_mask_token_t const no_preemption = cyros_port_preempt_disable();
+   timer_pending_with(answering_timer);
+   enable_irq();                          /* taken here */
+   settle();
+   (void)cyros_port_irq_save();
+   cyros_port_time_teardown();
+   cyros_port_preempt_enable(no_preemption);
+   CYROS_CHECK_EQ(answering_runs, before + 1);
+   CYROS_CHECK(!answering_answer);
+
+   /* Yes in one taken at baseline. */
+   timer_pending_with(answering_timer);
+   enable_irq();
+   settle();
+   (void)cyros_port_irq_save();
+   cyros_port_time_teardown();
+   CYROS_CHECK_EQ(answering_runs, before + 2);
+   CYROS_CHECK(answering_answer);
+
+   /* Not in the soft IRQ's reschedule. */
+   hook_asks = true;
+   hook_answer = true;
+   cyros_port_pend_reschedule();
+   enable_irq();
+   settle();
+   CYROS_CHECK(!hook_answer);
+
+   /* Nor in a yield's, though a timer's trap just left its cause in mcause:
+    * a reschedule runs at the depth an interrupt's handler does. */
+   hook_answer = true;
+   (void)cyros_port_irq_save();
+   timer_pending_with(answering_timer);
+   enable_irq();
+   settle();
+   (void)cyros_port_irq_save();
+   cyros_port_time_teardown();
+   enable_irq();
+   cyros_port_thread_yield();
+   CYROS_CHECK(!hook_answer);
+   hook_asks = false;
+}
+
+/* ---------------------------------------------------------------------------
  * Every register survives a fault its handler resumes
  *
  * A fault stores the whole frame at entry and is resumed from it, whatever
@@ -649,6 +895,7 @@ void test_a_direct_switch_unmasks_on_the_incoming_stack()
 
 volatile int faults_expected = 0;
 volatile int faults_taken = 0;
+volatile bool fault_answer = true;   /* cyros_port_interrupted_at_baseline() in the fault */
 
 void test_every_register_survives_a_fault_its_handler_resumes()
 {
@@ -662,6 +909,7 @@ void test_every_register_survives_a_fault_its_handler_resumes()
    CYROS_CHECK_EQ(faults_taken, 1);
    CYROS_CHECK_EQ(faults_expected, 0);
    CYROS_CHECK_EQ(wrong, 0u);
+   CYROS_CHECK(!fault_answer);   /* no interrupt's handler, so it may owe no switch */
 
    cyros_port_irq_restore(token);
 }
@@ -725,6 +973,7 @@ extern "C" void cyros_riscv_fault_handler(std::uint32_t mcause, std::uint32_t* f
    }
    faults_expected = faults_expected - 1;
    faults_taken = faults_taken + 1;
+   fault_answer = cyros_port_interrupted_at_baseline();
    frame[0] = frame[0] + 4u;
 }
 
@@ -754,15 +1003,20 @@ extern "C" int cyros_bench_main()
    test_every_register_survives_an_interrupt_that_asks_for_no_reschedule();
    test_every_register_survives_a_trap_that_switches();
    test_a_direct_switch_unmasks_on_the_incoming_stack();
+   test_every_register_survives_an_interrupt_that_asks_for_a_reschedule();
+   test_every_register_survives_an_interrupt_that_owes_a_switch();
+   test_a_switch_owed_beside_a_reschedule_is_made_first();
+   test_a_second_switch_owed_keeps_the_first_source();
+   test_only_an_interrupt_taken_at_baseline_may_owe_a_switch();
    test_every_register_survives_a_fault_its_handler_resumes();
 
    test_core_identity_and_hints();
    test_tls_pointer_is_the_thread_pointer();
    test_timestamp_moves();
 
-   /* Exactly the eight reschedules the tests above asked for. */
+   /* Exactly the fifteen reschedules the tests above asked for. */
    cyros::bench::start("no reschedule beyond the ones asked for");
-   CYROS_CHECK_EQ(reschedule_calls, 8);
+   CYROS_CHECK_EQ(reschedule_calls, 15);
 
    cyros::bench::finish();
 }

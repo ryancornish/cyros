@@ -51,6 +51,14 @@
  * mark is the one software flag here, and it is not a pending flag, which
  * PENDSVSET still is. It says only why PendSV was pended.
  *
+ * An interrupt's wake owes PendSV a switch the same way, from a handler
+ * (cyros_port_owe_switch), and PendSV carries it out unchanged. A second
+ * decision before PendSV runs, in that interrupt or one taken after a
+ * thread's owed switch, replaces the destination and keeps the source, the
+ * thread whose frame PSP holds. None is made while PendSV is active
+ * (cyros_port_interrupted_at_baseline), so none can land between PendSV's
+ * read of its owed switch and its clear.
+ *
  *
  * Masking: two hardware registers, not two counters
  * =================================================
@@ -697,6 +705,34 @@ CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context* from, cyros_por
    cortex_m::set_primask(token);
    cortex_m::dsb();
    cortex_m::isb();
+}
+
+CYROS_PORT_HOT bool cyros_port_interrupted_at_baseline(void)
+{
+   /* An interrupt's handler, SysTick's or a device's. BASEPRI is not changed
+    * by taking an exception, so open it is still the preempt grade of the
+    * thread beneath every handler running, and with PRIMASK clear wherever
+    * a handler runs, PendSV is taken as the last of them returns. Not while
+    * PendSV is active, beneath this handler: an interrupt taken there could
+    * revise its owed switch between its read and its clear, and the revision
+    * would be lost. The kernel then pends, as it always did. */
+   return cortex_m::in_interrupt_handler() && cortex_m::get_basepri() == 0u &&
+          (cortex_m::reg(cortex_m::scb_shcsr) & cortex_m::shcsr_pendsvact) == 0u;
+}
+
+CYROS_PORT_HOT void cyros_port_owe_switch(cyros_port_context* from, cyros_port_context* to)
+{
+   /* This core's slot, by asking rather than from FROM: an earlier decision's
+    * pick, which never ran here, has not recorded its core yet. */
+   owed_switch& owed = owed_switches[this_core()];
+
+   /* A switch owed already, by the thread's road or an earlier decision, keeps
+    * its source: the thread whose frame PSP holds. */
+   if (owed.to.load(std::memory_order_relaxed) == nullptr) {
+      owed.from = from;
+   }
+   owed.to.store(to, std::memory_order_relaxed);
+   cortex_m::reg(cortex_m::scb_icsr) = cortex_m::icsr_pendsvset;
 }
 
 CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)

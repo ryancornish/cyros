@@ -65,17 +65,24 @@ CYROS_HOT schedule_hint scheduler::set_thread_ready(thread_control_block& tcb, r
    auto const mask = cyros_port_irq_save();
    auto const hint = make_ready(tcb);
 
-   // A wake that readies a thread more urgent than the running one, made by
-   // the running thread itself at baseline, preempts it here and now, on the
-   // thread's road (Switching threads, below). The wake knows it is a
-   // preemption, so nothing need work that out later. Anywhere else, an
-   // interrupt or a masked region, the switch waits for the next safe point,
-   // which the caller's pend arranges and reschedule() serves.
-   if (hint == schedule_hint::warranted && policy != reschedule_policy::never &&
-       cyros_port_masked_from_baseline(mask))
-   {
-      direct_reschedule(departure_reason::preempted, mask);
-      return schedule_hint::rescheduled;
+   // A wake that readies a thread more urgent than the running one knows it
+   // is a preemption, so nothing need work that out later (Switching threads,
+   // below). Made by the running thread itself at baseline, it switches here
+   // and now, on the thread's road. Made in an interrupt whose return reaches
+   // a thread at baseline, it decides here and the port switches as the
+   // interrupt returns. Anywhere else, a masked region or preemption
+   // disabled, the switch waits for the next safe point, which the caller's
+   // pend arranges and reschedule() serves.
+   if (hint == schedule_hint::warranted && policy != reschedule_policy::never) {
+      if (cyros_port_masked_from_baseline(mask)) {
+         direct_reschedule(departure_reason::preempted, mask);
+         return schedule_hint::rescheduled;
+      }
+      if (cyros_port_interrupted_at_baseline()) {
+         interrupt_reschedule();
+         cyros_port_irq_restore(mask);
+         return schedule_hint::rescheduled;
+      }
    }
    cyros_port_irq_restore(mask);
    return hint;
@@ -290,12 +297,30 @@ void scheduler::drain_intake()
  * through the intake, which the road takes in first.
  *
  * The handler's road, reschedule(). Every other reason to switch arises where
- * no switch can be made: an interrupt's wake, a wake inside a masked region,
- * a time slice, a remote core's doorbell. So it pends a reschedule, and the
- * port calls reschedule() from its handler at the next safe point. By then
- * other wakes may have landed, and nobody can say why the thread departs, so
- * reschedule() works it out from what the thread was left as (departure_of).
- * That reconstruction is the one step the thread's road does not need.
+ * no switch can be made: a wake inside a masked region or with preemption
+ * disabled, a time slice, a remote core's doorbell, a batch of wakes that
+ * pends once. So it pends a reschedule, and the port calls reschedule() from
+ * its handler at the next safe point. By then other wakes may have landed,
+ * and nobody can say why the thread departs, so reschedule() works it out
+ * from what the thread was left as (departure_of). That reconstruction is the
+ * one step the thread's road does not need.
+ *
+ * An interrupt's wake, interrupt_reschedule. A wake made in an interrupt
+ * knows as much as a thread's own: whom it readied, and that the running
+ * thread is preempted. When the interrupt's return reaches that thread at
+ * baseline (cyros_port_interrupted_at_baseline), the wake decides there, with
+ * the thread's road's steps (decide), and the port carries the switch out as
+ * the interrupt returns (cyros_port_owe_switch), without calling the kernel.
+ * It is not the thread's road. The handler is not the departing thread, and
+ * the rest of it, or a nested one, runs between the decision and the switch,
+ * so a later wake there may decide again. The pick, which never ran, then
+ * departs preempted, back to the front of its level, and the port keeps the
+ * thread whose registers are on the core as the switch's source. Until the
+ * interrupt returns, the kernel's running thread is not the one executing,
+ * which on Cortex-M the thread's road's owed switch already allows. Another
+ * core never decides for this one: its wakes reach this core through the
+ * intake, which the decision takes in first, and a doorbell that rings after
+ * is served by the handler's road once the switch is made.
  *
  * Exit always takes the handler's road (this_thread::thread_exit yields to
  * it). The handler runs on the port's own stack, and an exiting thread must

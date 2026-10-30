@@ -293,6 +293,14 @@ struct current_core_state
    // simulated interrupt still flows.
    std::uint32_t       preempt_disable_depth{0};
 
+   // The timer's handler is running (isr_region), and whether the thread it
+   // interrupted was at baseline, read as it entered: a switch the kernel
+   // decides in the handler is then owed to its return
+   // (cyros_port_interrupted_at_baseline). The handler never nests: its own
+   // delivery blocks its signal.
+   bool                in_isr{false};
+   bool                isr_from_baseline{false};
+
    // Re-entrancy guard for assert_mask_matches_depths(). See its comment.
    bool                mask_check_active{false};
 
@@ -863,6 +871,11 @@ namespace cyros::port
 
 void isr_region_enter()
 {
+   // Read before the region's own depth is counted.
+   current_core.isr_from_baseline = current_core.current_context != nullptr &&
+                                    current_core.interrupt_disable_depth == 0 &&
+                                    current_core.preempt_disable_depth == 0;
+   current_core.in_isr = true;
    current_core.interrupt_disable_depth++;
 }
 
@@ -870,6 +883,7 @@ void isr_region_leave()
 {
    CYROS_ASSERT(current_core.interrupt_disable_depth > 0); // handler region underflowed
    current_core.interrupt_disable_depth--;
+   current_core.in_isr = false;
 }
 
 void preempt_region_enter()
@@ -934,9 +948,9 @@ static sigctx_ucontext_t* on_reschedule(sigctx_ucontext_t* paused, void*)
    bool const remote_asked =
       global.cores[current_core.core_id].ipi_asked.exchange(false, std::memory_order_acquire);
 
-   // A switch owed from the thread's road first, so the kernel never
-   // runs while the thread it counts as running is not the one this signal
-   // paused (port_core.h). Then the kernel, only if a reschedule was asked for
+   // A switch owed from the thread's road or an interrupt's wake first, so
+   // the kernel never runs while the thread it counts as running is not the
+   // one this signal paused (port_core.h). Then the kernel, only if a reschedule was asked for
    // meanwhile, here or by another core, and switching away from a thread that
    // never ran, whose context is therefore already where it belongs.
    if (auto* const to = current_core.owed_to; to != nullptr) {
@@ -1356,6 +1370,37 @@ void cyros_port_direct_switch(cyros_port_context_t* from, cyros_port_context_t* 
    // thread is switched back in.
    pthread_kill(pthread_self(), preempt_signo);
    cyros_port_irq_restore(token);
+}
+
+bool cyros_port_interrupted_at_baseline(void)
+{
+   // The timer's handler, this port's one interrupt, which took a thread at
+   // baseline. Its return unblocks the reschedule signal, which is delivered
+   // before that thread runs on, whatever the handler masked meanwhile: the
+   // signal stays blocked until that return. Not inside the reschedule
+   // interception, whose region is preempt-disabled, so a timer landing there
+   // read no baseline.
+   return current_core.in_isr && current_core.isr_from_baseline;
+}
+
+void cyros_port_owe_switch(cyros_port_context_t* from, cyros_port_context_t* to)
+{
+   CYROS_ASSERT(current_core.in_isr); // from an interrupt's handler only
+   CYROS_ASSERT(to != nullptr);
+   CYROS_ASSERT(to != from);
+
+   // A switch owed already, by the thread's road or an earlier decision in
+   // this handler, keeps its source: the context the reschedule signal pauses.
+   if (current_core.owed_to == nullptr) {
+      CYROS_ASSERT(current_core.current_context == from);
+      current_core.owed_from = from;
+   }
+   current_core.owed_to = to;
+
+   // Blocked in this handler, so pending until its return unblocks it, and
+   // delivered before the interrupted thread runs on. on_reschedule() makes
+   // the switch there.
+   pthread_kill(pthread_self(), preempt_signo);
 }
 
 bool cyros_port_masked_from_baseline(cyros_mask_token_t token)

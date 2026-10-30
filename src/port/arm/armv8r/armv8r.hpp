@@ -253,6 +253,6 @@ void timer_interrupt() noexcept;
  * stack, after the acknowledge and before the end of interrupt. The default
  * panics, naming the INTID.
  */
-extern "C" void cyros_armv8r_device_interrupt(std::uint32_t intid);
+extern "C" CYROS_PORT_LINKED_BY_NAME void cyros_armv8r_device_interrupt(std::uint32_t intid);
 
 #endif /* CYROS_PORT_ARMV8R_HPP */

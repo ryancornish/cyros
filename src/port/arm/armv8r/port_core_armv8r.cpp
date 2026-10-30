@@ -33,6 +33,11 @@
  * took, and either road resumes it: a frame cyros_port_direct_switch saved has I
  * set, so its thread resumes inside the kernel's mask and releases it itself.
  *
+ * A switch the kernel decides in an IRQ's handler (port_core.h, an
+ * interrupt's wake) is owed to the end of that IRQ's dispatch
+ * (cyros_port_owe_switch), which makes the same swap, so the interrupted
+ * thread is never resumed and no reschedule SGI is taken for it.
+ *
  *
  * Modes and stacks
  * ================
@@ -304,6 +309,12 @@ struct core_state
 {
    std::uint32_t* frame;
    std::uint32_t  depth;
+   /* A device's or the timer's handler is running, and a switch the kernel
+    * decided in it, made as its dispatch ends (cyros_port_owe_switch).
+    * `owed_to` null: none owed. */
+   std::uint32_t       in_irq;
+   cyros_port_context* owed_from;
+   cyros_port_context* owed_to;
 };
 
 core_state cores[CYROS_PORT_CORE_COUNT] = {};
@@ -444,12 +455,24 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_exception_disp
          run_reschedule(state);
       }
       else if (intid == armv8r::timer_intid) {
+         state.in_irq = 1u;
          armv8r::timer_interrupt();
+         state.in_irq = 0u;
          armv8r::write_icc_eoir1(iar);
       }
       else if (intid != armv8r::spurious_intid) {
+         state.in_irq = 1u;
          cyros_armv8r_device_interrupt(intid);
+         state.in_irq = 0u;
          armv8r::write_icc_eoir1(iar);
+      }
+
+      /* A switch the handler's wake decided, made here, as the IRQ returns. A
+       * reschedule it also asked for is the SGI, taken after, from the
+       * incoming thread. */
+      if (auto* const to = state.owed_to; to != nullptr) {
+         state.owed_to = nullptr;
+         cyros_port_switch(state.owed_from, to);
       }
    }
 
@@ -460,7 +483,7 @@ extern "C" [[gnu::used]] CYROS_PORT_HOT std::uint32_t* cyros_port_exception_disp
 /**
  * @brief The default for a device interrupt nobody handles: panic, naming it.
  */
-extern "C" [[gnu::weak]] void cyros_armv8r_device_interrupt(std::uint32_t intid)
+extern "C" CYROS_PORT_WEAK_HOOK void cyros_armv8r_device_interrupt(std::uint32_t intid)
 {
    cyros_port_system_error(intid, 0, "device interrupt with no handler", 0);
 }
@@ -478,6 +501,9 @@ void init_this_core()
    /* Masked for the whole of bring-up, as on every port: nothing may enter
     * the kernel until cyros_port_start_first has a thread to run. */
    asm volatile("cpsid i" ::: "memory");
+
+   cores[this_core()].in_irq = 0u;
+   cores[this_core()].owed_to = nullptr;
 
 #if defined(__ARM_FP)
    /* The FPU, on this core, whatever the board did: the exception path saves
@@ -741,6 +767,30 @@ CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context* from, cyros_por
    /* Back by either road: from another thread's SVC, still masked, or from the
     * exception exit after a reschedule, likewise. */
    cyros_port_irq_restore(token);
+}
+
+CYROS_PORT_HOT bool cyros_port_interrupted_at_baseline(void)
+{
+   /* A device's or the timer's handler, never the reschedule's or an SVC's.
+    * Handlers never nest, and the GIC's mask is software's, untouched by
+    * taking the IRQ, so open it is still the interrupted thread's preempt
+    * grade: the dispatch's end is a safe point for it. */
+   return cores[this_core()].in_irq != 0u && armv8r::read_icc_pmr() == pmr_open;
+}
+
+CYROS_PORT_HOT void cyros_port_owe_switch(cyros_port_context* from, cyros_port_context* to)
+{
+   core_state& state = cores[this_core()];
+   CYROS_ASSERT(state.in_irq != 0u);   /* from an IRQ's handler only */
+   CYROS_ASSERT(to != nullptr);
+   CYROS_ASSERT(to != from);
+
+   /* A second decision in this IRQ keeps the first one's source: the thread
+    * whose frame the IRQ stored. */
+   if (state.owed_to == nullptr) {
+      state.owed_from = from;
+   }
+   state.owed_to = to;
 }
 
 CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)

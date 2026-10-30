@@ -144,6 +144,22 @@ extern "C" {
 #define CYROS_PORT_LINKED_BY_NAME __attribute__((visibility("default")))
 
 /**
+ * @def CYROS_PORT_WEAK_HOOK
+ * @brief Marks the default of a hook an application may replace by defining
+ *        the same name: weak, linked by name, and never inlined.
+ *
+ * A release build merges the archive into one object with LTO, and in that
+ * link the default is the only definition, so GCC may bind the archive's own
+ * calls to it and inline a small one, after which an application's
+ * replacement is ignored wherever cyros calls the hook. noipa keeps every call
+ * a call through the symbol, which the application's link resolves to its
+ * replacement (reproduced on rv32, ~/cyros-claude/performance-investigation.md
+ * 16). On the definition only, since a weak declaration would make every
+ * reference weak. The declaration carries CYROS_PORT_LINKED_BY_NAME.
+ */
+#define CYROS_PORT_WEAK_HOOK __attribute__((weak, noipa, visibility("default")))
+
+/**
  * @def CYROS_PORT_HOT
  * @brief The port's twin of CYROS_HOT (cyros/kernel/attribute.hpp): a port
  *        function every switch runs goes in `.text.cyros.hot`, beside the
@@ -327,6 +343,13 @@ void cyros_port_preempt_enable(cyros_mask_token_t token);
  *    there, and tells the port which context to resume when the handler
  *    returns: cyros_port_switch().
  *
+ * And an interrupt's wake. A wake made in an interrupt handler whose return
+ * reaches a thread at baseline (cyros_port_interrupted_at_baseline()) is
+ * decided there, as the thread's road decides, and the port carries the
+ * switch out as the interrupt returns, as the handler's road switches:
+ * cyros_port_owe_switch(). The kernel is not called back unless a reschedule
+ * was asked for too.
+ *
  * Either road may suspend a thread and either may resume it, so a context
  * suspended by one must be resumable by the other.
  * ------------------------------------------------------------------------- */
@@ -421,6 +444,54 @@ void cyros_port_direct_switch(cyros_port_context_t* from, cyros_port_context_t* 
  * any context.
  */
 bool cyros_port_masked_from_baseline(cyros_mask_token_t token);
+
+/**
+ * @brief Whether the caller is an interrupt handler whose return reaches a
+ *        thread at baseline, so a switch decided now can be owed to it.
+ *
+ * Called by the kernel with interrupts masked, from any context. True only in
+ * a device's or the timer's interrupt handler, never a fault's or the port's
+ * own switching, when the thread the interrupt took was at baseline:
+ * preemption enabled, and no mask of its own held, so the port reaches a
+ * safe point as the interrupt returns, before that thread runs again. Where
+ * handlers nest, true when the thread beneath them all was at baseline.
+ * False wherever the port could not carry a switch owed now out at that
+ * return, so false is always a safe answer: the kernel then pends.
+ *
+ * A placeholder name (Ryan, 2026-10-30).
+ */
+bool cyros_port_interrupted_at_baseline(void);
+
+/**
+ * @brief Owe a switch the kernel decided in an interrupt handler, made as
+ *        the interrupt returns.
+ * @param from The kernel's running thread when it decided: the thread the
+ *             interrupt took, or one an earlier decision chose, which never ran
+ * @param to   The context to resume, already the kernel's running thread
+ *
+ * Called with interrupts masked, and only where
+ * cyros_port_interrupted_at_baseline() is true. Records the switch, which the
+ * port carries out as the interrupt returns: before the reschedule handler
+ * is called, when a reschedule was asked for too, and without calling it
+ * otherwise. With a switch owed already, by the thread's road or an earlier
+ * decision in this interrupt, `to` replaces its destination and its source
+ * stays, since only that thread's registers are on the core. `from` and `to`
+ * always differ.
+ *
+ * Port implementation notes:
+ *  - rv32: the interrupt's dispatch reports the switch beside a reschedule
+ *    asked for, and the trap's exit stores the kept half and swaps frames
+ *    before any reschedule.
+ *  - Cortex-M: the thread's road's owed switch, which PendSV carries out.
+ *  - Cortex-R52: the IRQ's dispatch ends with the swap `svc 1` makes.
+ *  - SPARC: the outermost trap's exit makes the swap `ta 10` makes.
+ *  - linux_preempt: the thread's road's owed switch, with the reschedule
+ *    signal for PendSV.
+ *  - linux_coop: never called, having no interrupts.
+ *
+ * A placeholder name (Ryan, 2026-10-30).
+ */
+void cyros_port_owe_switch(cyros_port_context_t* from, cyros_port_context_t* to);
 
 /**
  * @brief Start executing the first thread
