@@ -17,7 +17,8 @@
  *          yield runs it synchronously, and that every register survives a
  *          trap by each of its three ways out: an interrupt that asks for no
  *          reschedule, one that runs a reschedule, and one whose reschedule
- *          switches to another context and back.
+ *          switches to another context and back. And that a direct switch
+ *          unmasks only once it stands on the incoming thread's stack.
  *
  *
  * WHY A LAYER-0 TEST CAN TAKE A RESCHEDULE HERE
@@ -566,6 +567,79 @@ void test_every_register_survives_a_trap_that_switches()
 
 
 /* ---------------------------------------------------------------------------
+ * A direct switch unmasks only once it stands on the incoming stack
+ *
+ * The switch's return unmasks, so a reschedule waiting on the mask is taken
+ * right there, and its frame goes on whatever stack sp is. Here the hook
+ * switches straight back to the boot context out of that trap, the boot
+ * context then uses the stack below its own frame, and only after that is the
+ * second context resumed, from the trap's frame. A switch that unmasked while
+ * still on the boot context's stack left that frame where the boot context
+ * has just written, and the second context resumes garbage.
+ * ------------------------------------------------------------------------ */
+
+volatile int switched_ran = 0;
+volatile bool switched_resumed = false;
+
+/* The second context: switches straight back, which leaves it a switch's
+ * frame, and the next switch to it is the one that traps on its way out. */
+void switched_entry(void*)
+{
+   cyros_mask_token_t const token = cyros_port_irq_save();
+   switched_ran = switched_ran + 1;
+   cyros_port_direct_switch(other_context(), boot_context(), token);
+   switched_resumed = true;
+   (void)cyros_port_irq_save();
+   cyros_port_direct_switch(other_context(), boot_context(), token);
+}
+
+/* The stack below the caller's frame, written: what a resumed thread does. */
+[[gnu::noinline]] void use_the_stack()
+{
+   std::uint32_t scratch[256];
+   for (std::uint32_t i = 0; i < 256; ++i) {
+      scratch[i] = 0xDEAD0000u + i;
+   }
+   asm volatile("" : : "r"(scratch) : "memory");   /* the stores are made */
+}
+
+void test_a_direct_switch_unmasks_on_the_incoming_stack()
+{
+   cyros::bench::start("a direct switch unmasks only on the incoming stack");
+
+   cyros_port_context_init(other_context(), other_stack, sizeof(other_stack), switched_entry, nullptr);
+
+   /* There and straight back, which leaves the second context a switch's frame. */
+   cyros_mask_token_t token = cyros_port_irq_save();
+   CYROS_CHECK(cyros_port_masked_from_baseline(token));
+   cyros_port_direct_switch(boot_context(), other_context(), token);
+   CYROS_CHECK_EQ(switched_ran, 1);
+   CYROS_CHECK(mie_set());
+
+   /* Again, with a reschedule waiting on the mask, which the switch's
+    * unmask takes, and whose hook switches back here. */
+   int const before_calls = reschedule_calls;
+   token = cyros_port_irq_save();
+   switch_from = other_context();
+   switch_to   = boot_context();
+   cyros_port_pend_reschedule();
+   settle();
+   CYROS_CHECK(msip_raised());
+   cyros_port_direct_switch(boot_context(), other_context(), token);
+   CYROS_CHECK_EQ(reschedule_calls, before_calls + 1);
+   CYROS_CHECK(!switched_resumed);
+
+   /* Then the second context, from the trap's frame, after this has used
+    * its stack. */
+   use_the_stack();
+   token = cyros_port_irq_save();
+   cyros_port_direct_switch(boot_context(), other_context(), token);
+   CYROS_CHECK(switched_resumed);
+   CYROS_CHECK(mie_set());
+}
+
+
+/* ---------------------------------------------------------------------------
  * Every register survives a fault its handler resumes
  *
  * A fault stores the whole frame at entry and is resumed from it, whatever
@@ -679,15 +753,16 @@ extern "C" int cyros_bench_main()
    test_every_register_survives_a_trap_that_reschedules();
    test_every_register_survives_an_interrupt_that_asks_for_no_reschedule();
    test_every_register_survives_a_trap_that_switches();
+   test_a_direct_switch_unmasks_on_the_incoming_stack();
    test_every_register_survives_a_fault_its_handler_resumes();
 
    test_core_identity_and_hints();
    test_tls_pointer_is_the_thread_pointer();
    test_timestamp_moves();
 
-   /* Exactly the seven reschedules the tests above asked for. */
+   /* Exactly the eight reschedules the tests above asked for. */
    cyros::bench::start("no reschedule beyond the ones asked for");
-   CYROS_CHECK_EQ(reschedule_calls, 7);
+   CYROS_CHECK_EQ(reschedule_calls, 8);
 
    cyros::bench::finish();
 }

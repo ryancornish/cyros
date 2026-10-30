@@ -83,12 +83,11 @@
  * is a call, made inside the kernel's mask, that saves the call frame a yield
  * saves, marked as a switch's, moves the guard, and resumes the incoming
  * thread on that thread's own stack. A thread cyros_port_direct_switch suspended
- * is resumed by returning into its own call, still masked, and it releases
- * the mask itself. Any other frame goes to the trap exit, which resumes
- * anything. The trap exit in turn resumes a switch's frame as it resumes any
- * call frame, unmasked, a few instructions before its owner would have
- * unmasked anyway. So neither road needs to know how the thread it resumes
- * was suspended.
+ * is resumed by returning from its own call, which unmasks as it returns. Any
+ * other frame goes to the trap exit, which resumes anything. The trap exit in
+ * turn resumes a switch's frame as it resumes any call frame, unmasked, which
+ * is how the switch's own return leaves it. So neither road needs to know how
+ * the thread it resumes was suspended.
  *
  *
  * Masking: two bits, not two counters
@@ -537,19 +536,24 @@ extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cy
 }
 
 /**
- * @brief cyros_port_direct_switch's half of the trap path, which takes no trap
- *        (file comment): a CALL that saves a call frame and returns into
- *        another.
+ * @brief The thread's road (file comment): a CALL that saves a call frame and
+ *        returns into another, taking no trap.
  *
- * In thread context, masked by the kernel. Stores the return address (marked)
- * and the registers a call keeps on the outgoing thread's stack, marked as a
- * switch's frame, and points `from` at it. Then moves the guard to the
- * incoming thread and resumes it: by returning into its own switch when a
- * switch suspended it, and through cyros_port_trap_exit otherwise.
- * `cyros_port_direct_switch_saved` is the label after its last store, for the
- * fault handler's overflow check.
+ * In thread context, masked by the kernel from baseline (port_core.h). Stores
+ * the return address (marked) and the registers a call keeps on the outgoing
+ * thread's stack, marked as a switch's frame, and points `from` at it. Then
+ * moves the guard to the incoming thread and resumes it: by returning from
+ * its own switch when a switch suspended it, and through cyros_port_trap_exit
+ * otherwise. `cyros_port_direct_switch_saved` is the label after its last
+ * store, for the fault handler's overflow check.
+ *
+ * The mask is what lets a frame be resumed by a return: nothing can trap
+ * between the stores and the loads. The token is not read. The kernel masked
+ * from baseline, so restoring it sets MIE, and a switch's return sets MIE once
+ * it is back on its own stack, as the trap exit's mret sets it for any call
+ * frame.
  */
-extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_direct_switch_entry(cyros_port_context*, cyros_port_context*)
+extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context*, cyros_port_context*, cyros_mask_token_t)
 {
    asm volatile(
       "addi  sp, sp, -128           \n"
@@ -603,6 +607,7 @@ extern "C" [[gnu::naked, gnu::noinline, gnu::aligned(4)]] CYROS_PORT_HOT void cy
       "lw    x27, 108(sp)           \n"
       "andi  ra, t0, -2             \n"   /* drop the mark */
       "addi  sp, sp, 128            \n"
+      "csrsi mstatus, 8             \n"   /* MIE: the token restored */
       "ret                          \n"
       "2:                           \n"
       "j     cyros_port_trap_exit   \n");
@@ -731,7 +736,7 @@ extern "C" [[gnu::weak]] CYROS_PORT_LINKED_BY_NAME void cyros_riscv_fault_handle
    auto const entry_saved = reinterpret_cast<std::uint32_t>(&cyros_port_trap_saved);
    auto const yield       = reinterpret_cast<std::uint32_t>(&cyros_port_yield_entry);
    auto const yield_saved = reinterpret_cast<std::uint32_t>(&cyros_port_yield_saved);
-   auto const swap        = reinterpret_cast<std::uint32_t>(&cyros_port_direct_switch_entry);
+   auto const swap        = reinterpret_cast<std::uint32_t>(&cyros_port_direct_switch);
    auto const swap_saved  = reinterpret_cast<std::uint32_t>(&cyros_port_direct_switch_saved);
    bool const access = mcause == riscv::cause_load_access || mcause == riscv::cause_store_access;
    bool const saving = (epc >= entry && epc < entry_saved) || (epc >= yield && epc < yield_saved) ||
@@ -931,19 +936,6 @@ CYROS_PORT_HOT void cyros_port_switch(cyros_port_context* from, cyros_port_conte
    if (guarded()) {
       riscv::write_pmpaddr0(to->guard);
    }
-}
-
-CYROS_PORT_HOT void cyros_port_direct_switch(cyros_port_context* from, cyros_port_context* to, cyros_mask_token_t token)
-{
-   /* Thread context, masked by the kernel from baseline (port_core.h). The mask
-    * is what lets the frame be resumed by a return: nothing can trap in
-    * between, and the thread that returns into it unmasks only once it is
-    * running on its own stack again. */
-   cyros_port_direct_switch_entry(from, to);
-
-   /* Back on this thread's stack: by a return from another thread's switch,
-    * still masked, or through the trap exit, already unmasked. */
-   cyros_port_irq_restore(token);
 }
 
 CYROS_PORT_HOT bool cyros_port_masked_from_baseline(cyros_mask_token_t token)

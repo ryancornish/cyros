@@ -372,13 +372,14 @@ class CYROS_PUBLIC pi_wait_queue
  * committing to it must happen under the queue lock, which nothing else can
  * reach. That is why the surface exists here.
  *
- * STATUS: no in-tree primitive currently derives a transfer-shaped waitable.
- * The kernel mutex needs barge-free handoff WITH priority inheritance and gets
- * both from base_mutex, which composes the same wait_queue directly and is
- * deliberately not a waitable. This surface is the path for a barge-free
- * primitive WITHOUT inheritance (a strict-fairness semaphore, a mailbox that
- * hands its datum to exactly one waiter). test_transfer_waitables is its
- * conformance test and is what keeps the dual-satisfaction contract honest.
+ * STATUS: one in-tree primitive derives a transfer-shaped waitable,
+ * sync::handoff_semaphore. The kernel mutex needs barge-free handoff WITH
+ * priority inheritance and gets both from base_mutex, which composes the same
+ * wait_queue directly and is deliberately not a waitable. This surface is the
+ * path for a barge-free primitive WITHOUT inheritance (handoff_semaphore, or a
+ * mailbox that hands its datum to exactly one waiter).
+ * test_transfer_waitables is its conformance test and is what keeps the
+ * dual-satisfaction contract honest.
  *
  * Per-waiter state
  * ----------------

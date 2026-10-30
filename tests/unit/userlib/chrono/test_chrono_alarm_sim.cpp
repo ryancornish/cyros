@@ -21,6 +21,7 @@
 #include <cyros/kernel/kernel.hpp>
 #include <cyros/kernel/waitable.hpp>
 #include <cyros/kernel/thread.hpp>
+#include <cyros/sync/handoff_semaphore.hpp>
 #include <cyros/sync/semaphore.hpp>
 #include <cyros/time/time.hpp>
 #include <cyros/time/simulation.hpp>
@@ -466,4 +467,145 @@ TEST_F(ChronoAlarmSim_Test, GivenAReleaseWokenOnTheDeadlineTick_WhenTheWaiterDis
    kernel::start();
 
    EXPECT_TRUE(s.got);
+}
+
+/* Stage 3: handoff_semaphore's timed methods. A token handed to a timed
+ * waiter is its own from the hand-over on, so a deadline that fires first
+ * must not lose it. */
+
+TEST_F(ChronoAlarmSim_Test, GivenATimedHandoffAcquire_WhenNothingReleases_ThenItReturnsFalseAtTheDeadline)
+{
+   sync::handoff_semaphore sem(0);
+   bool got = true;
+   std::uint64_t returned_at = 0;
+
+   thread waiter(
+      [&]{
+         got = sem.try_acquire_until(time::time_point{40});
+         returned_at = time::now().value;
+      },
+      s_a, thread::priority(1)
+   );
+
+   thread pumper([&]{ pump_until(time::time_point{80}); }, s_pump, thread::priority(20));
+
+   kernel::start();
+
+   EXPECT_FALSE(got);
+   EXPECT_EQ(returned_at, 40u);
+   EXPECT_EQ(sem.peek(), 0u);
+}
+
+TEST_F(ChronoAlarmSim_Test, GivenATimedHandoffAcquire_WhenReleasedBeforeTheDeadline_ThenItReturnsTrueAndNothingIsCounted)
+{
+   sync::handoff_semaphore sem(0);
+   bool got = false;
+   std::uint64_t returned_at = 0;
+
+   thread waiter(
+      [&]{
+         got = sem.try_acquire_for(time::duration{60});
+         returned_at = time::now().value;
+      },
+      s_a, thread::priority(1)
+   );
+
+   thread releaser(
+      [&]{
+         pump_until(time::time_point{15});
+         sem.release();
+      },
+      s_b, thread::priority(10)
+   );
+
+   thread pumper([&]{ pump_until(time::time_point{100}); }, s_pump, thread::priority(20));
+
+   kernel::start();
+
+   EXPECT_TRUE(got);
+   EXPECT_EQ(returned_at, 15u);
+   EXPECT_EQ(sem.peek(), 0u); // handed over, never counted
+}
+
+/* The deadline fires first, and a release runs before the waiter does. The
+ * waiter is less urgent than the pumper, so it is woken at tick 30 by its
+ * deadline but runs only when the pumper ends, at tick 80. The releaser wakes
+ * at 35 and finds it still queued, so hands the token to it. The waiter must
+ * return true holding it: false would lose the token, since nothing counts a
+ * token handed over. The witness, least urgent, opens the pump only once the
+ * waiter has parked. */
+TEST_F(ChronoAlarmSim_Test, GivenAHandoffWaiterWhoseDeadlineHasFired_WhenAReleaseRunsBeforeIt_ThenItReturnsTrueHoldingTheToken)
+{
+   struct state
+   {
+      sync::handoff_semaphore sem{0};
+      sync::semaphore parked{0};
+      bool got = false;
+      std::uint64_t returned_at = 0;
+      std::uint64_t released_at = 0;
+   } s;
+
+   thread waiter(
+      [&s]{
+         s.got = s.sem.try_acquire_until(time::time_point{30});
+         s.returned_at = time::now().value;
+      },
+      s_a, thread::priority(25)
+   );
+
+   thread witness([&s]{ s.parked.release(); }, s_c, thread::priority(30));
+
+   thread releaser(
+      [&s]{
+         this_thread::sleep_until(time::time_point{35});
+         s.released_at = time::now().value;
+         s.sem.release();
+      },
+      s_b, thread::priority(10)
+   );
+
+   thread pumper(
+      [&s]{
+         s.parked.acquire();
+         pump_until(time::time_point{80});
+      },
+      s_pump, thread::priority(20)
+   );
+
+   kernel::start();
+
+   EXPECT_EQ(s.released_at, 35u);
+   EXPECT_EQ(s.returned_at, 80u) << "the waiter ran before the pump ended, so the order under test never arose";
+   EXPECT_TRUE(s.got) << "the token handed over after the deadline fired was lost";
+   EXPECT_EQ(s.sem.peek(), 0u);
+}
+
+TEST_F(ChronoAlarmSim_Test, GivenAPastDeadlineOrZeroDuration_WhenATimedHandoffAcquireRuns_ThenItDegradesToTryAcquire)
+{
+   sync::handoff_semaphore with_token(2);
+   sync::handoff_semaphore without_token(0);
+   bool took_until = false;
+   bool took_for = false;
+   bool missed_until = true;
+   bool missed_for = true;
+
+   thread caller(
+      [&]{
+         time::simulation::advance_to(time::time_point{20});
+         took_until   = with_token.try_acquire_until(time::time_point{5});
+         took_for     = with_token.try_acquire_for(time::duration{0});
+         missed_until = without_token.try_acquire_until(time::time_point{5});
+         missed_for   = without_token.try_acquire_for(time::duration{0});
+      },
+      s_a, thread::priority(1)
+   );
+
+   // No pumper: if an empty-semaphore case blocked, the suite would hang.
+   kernel::start();
+
+   EXPECT_TRUE(took_until);
+   EXPECT_TRUE(took_for);
+   EXPECT_FALSE(missed_until);
+   EXPECT_FALSE(missed_for);
+   EXPECT_EQ(with_token.peek(), 0u);
 }
